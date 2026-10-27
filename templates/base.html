@@ -37,13 +37,26 @@
             padding: 24px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
         }
+
+        /* Tối ưu riêng cho màn hình điện thoại di động */
+        @media (max-width: 576px) {
+            .navbar-brand {
+                font-size: 0.95rem !important; /* Tự thu nhỏ cỡ chữ vừa vặn màn hình đứng */
+                max-width: 75% !important;     /* Giới hạn chiều rộng không cho đè lên nút menu */
+                white-space: normal !important;  /* Cho phép ngắt dòng tự nhiên nếu màn hình quá nhỏ */
+                line-height: 1.2 !important;
+            }
+            .container-box {
+                padding: 16px; /* Giảm bớt lề trong trên màn hình nhỏ */
+            }
+        }
     </style>
 </head>
 <body>
 
 <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
-    <div class="container-fluid px-4">
-        <a class="navbar-brand fw-bold fs-5" href="/">
+    <div class="container-fluid px-3 px-lg-4">
+        <a class="navbar-brand fw-bold text-wrap" href="/">
             🤖 AI Smart Lost & Found System
         </a>
 
