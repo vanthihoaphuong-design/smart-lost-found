@@ -1,5 +1,6 @@
 import os
 import io
+from PIL import Image
 import pandas as pd
 from flask import send_file, flash, redirect, url_for
 import uuid
@@ -148,12 +149,21 @@ def lost():
     if request.method == "POST":
         filename = ""
         file = request.files.get("hinh_anh")
-
         if file and file.filename != "":
             original_name = secure_filename(file.filename)
             filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
             file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
+        
+        # Nén ảnh để tránh tràn RAM 512MB trên Render
+        try:
+            img = Image.open(file)
+            img.thumbnail((1024, 1024))
+            if img.mode in ("RGBA", "P"):
+                img = img.convert("RGB")
+            img.save(file_path, "JPEG", quality=80)
+        except Exception:
             file.save(file_path)
+
             # Trích xuất cache đặc trưng ngay khi upload
             calculate_image_features(file_path)
 
