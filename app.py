@@ -156,9 +156,6 @@ def home():
     return render_template("index.html")
 
 
-# =========================================================
-# HÀM BÁO MẤT ĐỒ (ĐÃ TỐI ƯU SIÊU NHẸ RAM)
-# =========================================================
 @app.route("/lost", methods=["GET", "POST"])
 def lost():
     if request.method == "POST":
@@ -170,7 +167,7 @@ def lost():
             filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
             file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         
-            # Nén ảnh về kích thước nhỏ để tiết kiệm RAM
+            # Nén ảnh về kích thước nhỏ nhẹ để tiết kiệm RAM
             try:
                 img = Image.open(file)
                 img.thumbnail((800, 800))
@@ -178,13 +175,13 @@ def lost():
                     img = img.convert("RGB")
                 img.save(file_path, "JPEG", quality=75)
             except Exception as e:
-                print(f"Lỗi nén ảnh lost: {e}")
+                print(f"Lỗi nén ảnh: {e}")
                 file.save(file_path)
 
             try:
                 calculate_image_features(file_path)
             except Exception as e:
-                print(f"Lỗi calculate_image_features lost: {e}")
+                print(f"Lỗi tính đặc trưng: {e}")
 
         item = LostItem(
             ten_do=request.form.get("ten_do"),
@@ -204,9 +201,6 @@ def lost():
     return render_template("lost_form.html")
 
 
-# =========================================================
-# HÀM BÁO NHẶT ĐỒ (ĐÃ TỐI ƯU SIÊU NHẸ RAM)
-# =========================================================
 @app.route("/found", methods=["GET", "POST"])
 def found():
     if request.method == "POST":
@@ -225,13 +219,13 @@ def found():
                     img = img.convert("RGB")
                 img.save(file_path, "JPEG", quality=75)
             except Exception as e:
-                print(f"Lỗi nén ảnh found: {e}")
+                print(f"Lỗi nén ảnh: {e}")
                 file.save(file_path)
 
             try:
                 calculate_image_features(file_path)
             except Exception as e:
-                print(f"Lỗi calculate_image_features found: {e}")
+                print(f"Lỗi tính đặc trưng: {e}")
 
         item = FoundItem(
             ten_do=request.form.get("ten_do"),
