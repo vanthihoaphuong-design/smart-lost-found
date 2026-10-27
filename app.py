@@ -155,27 +155,30 @@ def lost():
             file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         
         # Nén ảnh để tránh tràn RAM 512MB trên Render
-        try:
-            img = Image.open(file)
-            img.thumbnail((1024, 1024))
-            if img.mode in ("RGBA", "P"):
-                img = img.convert("RGB")
-            img.save(file_path, "JPEG", quality=80)
-        except Exception:
-            file.save(file_path)
-
-            # Trích xuất cache đặc trưng ngay khi upload
-            calculate_image_features(file_path)
-
-        ai_name = "Không xác định"
-        score = 0
-
-        if filename != "":
             try:
-                ai_name, score = detect_object(os.path.join(app.config["UPLOAD_FOLDER"], filename))
+                img = Image.open(file)
+                img.thumbnail((1024, 1024))
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                img.save(file_path, "JPEG", quality=80)
             except Exception:
-                pass
+                print(f"Lỗi nén ảnh, lưu file gốc: {e}")
+                file.save(file_path)
+            # Trích xuất đặc trưng an toàn
+            try:
+                calculate_image_features(file_path)
+            except Exception as e:
+                print(f"Lỗi trích xuất đặc trưng: {e}")
 
+            ai_name = "Không xác định"
+            score = 0
+    
+            if filename != "":
+                try:
+                    ai_name, score = detect_object(os.path.join(app.config["UPLOAD_FOLDER"], filename))
+                except Exception as e:
+                    print(f"Lỗi nhận diện YOLO: {e}")
+          
         item = LostItem(
             ten_do=request.form.get("ten_do"),
             loai_do=request.form.get("loai_do"),
