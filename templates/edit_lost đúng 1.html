@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+
+{% block title %}
+Chỉnh sửa đồ thất lạc
+{% endblock %}
+
+{% block content %}
+
+<h2 class="mb-4 text-primary">
+✏️ Chỉnh sửa đồ thất lạc
+</h2>
+
+<form method="POST" enctype="multipart/form-data">
+
+    <div class="row">
+        <!-- 1. Tên đồ -->
+        <div class="col-md-6">
+            <label class="form-label">Tên đồ</label>
+            <input 
+                type="text" 
+                name="ten_do" 
+                class="form-control" 
+                value="{{ item.ten_do if item.ten_do else item.name }}" 
+                placeholder="Ví dụ: Sách Tin học 11, Laptop Dell..." 
+                required>
+        </div>
+
+        <!-- 2. Loại đồ (Đã cập nhật chuẩn theo giao diện) -->
+        <div class="col-md-6">
+            <label class="form-label">Loại đồ</label>
+            <select name="loai_do" class="form-select" required>
+                {% set current_loai = item.loai_do if item.loai_do else item.category %}
+                <option value="Sách vở / Dụng cụ học tập" {% if current_loai == 'Sách vở / Dụng cụ học tập' or current_loai == 'Sách vở' %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
+                <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if current_loai == 'Thiết bị điện tử (Laptop, Điện thoại...)' or current_loai == 'Thiết bị điện tử' or current_loai == 'Điện thoại' or current_loai == 'Máy tính Casio' %}selected{% endif %}>Thiết bị điện tử (Laptop, Điện thoại...)</option>
+                <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if current_loai == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' or current_loai == 'Trang phục / Phụ kiện' or current_loai == 'Áo khoác' or current_loai == 'Balo' or current_loai == 'Mũ' or current_loai == 'Ví' %}selected{% endif %}>Trang phục / Phụ kiện (Áo khoác, Ví...)</option>
+                <option value="Giấy tờ / Thẻ học sinh" {% if current_loai == 'Giấy tờ / Thẻ học sinh' %}selected{% endif %}>Giấy tờ / Thẻ học sinh</option>
+                <option value="Khác" {% if current_loai == 'Khác' or current_loai == 'Bình nước' %}selected{% endif %}>Khác</option>
+            </select>
+        </div>
+    </div>
+
+    <br>
+
+    <!-- 3. Màu sắc -->
+    <label class="form-label">Màu sắc</label>
+    <input 
+        type="text" 
+        name="mau_sac" 
+        class="form-control" 
+        value="{{ item.mau_sac if item.mau_sac else item.color }}" 
+        placeholder="Ví dụ: Đen, Xanh, Trắng, Vàng..." 
+        required>
+
+    <br>
+
+    <!-- 4. Nơi mất -->
+    <label class="form-label">Nơi mất</label>
+    <select name="noi_mat" class="form-select" required>
+        {% set current_noi = item.noi_mat if item.noi_mat else item.location %}
+        <option {% if current_noi == 'Sân trường' %}selected{% endif %}>Sân trường</option>
+        <option {% if current_noi == 'Nhà xe' %}selected{% endif %}>Nhà xe</option>
+        <option {% if current_noi == 'Căn tin' %}selected{% endif %}>Căng tin</option>
+        <option {% if current_noi == 'Thư viện' %}selected{% endif %}>Thư viện</option>
+        <option {% if current_noi == 'Sân bóng' %}selected{% endif %}>Sân bóng</option>
+
+        <option {% if current_noi == 'Phòng STEM' %}selected{% endif %}>Phòng STEM</option>
+        <option {% if current_noi == 'Phòng Tin học 1' %}selected{% endif %}>Phòng Tin học 1</option>
+        <option {% if current_noi == 'Phòng Tin học 2' %}selected{% endif %}>Phòng Tin học 2</option>
+
+        <option {% if current_noi == 'Phòng Văn' %}selected{% endif %}>Phòng Văn</option>
+        <option {% if current_noi == 'Phòng Sử - Địa' %}selected{% endif %}>Phòng Sử - Địa</option>
+        <option {% if current_noi == 'Phòng Hội trường' %}selected{% endif %}>Phòng Hội trường</option>
+        <option {% if current_noi == 'Phòng Đoàn - Đội' %}selected{% endif %}>Phòng Đoàn - Đội</option>
+        <option {% if current_noi == 'Khu Văn phòng' %}selected{% endif %}>Khu Văn phòng</option>
+        <option {% if current_noi == 'Phòng Tâm lý' %}selected{% endif %}>Phòng Tâm lý</option>
+
+        <option {% if current_noi == 'Phòng học 6A1' %}selected{% endif %}>6A1</option><option {% if current_noi == '6A2' %}selected{% endif %}>6A2</option><option {% if current_noi == '6A3' %}selected{% endif %}>6A3</option>
+        <option {% if current_noi == '7A1' %}selected{% endif %}>7A1</option><option {% if current_noi == '7A2' %}selected{% endif %}>7A2</option><option {% if current_noi == '7A3' %}selected{% endif %}>7A3</option>
+        <option {% if current_noi == '8A1' %}selected{% endif %}>8A1</option><option {% if current_noi == '8A2' %}selected{% endif %}>8A2</option><option {% if current_noi == '8A3' %}selected{% endif %}>8A3</option>
+        <option {% if current_noi == '9A1' %}selected{% endif %}>9A1</option><option {% if current_noi == '9A2' %}selected{% endif %}>9A2</option><option {% if current_noi == '9A3' %}selected{% endif %}>9A3</option>
+        <option {% if current_noi == '10A1' %}selected{% endif %}>10A1</option><option {% if current_noi == '10A2' %}selected{% endif %}>10A2</option><option {% if current_noi == '10A3' %}selected{% endif %}>10A3</option>
+        <option {% if current_noi == '11A1' %}selected{% endif %}>11A1</option><option {% if current_noi == '11A2' %}selected{% endif %}>11A2</option>
+        <option {% if current_noi == '12A1' %}selected{% endif %}>12A1</option><option {% if current_noi == '12A2' %}selected{% endif %}>12A2</option>
+    </select>
+
+    <br>
+
+    <div class="row">
+        <!-- 5. Ngày mất -->
+        <div class="col-md-6">
+            <label class="form-label">Ngày mất</label>
+            <input 
+                type="date" 
+                name="ngay_mat" 
+                class="form-control" 
+                value="{{ item.ngay_mat if item.ngay_mat else item.date_lost }}" 
+                required>
+        </div>
+
+        <!-- 6. Ảnh đồ vật -->
+        <div class="col-md-6">
+            <label class="form-label">Ảnh đồ vật (Để trống nếu không đổi)</label>
+            <input 
+                type="file" 
+                name="hinh_anh" 
+                class="form-control" 
+                accept="image/*" 
+                id="previewImage">
+        </div>
+    </div>
+
+    <br>
+
+    <!-- Hiển thị ảnh xem trước / ảnh hiện tại -->
+    <div class="text-center">
+        {% set img_file = item.hinh_anh if item.hinh_anh else item.image_path %}
+        <img 
+            id="imgPreview" 
+            src="{{ url_for('static', filename='uploads/' + img_file) if img_file else '' }}" 
+            style="{% if img_file %}display:inline-block;{% else %}display:none;{% endif %}max-width:250px;border-radius:12px;border: 1px solid #ddd; padding: 4px;">
+    </div>
+
+    <br>
+
+    <div class="text-center">
+        <button type="submit" class="btn btn-success btn-lg">
+            💾 Lưu thay đổi
+        </button>
+        <a href="/lost-list" class="btn btn-secondary btn-lg">
+            📋 Danh sách
+        </a>
+    </div>
+
+</form>
+
+<script>
+const imageInput = document.getElementById("previewImage");
+const preview = document.getElementById("imgPreview");
+
+imageInput.addEventListener("change", function(){
+    const file = this.files[0];
+    if(file){
+        preview.src = URL.createObjectURL(file);
+        preview.style.display = "inline-block";
+    }
+});
+</script>
+
+{% endblock %}

@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block title %}
+Danh sách đồ thất lạc
+{% endblock %}
+
+{% block content %}
+
+<h2 class="mb-4">📋 Danh sách đồ thất lạc</h2>
+
+<div class="mb-3">
+    <a href="/lost" class="btn btn-primary">
+        ➕ Thêm đồ thất lạc
+    </a>
+    <a href="/search" class="btn btn-success ms-2">
+        🔍 Tìm kiếm
+    </a>
+</div>
+
+<table class="table table-bordered table-hover align-middle">
+    <thead class="table-primary">
+        <tr>
+            <th>ID</th>
+            <th>Ảnh</th>
+            <th>Tên đồ</th>
+            <th>Loại đồ</th>
+            <th>Nơi mất</th>
+            <th>Ngày mất</th>
+            <th>Trạng thái</th>
+            <th>Thao tác</th>
+            <th>Thời điểm tìm thấy</th>
+        </tr>
+    </thead>
+
+    <tbody>
+    {% for item in items %}
+        <tr>
+            <td>{{ item.id }}</td>
+
+            <td>
+                {% if item.hinh_anh %}
+                    <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" width="90" class="rounded shadow-sm">
+                {% else %}
+                    Không có ảnh
+                {% endif %}
+            </td>
+
+            <td>{{ item.ten_do }}</td>
+
+            <td>
+                <span class="badge bg-secondary">{{ item.loai_do }}</span>
+            </td>
+
+            <td>{{ item.noi_mat }}</td>
+
+            <td>{{ item.ngay_mat }}</td>
+            <td>
+                {% if item.trang_thai == 'DA_TIM' or item.trang_thai == 'DA_TRA' or item.trang_thai == 'Đã tìm thấy' %}
+                    <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã tìm thấy</span>
+                {% else %}
+                    <span class="badge bg-warning text-dark py-2 px-3 fw-bold">🔑 Đang tìm</span>
+                {% endif %}
+            </td>
+           
+            <td>
+                {% if item.trang_thai == "DA_TIM_THAY" or item.trang_thai == "DA_TRA" %}
+                    <span class="badge bg-light text-muted border">Lưu trữ báo cáo</span>
+                {% else %}
+                    <a href="/match" class="btn btn-sm btn-outline-primary mb-1">🔍 Đối sánh</a>
+                    <a href="/edit-lost/{{ item.id }}" class="btn btn-sm btn-warning mb-1">✏️ Sửa</a>
+                    <a href="/delete-lost/{{ item.id }}" class="btn btn-sm btn-danger mb-1" onclick="confirmDeletePIN(event, this.href);">🗑️ Xóa</a>
+                {% endif %}
+            </td>
+
+            <td>
+                {% if item.thoi_diem_tra %}
+                    {{ item.thoi_diem_tra.strftime("%d/%m/%Y %H:%M") }}
+                {% else %}
+                    —
+                {% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+
+{% if items|length == 0 %}
+    <div class="alert alert-warning mt-3">
+        Chưa có dữ liệu đồ thất lạc.
+    </div>
+{% endif %}
+
+<!-- Modal nhập PIN ẩn mật khẩu -->
+<div class="modal fade" id="pinModal" tabindex="-1" aria-labelledby="pinModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title fw-bold" id="pinModalLabel">🔒 Xác Nhận Quyền Quản Trị</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-secondary mb-2">Thao tác này cần quyền giáo viên / quản trị viên. Vui lòng nhập Mã PIN:</p>
+                <input type="password" id="modalPinInput" class="form-control form-control-lg text-center" placeholder="••••••••" autocomplete="new-password">
+                <div id="pinErrorMsg" class="text-danger mt-2 small text-center" style="display: none;">❌ Mã PIN không chính xác!</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
+                <button type="button" class="btn btn-danger fw-bold" onclick="submitPinCheck()">Xác nhận xóa</button>
+            </div>
+        </div>
+    </div>
+</div>
+<script>
+let pendingDeleteUrl = "";
+
+function confirmDeletePIN(event, deleteUrl) {
+    event.preventDefault(); // Chặn chuyển trang
+    pendingDeleteUrl = deleteUrl;
+    
+    // Reset ô nhập và thông báo lỗi
+    document.getElementById('modalPinInput').value = '';
+    document.getElementById('pinErrorMsg').style.display = 'none';
+    
+    // Hiện Modal nhập PIN dạng dấu chấm
+    let pinModal = new bootstrap.Modal(document.getElementById('pinModal'));
+    pinModal.show();
+}
+
+function submitPinCheck() {
+    let userPin = document.getElementById('modalPinInput').value.trim();
+    
+    fetch('/get-pin?t=' + new Date().getTime())
+        .then(response => response.json())
+        .then(data => {
+            let correctPin = String(data.pin).trim();
+            if (userPin === correctPin) {
+                window.location.href = pendingDeleteUrl; // Đúng PIN -> Tiến hành xóa
+            } else {
+                document.getElementById('pinErrorMsg').style.display = 'block';
+            }
+        })
+        .catch(err => {
+            alert("❌ Lỗi kiểm tra mã PIN!");
+        });
+}
+</script>
+
+{% endblock %}

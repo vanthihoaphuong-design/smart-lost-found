@@ -1,0 +1,487 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard thống kê{% endblock %}
+
+{% block content %}
+<style>
+    /* Chi rieng Dashboard, khong thay doi giao dien cac trang khac */
+    .dashboard-page {
+        width: 100%;
+        max-width: 1500px;
+        margin: 0 auto;
+        color: #263852;
+        font-size: 16px;
+    }
+
+    .dashboard-page .dashboard-hero {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 26px 30px;
+        margin-bottom: 24px;
+        border: 1px solid #d9e8fb;
+        border-radius: 18px;
+        background: linear-gradient(120deg, #eaf3ff 0%, #f0fbf5 100%);
+    }
+
+    .dashboard-page .dashboard-hero h2 {
+        margin: 0 0 8px;
+        color: #175bb5;
+        font-size: clamp(1.5rem, 2vw, 2rem);
+        font-weight: 800;
+    }
+
+    .dashboard-page .dashboard-hero p {
+        margin: 0;
+        color: #64748b;
+        font-size: 1rem;
+    }
+
+    .dashboard-page .hero-icon {
+        display: flex;
+        flex: 0 0 64px;
+        align-items: center;
+        justify-content: center;
+        width: 64px;
+        height: 64px;
+        border-radius: 18px;
+        background: #fff;
+        box-shadow: 0 5px 16px rgba(37, 99, 180, .10);
+        font-size: 2rem;
+    }
+
+    .dashboard-page .stat-card {
+        position: relative;
+        height: 100%;
+        min-height: 170px;
+        padding: 24px;
+        overflow: hidden;
+        border: 1px solid #dce8f7;
+        border-radius: 18px;
+        background: #fff;
+        box-shadow: 0 7px 22px rgba(35, 67, 105, .07);
+    }
+
+    .dashboard-page .stat-card::after {
+        position: absolute;
+        top: -28px;
+        right: -22px;
+        width: 115px;
+        height: 115px;
+        border-radius: 50%;
+        background: rgba(52, 120, 212, .08);
+        content: "";
+    }
+
+    .dashboard-page .stat-label {
+        position: relative;
+        z-index: 1;
+        color: #586b84;
+        font-size: 1rem;
+        font-weight: 700;
+    }
+
+    .dashboard-page .stat-number {
+        position: relative;
+        z-index: 1;
+        margin-top: 10px;
+        color: #1769d2;
+        font-size: clamp(2.5rem, 4vw, 3.5rem);
+        font-weight: 800;
+        line-height: 1.1;
+    }
+
+    .dashboard-page .stat-note {
+        position: relative;
+        z-index: 1;
+        margin-top: 12px;
+        color: #75849a;
+        font-size: .9rem;
+    }
+
+    .dashboard-page .dashboard-card {
+        min-width: 0;
+        margin-bottom: 24px;
+        overflow: hidden;
+        border: 1px solid #dfe8f3;
+        border-radius: 18px;
+        background: #fff;
+        box-shadow: 0 7px 22px rgba(35, 67, 105, .055);
+    }
+
+    .dashboard-page .dashboard-card-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 18px 24px;
+        border-bottom: 1px solid #e6edf5;
+        background: #f5f8fd;
+        color: #24578e;
+        font-size: 1.1rem;
+        font-weight: 800;
+    }
+
+    .dashboard-page .dashboard-card-body {
+        padding: 22px 24px;
+    }
+
+    .dashboard-page .table-responsive {
+        border: 1px solid #e7edf5;
+        border-radius: 12px;
+    }
+
+    .dashboard-page .table {
+        width: 100%;
+        margin: 0;
+        font-size: 1rem;
+        vertical-align: middle;
+    }
+
+    .dashboard-page .table thead th {
+        padding: 15px 18px;
+        border-bottom: 1px solid #dce6f2;
+        background: #edf4fc;
+        color: #405571;
+        font-weight: 800;
+        white-space: nowrap;
+    }
+
+    .dashboard-page .table tbody td {
+        padding: 14px 18px;
+        border-color: #edf1f6;
+    }
+
+    .dashboard-page .table tbody tr:hover > * {
+        background-color: #f7fbff;
+    }
+
+    .dashboard-page .row-number {
+        color: #7a8ba2;
+        font-weight: 600;
+    }
+
+    .dashboard-page .category-badge {
+        display: inline-block;
+        padding: 6px 11px;
+        border: 1px solid #d9e8fc;
+        border-radius: 9px;
+        background: #edf5ff;
+        color: #245da8;
+        font-weight: 700;
+    }
+
+    .dashboard-page .quantity-pill {
+        display: inline-block;
+        min-width: 38px;
+        padding: 5px 10px;
+        border-radius: 9px;
+        background: #eaf8ef;
+        color: #21834a;
+        font-weight: 800;
+        text-align: center;
+    }
+
+    .dashboard-page .chart-area {
+        position: relative;
+        width: 100%;
+        height: 470px;
+    }
+
+    .dashboard-page .chart-caption {
+        margin-top: 12px;
+        color: #7b8ba1;
+        font-size: .9rem;
+    }
+
+    .dashboard-page .empty-state {
+        padding: 36px 18px;
+        color: #718096;
+        text-align: center;
+    }
+
+    .dashboard-page .dashboard-footer-note {
+        padding: 10px 0 2px;
+        color: #7b8ba1;
+        font-size: .9rem;
+        text-align: center;
+    }
+
+    @media (min-width: 1200px) {
+        .dashboard-page .dashboard-layout {
+            display: grid;
+            grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
+            gap: 24px;
+            align-items: start;
+        }
+    }
+
+    @media (max-width: 768px) {
+        .dashboard-page .dashboard-hero {
+            padding: 20px;
+        }
+
+        .dashboard-page .hero-icon {
+            flex-basis: 48px;
+            width: 48px;
+            height: 48px;
+            font-size: 1.5rem;
+        }
+
+        .dashboard-page .dashboard-card-header {
+            padding: 15px 17px;
+        }
+
+        .dashboard-page .dashboard-card-body {
+            padding: 15px;
+        }
+
+        .dashboard-page .table thead th,
+        .dashboard-page .table tbody td {
+            padding: 11px 12px;
+        }
+
+        .dashboard-page .chart-area {
+            height: 390px;
+        }
+    }
+
+    @media (max-width: 480px) {
+        .dashboard-page .dashboard-hero {
+            align-items: flex-start;
+        }
+
+        .dashboard-page .hero-icon {
+            display: none;
+        }
+
+        .dashboard-page .chart-area {
+            height: 360px;
+        }
+    }
+</style>
+
+<div class="dashboard-page">
+    <header class="dashboard-hero">
+        <div>
+            <h2>📊 Dashboard thống kê</h2>
+            <p>Tổng quan tình hình đồ thất lạc trong trường học.</p>
+        </div>
+        <div class="hero-icon" aria-hidden="true">🎒</div>
+    </header>
+
+    <div class="row g-3 mb-4 align-items-stretch">
+        <div class="col-12 col-sm-6 col-xl-4">
+            <div class="stat-card">
+                <div class="stat-label">🎒 Tổng số đồ mất</div>
+                <div class="stat-number">{{ tong_so }}</div>
+                <div class="stat-note">Số bản ghi đồ bị mất trong hệ thống</div>
+            </div>
+        </div>
+
+        <!-- BỘ LỌC CÔNG CỤ XUẤT EXCEL THEO TRẠNG THÁI & THÁNG / NĂM -->
+        <div class="col-12 col-sm-6 col-xl-8 d-flex align-items-center">
+            <div class="stat-card w-100 d-flex flex-column justify-content-center align-items-start">
+                <div class="stat-label">📑 Báo cáo quản lý dành cho BGH</div>
+                
+                <form action="/export-excel" method="GET" class="row g-2 mt-2 align-items-center w-100">
+                    <!-- Lọc theo Trạng thái -->
+                    <div class="col-auto">
+                        <select name="status" class="form-select form-select-sm fw-bold border-success text-success">
+                            <option value="all">📁 Tất cả trạng thái</option>
+                            <option value="completed">✅ Chỉ đồ ĐÃ TÌM / ĐÃ TRẢ</option>
+                            <option value="pending">⏳ Chỉ đồ ĐANG TÌM / ĐANG LƯU GIỮ</option>
+                        </select>
+                    </div>
+
+                    <!-- Lọc theo Tháng -->
+                    <div class="col-auto">
+                        <select name="month" id="selectMonth" class="form-select form-select-sm fw-bold">
+                            <option value="">-- Tất cả tháng --</option>
+                            {% for m in range(1, 13) %}
+                            <option value="{{ m }}" {% if m == 10 %}selected{% endif %}>Tháng {{ m }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Lọc theo Năm -->
+                    <div class="col-auto">
+                        <select name="year" id="selectYear" class="form-select form-select-sm" style="width: auto;">
+                            {% for y in range(2025, 2031) %}
+                                <option value="{{ y }}" {% if y == 2026 %}selected{% endif %}>
+                                    Năm {{ y }}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+
+                    <!-- Nút bấm Xuất Báo Cáo -->
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-success btn-sm fw-bold shadow-sm">
+                            📊 Xuất báo cáo Excel
+                        </button>
+                    </div>
+                </form>
+
+                <div class="stat-note mt-2">Cho phép tùy chọn phạm vi dữ liệu và thời gian linh hoạt trước khi xuất báo cáo.</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- KHỐI CẢNH BÁO TỰ ĐỘNG AI -->
+    <div class="dashboard-card mb-4" style="border-left: 5px solid #198754;">
+        <div class="dashboard-card-header" style="background: #eaf8ef; color: #146c43;">
+            <span aria-hidden="true">🔔</span>
+            <span>Cảnh báo tự động từ Hệ thống AI</span>
+        </div>
+        <div class="dashboard-card-body">
+            <p class="mb-0 text-dark fw-bold">
+                ✅ Hệ thống AI tự động phát hiện các cặp đồ vật có độ tin cậy trùng khớp cao (&ge; 80 điểm) và sẵn sàng xuất báo cáo tổng hợp cho Ban BGH / Cán bộ quản lý.
+            </p>
+        </div>
+    </div>
+
+    <div class="dashboard-layout">
+        <section class="dashboard-card">
+            <div class="dashboard-card-header">
+                <span aria-hidden="true">📦</span>
+                <span>Thống kê theo loại đồ</span>
+            </div>
+
+            <div class="dashboard-card-body">
+                {% if thong_ke %}
+                <div class="table-responsive">
+                    <table class="table table-hover">
+                        <thead>
+                            <tr>
+                                <th style="width: 70px;">STT</th>
+                                <th>Loại đồ</th>
+                                <th class="text-end">Số lượng</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for loai, so_luong in thong_ke %}
+                            <tr>
+                                <td class="row-number">{{ loop.index }}</td>
+                                <td><span class="category-badge">{{ loai }}</span></td>
+                                <td class="text-end">
+                                    <span class="quantity-pill">{{ so_luong }}</span>
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% else %}
+                <div class="empty-state">Chưa có dữ liệu thống kê.</div>
+                {% endif %}
+            </div>
+        </section>
+
+        <section class="dashboard-card">
+            <div class="dashboard-card-header">
+                <span aria-hidden="true">📈</span>
+                <span>Biểu đồ số lượng theo loại đồ</span>
+            </div>
+
+            <div class="dashboard-card-body">
+                {% if thong_ke %}
+                <div class="chart-area">
+                    <canvas id="myChart"
+                            role="img"
+                            aria-label="Biểu đồ số lượng đồ mất theo từng loại"></canvas>
+                </div>
+                <p class="chart-caption mb-0">
+                    Các thanh càng dài thể hiện số lượng đồ mất càng nhiều.
+                </p>
+                {% else %}
+                <div class="empty-state">Chưa có dữ liệu để vẽ biểu đồ.</div>
+                {% endif %}
+            </div>
+        </section>
+    </div>
+
+    <div class="dashboard-footer-note">
+        🤖 Hệ thống hỗ trợ tìm kiếm đồ thất lạc thông minh
+    </div>
+</div>
+
+{% if thong_ke %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+(function () {
+    const labels = {{ thong_ke | map(attribute=0) | list | tojson }};
+    const values = {{ thong_ke | map(attribute=1) | list | tojson }};
+    const canvas = document.getElementById("myChart");
+
+    if (!canvas || typeof Chart === "undefined") {
+        return;
+    }
+
+    new Chart(canvas, {
+        type: "bar",
+        data: {
+            labels: labels,
+            datasets: [{
+                label: "Số lượng đồ mất",
+                data: values,
+                backgroundColor: labels.map((_, i) =>
+                    i % 2 === 0 ? "#3478d4" : "#36a66b"
+                ),
+                borderRadius: 7,
+                borderSkipped: false,
+                maxBarThickness: 28,
+                barPercentage: 0.76,
+                categoryPercentage: 0.82
+            }]
+        },
+        options: {
+            indexAxis: "y",
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: { duration: 650 },
+            layout: {
+                padding: { right: 22, top: 5, bottom: 5 }
+            },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    callbacks: {
+                        label: function(context) {
+                            return " Số lượng: " + context.parsed.x;
+                        }
+                    }
+                }
+            },
+            scales: {
+                x: {
+                    beginAtZero: true,
+                    ticks: {
+                        precision: 0,
+                        stepSize: 1,
+                        color: "#66758a"
+                    },
+                    title: {
+                        display: true,
+                        text: "Số lượng đồ mất",
+                        color: "#52657e",
+                        font: { size: 12, weight: "600" }
+                    },
+                    grid: { color: "#edf1f7" },
+                    border: { display: false }
+                },
+                y: {
+                    ticks: {
+                        color: "#405571",
+                        font: { size: 12, weight: "600" }
+                    },
+                    grid: { display: false },
+                    border: { display: false }
+                }
+            }
+        }
+    });
+})();
+</script>
+{% endif %}
+{% endblock %}

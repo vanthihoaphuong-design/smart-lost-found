@@ -1,0 +1,225 @@
+```html
+{% extends "base.html" %}
+
+{% block title %}
+Báo nhặt được đồ
+{% endblock %}
+
+{% block content %}
+
+<h2 class="mb-4 text-success">
+📦 Báo nhặt được đồ
+</h2>
+
+<form method="POST" enctype="multipart/form-data">
+
+<div class="row">
+
+<div class="col-md-6">
+
+<label class="form-label">
+Tên đồ
+</label>
+
+<input
+type="text"
+name="ten_do"
+class="form-control"
+placeholder="Ví dụ: Bình nước Lock&Lock"
+required>
+
+</div>
+
+<div class="col-md-6">
+
+<label class="form-label">
+Loại đồ
+</label>
+
+<select
+name="loai_do"
+class="form-select"
+required>
+
+<option value="">-- Chọn loại đồ --</option>
+
+<option>Balo</option>
+<option>Bình nước</option>
+<option>Áo khoác</option>
+<option>Mũ</option>
+<option>Ví</option>
+<option>Điện thoại</option>
+<option>Máy tính Casio</option>
+<option>Khác</option>
+
+</select>
+
+</div>
+
+</div>
+
+<br>
+
+<label class="form-label">
+Màu sắc
+</label>
+
+<input
+type="text"
+name="mau_sac"
+class="form-control"
+placeholder="Ví dụ: Đen, Xanh, Trắng..."
+required>
+
+<br>
+
+<label class="form-label">
+Nơi nhặt
+</label>
+
+<select
+name="noi_nhat"
+class="form-select"
+required>
+
+<option>Sân trường</option>
+<option>Nhà xe</option>
+<option>Căn tin</option>
+<option>Thư viện</option>
+<option>Sân bóng</option>
+
+<option>Phòng STEM</option>
+<option>Phòng Tin học 1</option>
+<option>Phòng Tin học 2</option>
+
+<option>Phòng Văn</option>
+<option>Phòng Sử - Địa</option>
+
+<option>Phòng Hội trường</option>
+
+<option>Phòng Đoàn - Đội</option>
+
+<option>Khu Văn phòng</option>
+
+<option>Phòng Tâm lý</option>
+
+<option>6A1</option>
+<option>6A2</option>
+<option>6A3</option>
+
+<option>7A1</option>
+<option>7A2</option>
+<option>7A3</option>
+
+<option>8A1</option>
+<option>8A2</option>
+<option>8A3</option>
+
+<option>9A1</option>
+<option>9A2</option>
+<option>9A3</option>
+
+<option>10A1</option>
+<option>10A2</option>
+<option>10A3</option>
+
+<option>11A1</option>
+<option>11A2</option>
+
+<option>12A1</option>
+<option>12A2</option>
+
+</select>
+
+<br>
+
+<div class="row">
+
+<div class="col-md-6">
+
+<label class="form-label">
+Ngày nhặt
+</label>
+
+<input
+type="date"
+name="ngay_nhat"
+class="form-control"
+required>
+
+</div>
+
+<div class="col-md-6">
+
+<label class="form-label">
+Ảnh đồ vật
+</label>
+
+<input
+type="file"
+name="hinh_anh"
+class="form-control"
+accept="image/*"
+id="previewImage">
+
+</div>
+
+</div>
+
+<br>
+
+<div class="text-center">
+
+<img
+id="imgPreview"
+src=""
+style="display:none;max-width:250px;border-radius:12px;">
+
+</div>
+
+<br>
+
+<div class="text-center">
+
+<button class="btn btn-success btn-lg">
+
+💾 Lưu thông tin
+
+</button>
+
+<a
+href="/found-list"
+class="btn btn-secondary btn-lg">
+
+📋 Danh sách
+
+</a>
+
+</div>
+
+</form>
+
+<script>
+
+const imageInput = document.getElementById("previewImage");
+
+const preview = document.getElementById("imgPreview");
+
+imageInput.addEventListener("change", function(){
+
+    const file=this.files[0];
+
+    if(file){
+
+        preview.src=URL.createObjectURL(file);
+
+        preview.style.display="block";
+
+    }
+
+});
+
+</script>
+
+{% endblock %}
+```

@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+
+{% block title %}
+Đối sánh thông minh
+{% endblock %}
+
+{% block content %}
+
+<h2 class="mb-4 text-primary">
+    🤖 Kết quả đối sánh thông minh
+</h2>
+
+{% if matches %}
+
+<table class="table table-bordered table-hover align-middle">
+<thead class="table-primary">
+    <tr>
+        <th>Đồ bị mất</th>
+        <th>Đồ nhặt được</th>
+        <th style="width: 40%;">Điểm phù hợp</th>
+    </tr>
+</thead>
+<tbody>
+{% for m in matches %}
+    <tr>
+        <td>
+            {% if m.lost.hinh_anh %}
+                <img src="{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}" width="130" height="100" class="rounded shadow-sm mb-2" style="object-fit: cover;">
+                <br>
+            {% endif %}
+            <strong>{{ m.lost.ten_do }}</strong><br>
+            <span class="badge bg-danger">{{ m.lost.loai_do }}</span><br>
+            📍 {{ m.lost.noi_mat }}<br>
+            📅 {{ m.lost.ngay_mat }}
+        </td>
+
+        <td>
+            {% if m.found.hinh_anh %}
+                <img src="{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}" width="130" height="100" class="rounded shadow-sm mb-2" style="object-fit: cover;">
+                <br>
+            {% endif %}
+            <strong>{{ m.found.ten_do }}</strong><br>
+            <span class="badge bg-success">{{ m.found.loai_do }}</span><br>
+            📍 {{ m.found.noi_nhat }}<br>
+            📅 {{ m.found.ngay_nhat }}
+        </td>
+
+        <td>
+            <!-- ĐIỂM TỔNG -->
+            <div class="text-center mb-3">
+                <div class="text-muted small">🎯 ĐIỂM PHÙ HỢP</div>
+                <div class="display-6 fw-bold text-primary">{{ m.score }}/100</div>
+            </div>
+
+            <!-- ĐIỂM CHI TIẾT -->
+            <div class="small">
+                <div class="d-flex justify-content-between mb-1">
+                    <span>🖼️ Hình ảnh</span>
+                    <strong>{{ m.details.hinh_anh }}/50</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                    <span>📝 Tên đồ</span>
+                    <strong>{{ m.details.ten_do }}/15</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                    <span>🎨 Màu sắc</span>
+                    <strong>{{ m.details.mau_sac }}/15</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                    <span>📍 Vị trí</span>
+                    <strong>{{ m.details.vi_tri }}/10</strong>
+                </div>
+                <div class="d-flex justify-content-between mb-1">
+                    <span>📅 Ngày</span>
+                    <strong>{{ m.details.ngay }}/10</strong>
+                </div>
+            </div>
+
+            <hr>
+
+            <!-- PHÂN LOẠI V3.4 -->
+            {% if m.ket_luan %}
+                {% if m.ket_luan.startswith("🟢") %}
+                    <div class="text-center text-success fw-bold">
+                        {{ m.ket_luan }}
+                    </div>
+                {% elif m.ket_luan.startswith("🟡") %}
+                    <div class="text-center text-warning fw-bold">
+                        {{ m.ket_luan }}
+                    </div>
+                {% elif m.ket_luan.startswith("🟠") %}
+                    <div class="text-center fw-bold" style="color: #fd7e14;">
+                        {{ m.ket_luan }}
+                    </div>
+                {% else %}
+                    <div class="text-center text-danger fw-bold">
+                        {{ m.ket_luan }}
+                    </div>
+                {% endif %}
+
+                {% if m.image_warning %}
+                    <div class="text-center small text-danger mt-1">
+                        {{ m.image_warning }}
+                    </div>
+                {% endif %}
+            {% endif %}
+
+            <!-- XÁC NHẬN TRẢ ĐỒ -->
+            {% if m.score >= 40 %}
+                <hr class="my-2">
+                <!-- ĐÃ SỬA: Thay match.lost.id thành m.lost.id và sửa lại đường dẫn hợp lệ -->
+                <a href="/teacher-check/{{ m.lost.id }}/{{ m.found.id }}" class="btn btn-primary">
+                    👩‍🏫 Giáo viên kiểm tra
+                </a>
+            {% endif %}
+        </td>
+    </tr>
+{% endfor %}
+</tbody>
+</table>
+
+{% else %}
+<div class="alert alert-warning">
+    Chưa tìm thấy cặp đồ nào phù hợp.
+</div>
+{% endif %}
+
+{% endblock %}

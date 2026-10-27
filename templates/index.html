@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}
+Trang chủ
+{% endblock %}
+
+{% block content %}
+
+<div class="text-center">
+
+    <h1 class="text-primary">
+        🎒 HỆ THỐNG QUẢN LÝ ĐỒ THẤT LẠC THÔNG MINH
+    </h1>
+
+    <p class="lead">
+        Hỗ trợ tìm kiếm và hoàn trả đồ thất lạc trong trường học
+    </p>
+
+</div>
+
+<div class="row mt-5">
+
+    <div class="col-md-4 mb-3">
+        <a href="/lost" class="btn btn-danger w-100">
+            Báo mất đồ
+        </a>
+    </div>
+
+    <div class="col-md-4 mb-3">
+        <a href="/found" class="btn btn-success w-100">
+            Báo nhặt được đồ
+        </a>
+    </div>
+
+    <div class="col-md-4 mb-3">
+        <a href="/match" class="btn btn-primary w-100">
+            Đối sánh thông minh
+        </a>
+    </div>
+
+</div>
+
+<div class="row">
+
+    <div class="col-md-4 mb-3">
+        <a href="/lost-list" class="btn btn-outline-danger w-100">
+            Danh sách đồ mất
+        </a>
+    </div>
+
+    <div class="col-md-4 mb-3">
+        <a href="/found-list" class="btn btn-outline-success w-100">
+            Danh sách đồ nhặt
+        </a>
+    </div>
+
+    <div class="col-md-4 mb-3">
+        <a href="/dashboard" class="btn btn-outline-primary w-100">
+            Dashboard
+        </a>
+    </div>
+
+</div>
+
+<div class="row">
+
+    <div class="col-md-6 mb-3">
+        <a href="/heatmap" class="btn btn-warning w-100">
+            🔥 Heatmap
+        </a>
+    </div>
+
+    <div class="col-md-6 mb-3">
+        <a href="/search" class="btn btn-info w-100">
+            🔍 Tìm kiếm
+        </a>
+    </div>
+
+</div>
+
+{% endblock %}

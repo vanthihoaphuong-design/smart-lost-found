@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}Chỉnh sửa thông tin đồ vật{% endblock %}
+
+{% block content %}
+<div class="container my-4" style="max-width: 700px;">
+    <div class="card shadow-sm border-0 rounded-3">
+        <div class="card-header {% if is_lost %}bg-primary{% else %}bg-success{% endif %} text-white py-3">
+            <h4 class="mb-0 fw-bold">✏️ Chỉnh sửa {% if is_lost %}báo mất{% else %}báo nhặt{% endif %}</h4>
+        </div>
+        <div class="card-body p-4">
+            <form action="{{ request.path }}" method="POST" enctype="multipart/form-data">
+                
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Tên đồ vật</label>
+                    <input type="text" name="ten_do" class="form-control" value="{{ item.ten_do }}" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Loại đồ</label>
+                    <select name="loai_do" class="form-select" required>
+                        <option value="Sách vở / Dụng cụ học tập" {% if item.loai_do == 'Sách vở / Dụng cụ học tập' %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
+                        <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if item.loai_do == 'Thiết bị điện tử (Laptop, Điện thoại...)' %}selected{% endif %}>Thiết bị điện tử (Laptop, Điện thoại...)</option>
+                        <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if item.loai_do == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' %}selected{% endif %}>Trang phục / Phụ kiện (Áo khoác, Ví...)</option>
+                        <option value="Giấy tờ / Thẻ học sinh" {% if item.loai_do == 'Giấy tờ / Thẻ học sinh' %}selected{% endif %}>Giấy tờ / Thẻ học sinh</option>
+                        <option value="Khác" {% if item.loai_do == 'Khác' %}selected{% endif %}>Khác</option>
+                    </select>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">Màu sắc</label>
+                        <input type="text" name="mau_sac" class="form-control" value="{{ item.mau_sac }}">
+                    </div>
+
+                    <!-- DANH SÁCH CHỌN ĐẦY ĐỦ 32 KHU VỰC / PHÒNG HỌC -->
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label fw-bold">{% if is_lost %}Nơi mất{% else %}Nơi nhặt{% endif %}</label>
+                        <select name="{% if is_lost %}noi_mat{% else %}noi_nhat{% endif %}" class="form-select" required>
+                            {% set current_location = item.noi_mat if is_lost else item.noi_nhat %}
+                            {% set locations = [
+                                "Sân trường", "Nhà xe", "Căn tin", "Thư viện", "Sân bóng",
+                                "Phòng STEM", "Phòng Tin học 1", "Phòng Tin học 2",
+                                "Phòng Văn", "Phòng Sử - Địa", "Phòng Hội trường",
+                                "Phòng Đoàn - Đội", "Khu Văn phòng", "Phòng Tâm lý",
+                                "6A1", "6A2", "6A3",
+                                "7A1", "7A2", "7A3",
+                                "8A1", "8A2", "8A3",
+                                "9A1", "9A2", "9A3",
+                                "10A1", "10A2", "10A3",
+                                "11A1", "11A2",
+                                "12A1", "12A2"
+                            ] %}
+                            {% for loc in locations %}
+                                <option value="{{ loc }}" {% if current_location == loc %}selected{% endif %}>{{ loc }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">{% if is_lost %}Ngày mất{% else %}Ngày nhặt{% endif %}</label>
+                    <input type="date" name="{% if is_lost %}ngay_mat{% else %}ngay_nhat{% endif %}" class="form-control" value="{{ item.ngay_mat if is_lost else item.ngay_nhat }}" required>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Ảnh đồ vật</label>
+                    {% if item.hinh_anh %}
+                        <div class="mb-2 text-center p-2 border rounded bg-light">
+                            <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" 
+                                 alt="Ảnh đồ vật" 
+                                 class="img-thumbnail rounded shadow-sm" 
+                                 style="max-width: 180px; max-height: 180px; object-fit: cover;">
+                            <div class="text-muted small mt-1">Ảnh hiện tại (Chọn tệp bên dưới nếu muốn thay đổi)</div>
+                        </div>
+                    {% endif %}
+                    <input type="file" name="hinh_anh" class="form-control" accept="image/*">
+                </div>
+
+                <div class="d-flex justify-content-between mt-4">
+                    <a href="{% if is_lost %}/lost-list{% else %}/found-list{% endif %}" class="btn btn-secondary px-4 fw-bold">📋 Danh sách</a>
+                    <button type="submit" class="btn btn-success px-4 fw-bold">💾 Lưu thay đổi</button>
+                </div>
+
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

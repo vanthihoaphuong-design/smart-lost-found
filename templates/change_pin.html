@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block title %}Đổi Mã PIN Quản Trị{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6 col-lg-5">
+        <div class="card shadow-sm border-0 rounded-3 mt-4">
+            <div class="card-header bg-primary text-white text-center py-3">
+                <h4 class="mb-0 fw-bold">🔑 Đổi Mã PIN Quản Trị</h4>
+            </div>
+            <div class="card-body p-4">
+
+                {% if error %}
+                    <div class="alert alert-danger text-center" role="alert">
+                        ❌ {{ error }}
+                    </div>
+                {% endif %}
+
+                {% if success %}
+                    <div class="alert alert-success text-center" role="alert">
+                        ✅ {{ success }}
+                    </div>
+                {% endif %}
+
+                <form action="/change-pin" method="POST">
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">🔒 Mã PIN cũ hiện tại:</label>
+                        <input type="password" name="old_pin" class="form-control" placeholder="Nhập mã PIN cũ" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">🔑 Mã PIN mới:</label>
+                        <input type="password" name="new_pin" class="form-control" placeholder="Nhập mã PIN mới" required>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">✔️ Xác nhận Mã PIN mới:</label>
+                        <input type="password" name="confirm_pin" class="form-control" placeholder="Nhập lại mã PIN mới" required>
+                    </div>
+
+                    <div class="d-grid gap-2 mt-4">
+                        <button type="submit" class="btn btn-primary fw-bold py-2">
+                            💾 Cập nhật Mã PIN mới
+                        </button>
+                        <a href="/" class="btn btn-outline-secondary">Quay lại Trang chủ</a>
+                    </div>
+                </form>
+
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

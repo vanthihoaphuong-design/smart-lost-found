@@ -1,0 +1,136 @@
+
+{% extends "base.html" %}
+
+{% block title %}
+Chỉnh sửa đồ thất lạc
+{% endblock %}
+
+{% block content %}
+
+<div class="container py-4">
+    <div class="row justify-content-center">
+        <div class="col-12 col-lg-8 col-xl-7">
+
+            <!-- Tiêu đề -->
+            <div class="mb-4">
+                <a href="/lost-list"
+                   class="text-decoration-none text-secondary small">
+                    ← Quay lại danh sách
+                </a>
+
+                <h2 class="fw-bold text-primary mt-3 mb-2">
+                    Chỉnh sửa đồ thất lạc
+                </h2>
+
+                <p class="text-secondary mb-0">
+                    Cập nhật thông tin để hỗ trợ tìm kiếm và hoàn trả đồ.
+                </p>
+            </div>
+
+            <!-- Khung biểu mẫu -->
+            <div class="card border-0 shadow-sm rounded-4">
+                <div class="card-body p-4 p-md-5">
+
+                    <form method="POST">
+
+                        <div class="mb-4">
+                            <label for="ten_do" class="form-label fw-semibold">
+                                Tên đồ thất lạc
+                            </label>
+
+                            <input
+                                type="text"
+                                id="ten_do"
+                                name="ten_do"
+                                class="form-control form-control-lg"
+                                value="{{ item.ten_do or '' }}"
+                                placeholder="Ví dụ: Balo màu đen"
+                                required>
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="loai_do" class="form-label fw-semibold">
+                                Loại đồ
+                            </label>
+
+                            <select
+                                id="loai_do"
+                                name="loai_do"
+                                class="form-select form-select-lg"
+                                required>
+
+                                {% for loai in [
+                                    "Balo",
+                                    "Bình nước",
+                                    "Áo khoác",
+                                    "Mũ",
+                                    "Ví",
+                                    "Điện thoại",
+                                    "Máy tính Casio",
+                                    "Khác"
+                                ] %}
+                                    <option value="{{ loai }}"
+                                        {% if item.loai_do == loai %}selected{% endif %}>
+                                        {{ loai }}
+                                    </option>
+                                {% endfor %}
+
+                            </select>
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="noi_mat" class="form-label fw-semibold">
+                                Nơi làm mất
+                            </label>
+
+                            <input
+                                type="text"
+                                id="noi_mat"
+                                name="noi_mat"
+                                class="form-control form-control-lg"
+                                value="{{ item.noi_mat or '' }}"
+                                placeholder="Ví dụ: Nhà xe, sân trường"
+                                required>
+                        </div>
+
+                        <div class="mb-4">
+                            <label for="ngay_mat" class="form-label fw-semibold">
+                                Ngày mất
+                            </label>
+
+                            <input
+                                type="date"
+                                id="ngay_mat"
+                                name="ngay_mat"
+                                class="form-control form-control-lg"
+                                value="{{ item.ngay_mat.strftime('%Y-%m-%d') if item.ngay_mat and item.ngay_mat.strftime is defined else (item.ngay_mat or '') }}"
+                                required>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <div class="d-flex flex-column flex-sm-row gap-2 justify-content-end">
+                            <a href="/lost-list"
+                               class="btn btn-outline-secondary px-4 py-2">
+                                Hủy
+                            </a>
+
+                            <button type="submit"
+                                    class="btn btn-primary px-4 py-2">
+                                Lưu thay đổi
+                            </button>
+                        </div>
+
+                    </form>
+                </div>
+            </div>
+
+            <p class="text-secondary small mt-3 mb-0">
+                Lưu ý: Vui lòng kiểm tra thông tin trước khi cập nhật.
+            </p>
+
+        </div>
+    </div>
+</div>
+
+{% endblock %}

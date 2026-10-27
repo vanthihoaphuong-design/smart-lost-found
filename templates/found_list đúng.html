@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3 class="fw-bold text-success">📦 Danh Sách Đồ Nhặt Được</h3>
+        <a href="{{ url_for('found') }}" class="btn btn-success fw-bold">
+            ➕ Báo Nhặt Đồ Mới
+        </a>
+    </div>
+
+    <div class="card shadow-sm border-0">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover align-middle mb-0">
+                    <thead class="table-success text-center">
+                        <tr>
+                            <th>STT</th>
+                            <th>Hình ảnh</th>
+                            <th>Tên đồ vật</th>
+                            <th>Loại đồ</th>
+                            <th>Nơi nhặt</th>
+                            <th>Ngày nhặt</th>
+                            <th>Trạng thái</th>
+                            <th>Thời điểm trả</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td class="text-center fw-bold">{{ item.id }}</td>
+                            <td class="text-center" style="width: 100px;">
+                                {% if item.hinh_anh %}
+                                    <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" class="img-thumbnail" style="max-height: 80px; object-fit: cover;">
+                                {% else %}
+                                    <span class="text-muted">Không có ảnh</span>
+                                {% endif %}
+                            </td>
+                            <td class="fw-bold">{{ item.ten_do }}</td>
+                            <td><span class="badge bg-info text-dark">{{ item.loai_do }}</span></td>
+                            <td>{{ item.noi_nhat }}</td>
+                            <td>{{ item.ngay_nhat }}</td>
+                            <td class="text-center">
+                                {% if item.trang_thai == 'DA_TRA' %}
+                                    <span class="badge bg-success">✅ Đã có người nhận</span>
+                                {% else %}
+                                    <span class="badge bg-primary mb-1">📦 Đang lưu giữ</span><br>
+                                    <!-- Nút Đánh dấu đã trả gắn Modal nhập PIN -->
+                                    <button type="button" class="btn btn-sm btn-success mt-1" onclick="confirmReturn('{{ item.id }}', '{{ item.ten_do }}')">
+                                        ✅ Đánh dấu đã trả
+                                    </button>
+                                {% endif %}
+                            </td>
+                            <td class="text-center">
+                                {% if item.thoi_diem_tra %}
+                                    {{ item.thoi_diem_tra.strftime("%d/%m/%Y %H:%M") }}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="8" class="text-center text-muted py-4">Chưa có dữ liệu đồ nhặt được.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Nhập PIN Xác Nhận Hoàn Trả -->
+<div class="modal fade" id="pinReturnModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title fw-bold">🔑 Xác nhận hoàn trả đồ vật</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <p>Xác nhận món đồ: <strong id="returnItemName" class="text-primary"></strong> đã được trao trả lại cho người mất?</p>
+                <div class="mb-3 text-start">
+                    <label class="form-label fw-bold">Nhập Mã PIN Giáo viên:</label>
+                    <input type="password" id="inputReturnPin" class="form-control text-center fs-4" placeholder="••••••" maxlength="10">
+                    <div id="returnPinError" class="text-danger small mt-1" style="display: none;">❌ Mã PIN không chính xác!</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
+                <button type="button" class="btn btn-success fw-bold" onclick="submitReturn()">Xác nhận hoàn trả</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let selectedReturnId = null;
+
+function confirmReturn(id, name) {
+    selectedReturnId = id;
+    document.getElementById("returnItemName").innerText = name;
+    document.getElementById("inputReturnPin").value = "";
+    document.getElementById("returnPinError").style.display = "none";
+    
+    let modal = new bootstrap.Modal(document.getElementById('pinReturnModal'));
+    modal.show();
+}
+
+function submitReturn() {
+    let inputPin = document.getElementById("inputReturnPin").value.trim();
+    
+    // Gọi API lấy mã PIN cấu hình từ server
+    fetch('/get-pin')
+        .then(response => response.json())
+        .then(data => {
+            if (inputPin === data.pin) {
+                // Đúng PIN -> Thực hiện chuyển hướng hoàn trả
+                window.location.href = "/found-return/" + selectedReturnId;
+            } else {
+                // Sai PIN -> Hiển thị cảnh báo lỗi
+                document.getElementById("returnPinError").style.display = "block";
+            }
+        })
+        .catch(err => {
+            alert("Lỗi kết nối máy chủ!");
+        });
+}
+</script>
+{% endblock %}

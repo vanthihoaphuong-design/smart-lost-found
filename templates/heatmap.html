@@ -1,0 +1,356 @@
+
+{% extends "base.html" %}
+
+{% block title %}Bản đồ thất lạc{% endblock %}
+
+{% block content %}
+<style>
+.hm-page {
+    --blue: #1769aa;
+    --teal: #16a6a1;
+    --ink: #18324b;
+    --muted: #6b7c8f;
+    color: var(--ink);
+}
+
+.hm-page .hero {
+    padding: 24px;
+    border-radius: 18px;
+    color: #fff;
+    background: linear-gradient(120deg, #1769aa, #168fba 58%, #16a6a1);
+    margin-bottom: 22px;
+    box-shadow: 0 10px 26px rgba(23, 105, 170, .13);
+}
+
+.hm-page .hero h1 {
+    font-size: clamp(1.4rem, 2.5vw, 2rem);
+    font-weight: 800;
+    margin: 0 0 7px;
+}
+
+.hm-page .hero p {
+    margin: 0;
+    opacity: .92;
+}
+
+.hm-page .stat,
+.hm-page .panel {
+    background: #fff;
+    border: 1px solid #e4edf5;
+    border-radius: 16px;
+    padding: 19px;
+    box-shadow: 0 5px 16px rgba(24, 50, 75, .045);
+    height: 100%;
+}
+
+.hm-page .label {
+    font-size: .9rem;
+    font-weight: 600;
+    color: var(--muted);
+    margin-bottom: 8px;
+}
+
+.hm-page .value {
+    font-size: 2rem;
+    font-weight: 800;
+    line-height: 1.2;
+    color: #124d80;
+    overflow-wrap: anywhere;
+}
+
+.hm-page .note,
+.hm-page .subtitle {
+    font-size: .84rem;
+    color: var(--muted);
+    margin-top: 7px;
+}
+
+.hm-page .panel h2 {
+    font-size: 1.08rem;
+    font-weight: 800;
+    margin: 0 0 4px;
+}
+
+.hm-page .subtitle {
+    margin: 0 0 18px;
+}
+
+.hm-page .bar-row {
+    display: grid;
+    grid-template-columns: minmax(90px, 145px) minmax(70px, 1fr) 30px;
+    gap: 10px;
+    align-items: center;
+    margin: 13px 0;
+}
+
+.hm-page .area {
+    font-size: .9rem;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+}
+
+.hm-page .track {
+    height: 12px;
+    background: #edf3f8;
+    border-radius: 99px;
+    overflow: hidden;
+}
+
+.hm-page .bar {
+    height: 100%;
+    border-radius: 99px;
+    background: linear-gradient(90deg, #1769aa, #16a6a1);
+}
+
+.hm-page .count {
+    text-align: right;
+    font-weight: 800;
+    color: #124d80;
+    font-variant-numeric: tabular-nums;
+}
+
+.hm-page .tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(125px, 1fr));
+    gap: 11px;
+}
+
+.hm-page .tile {
+    padding: 13px;
+    border-radius: 14px;
+    border: 1px solid #cbdfee;
+    background: #edf5fc;
+    min-height: 100px;
+    overflow-wrap: anywhere;
+}
+
+.hm-page .tile-name {
+    font-size: .86rem;
+    font-weight: 700;
+}
+
+.hm-page .tile-count {
+    font-size: 1.65rem;
+    font-weight: 800;
+    line-height: 1.25;
+    margin-top: 8px;
+}
+
+.hm-page .tile-unit {
+    font-size: .78rem;
+    color: var(--muted);
+}
+
+.hm-page .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    margin-top: 16px;
+    font-size: .82rem;
+    color: var(--muted);
+}
+
+.hm-page .dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    margin-right: 6px;
+}
+
+.hm-page .empty {
+    padding: 22px;
+    border-radius: 12px;
+    text-align: center;
+    color: var(--muted);
+    background: #f7fafc;
+}
+
+@media (max-width: 576px) {
+    .hm-page .hero {
+        padding: 20px;
+    }
+
+    .hm-page .panel,
+    .hm-page .stat {
+        padding: 15px;
+    }
+
+    .hm-page .bar-row {
+        grid-template-columns: minmax(78px, 105px) minmax(40px, 1fr) 25px;
+        gap: 7px;
+    }
+
+    .hm-page .area {
+        font-size: .82rem;
+    }
+}
+</style>
+
+<div class="hm-page">
+
+{% set ns = namespace(total=0, active=0, top_name='Chưa có dữ liệu', top_count=0) %}
+
+{% for area, count in data %}
+    {% set ns.total = ns.total + count %}
+
+    {% if count > 0 %}
+        {% set ns.active = ns.active + 1 %}
+    {% endif %}
+
+    {% if count > ns.top_count %}
+        {% set ns.top_count = count %}
+        {% set ns.top_name = area %}
+    {% endif %}
+{% endfor %}
+
+{% set max_count = ([data|map(attribute=1)|list|max, 1]|max) if data else 1 %}
+
+<section class="hero">
+    <h1>🗺️ Bản đồ khu vực thất lạc</h1>
+    <p>
+        Thống kê số đồ vật bị mất theo khu vực trong trường học,
+        giúp nhận biết những nơi cần lưu ý.
+    </p>
+</section>
+
+<!-- Ba ô thống kê -->
+<div class="row g-3 mb-4">
+
+    <div class="col-12 col-md-4">
+        <div class="stat">
+            <div class="label">Tổng lượt ghi nhận đồ mất</div>
+            <div class="value">{{ ns.total }}</div>
+            <div class="note">Tổng số bản ghi hiện có trong dữ liệu.</div>
+        </div>
+    </div>
+
+    <div class="col-12 col-md-4">
+        <div class="stat">
+            <div class="label">Khu vực có ghi nhận</div>
+            <div class="value">{{ ns.active }}</div>
+            <div class="note">Số khu vực có ít nhất một bản ghi.</div>
+        </div>
+    </div>
+
+    <div class="col-12 col-md-4">
+        <div class="stat">
+            <div class="label">Khu vực ghi nhận nhiều nhất</div>
+            <div class="value" style="font-size:1.45rem">
+                {{ ns.top_name }}
+            </div>
+            <div class="note">{{ ns.top_count }} lượt ghi nhận</div>
+        </div>
+    </div>
+
+</div>
+
+<div class="row g-3 mb-4">
+
+    <!-- Biểu đồ thanh ngang -->
+    <div class="col-12 col-lg-7">
+        <section class="panel">
+            <h2>Số lượt theo từng khu vực</h2>
+            <div class="subtitle">
+                Thanh dài hơn tương ứng với số lượt ghi nhận nhiều hơn.
+            </div>
+
+            {% if data %}
+                {% for area, count in data|sort(attribute=1, reverse=true) %}
+
+                <div class="bar-row">
+                    <div class="area">{{ area }}</div>
+
+                    <div class="track"
+                         role="img"
+                         aria-label="{{ area }}: {{ count }} lượt">
+                        <div class="bar"
+                             style="width:{{ (count / max_count * 100) if max_count else 0 }}%">
+                        </div>
+                    </div>
+
+                    <div class="count">{{ count }}</div>
+                </div>
+
+                {% endfor %}
+            {% else %}
+                <div class="empty">Chưa có dữ liệu để thống kê.</div>
+            {% endif %}
+        </section>
+    </div>
+
+    <!-- Bản đồ màu theo khu vực -->
+    <div class="col-12 col-lg-5">
+        <section class="panel">
+            <h2>Mức độ ghi nhận</h2>
+            <div class="subtitle">
+                Tổng quan nhanh theo số lượt trong từng khu vực.
+            </div>
+
+            {% if data %}
+            <div class="tiles">
+
+                {% for area, count in data %}
+
+                    {% set intensity = (count / max_count) if max_count else 0 %}
+
+                    {% if count == 0 %}
+                        {% set bg = '#f4f8fb' %}
+                        {% set border = '#e4edf5' %}
+                        {% set color = '#7b8b9a' %}
+                    {% elif intensity >= 0.7 %}
+                        {% set bg = '#d7f3ef' %}
+                        {% set border = '#62c8bd' %}
+                        {% set color = '#116e70' %}
+                    {% elif intensity >= 0.35 %}
+                        {% set bg = '#e1effb' %}
+                        {% set border = '#8abce5' %}
+                        {% set color = '#175d91' %}
+                    {% else %}
+                        {% set bg = '#edf5fc' %}
+                        {% set border = '#cbdfee' %}
+                        {% set color = '#345b78' %}
+                    {% endif %}
+
+                    <div class="tile"
+                         style="background:{{ bg }};border-color:{{ border }}">
+
+                        <div class="tile-name" style="color:{{ color }}">
+                            {{ area }}
+                        </div>
+
+                        <div class="tile-count" style="color:{{ color }}">
+                            {{ count }}
+                        </div>
+
+                        <div class="tile-unit">lượt ghi nhận</div>
+                    </div>
+
+                {% endfor %}
+
+            </div>
+
+            <div class="legend">
+                <span><i class="dot" style="background:#62c8bd"></i>Nhiều</span>
+                <span><i class="dot" style="background:#8abce5"></i>Trung bình</span>
+                <span><i class="dot" style="background:#cbdfee"></i>Ít</span>
+                <span><i class="dot" style="background:#e4edf5"></i>Chưa ghi nhận</span>
+            </div>
+
+            {% else %}
+                <div class="empty">Chưa có dữ liệu để hiển thị.</div>
+            {% endif %}
+
+        </section>
+    </div>
+
+</div>
+
+<div class="text-muted small">
+    <strong>Lưu ý:</strong>
+    Bản đồ được tổng hợp từ các bản ghi đồ thất lạc đã lưu trong hệ thống.
+    Kết quả phản ánh dữ liệu hiện có, không khẳng định đây là nơi chắc chắn làm mất đồ.
+</div>
+
+</div>
+{% endblock %}
