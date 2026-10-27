@@ -14,23 +14,18 @@ from database import db
 from models.lost_item import LostItem
 from models.found_item import FoundItem
 
-# Bọc import OpenCV và YOLOv8 an toàn
+# Bọc import OpenCV an toàn (không nạp trực tiếp mô hình YOLOv8 để tiết kiệm 350MB RAM)
 try:
     import cv2
     import numpy as np
-    from ai.detect import detect_object
-    from ultralytics import YOLO
-    model = YOLO("yolov8n.pt")
 except Exception as e:
-    print(f"Lỗi khởi tạo AI/OpenCV: {e}")
-    model = None
+    print(f"Lỗi khởi tạo OpenCV/NumPy: {e}")
 
 from flask import jsonify
 
 # =========================================================
 # BỘ NHỚ ĐỆM (CACHE) ĐẶC TRƯNG ẢNH TỐI ƯU HIỆU NĂNG
 # =========================================================
-IMAGE_CACHE = {}
 FEATURE_CACHE = {}
 
 def get_feature_cache(img_path):
@@ -43,57 +38,20 @@ def save_feature_cache(img_path, features):
         return
     FEATURE_CACHE[img_path] = features
 
-def crop_object(img_path, yolo_model):
-    if yolo_model is None:
-        return None
-    try:
-        img = cv2.imread(img_path)
-        if img is None:
-            return None
-
-        results = yolo_model(img, verbose=False)
-        if not results or len(results[0].boxes) == 0:
-            return img
-
-        boxes = results[0].boxes
-        best_box = None
-        best_conf = 0
-
-        for box in boxes:
-            conf = float(box.conf[0])
-            if conf > best_conf:
-                best_conf = conf
-                best_box = box
-
-        if best_box is None:
-            return img
-
-        x1, y1, x2, y2 = map(int, best_box.xyxy[0])
-        h, w = img.shape[:2]
-
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        x2 = min(w, x2)
-        y2 = min(h, y2)
-
-        crop = img[y1:y2, x1:x2]
-        if crop.size == 0:
-            return img
-
-        return crop
-    except Exception:
-        return None
-
 def calculate_image_features(img_path):
     cached = get_feature_cache(img_path)
     if cached is not None:
         return cached
 
-    img = crop_object(img_path, model)
-    if img is None:
+    if not os.path.exists(img_path):
         return None
 
     try:
+        img = cv2.imread(img_path)
+        if img is None:
+            return None
+
+        # Thu nhỏ ảnh về tối đa 400px để tính toán siêu nhanh
         max_size = 400
         h, w = img.shape[:2]
         if max(h, w) > max_size:
@@ -104,7 +62,7 @@ def calculate_image_features(img_path):
 
         features = {}
 
-        # 1. ORB
+        # 1. ORB (Trích xuất điểm đặc trưng)
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -116,7 +74,7 @@ def calculate_image_features(img_path):
             features["orb_keypoints"] = []
             features["orb_descriptors"] = None
 
-        # 2. dHASH
+        # 2. dHASH (So sánh ma trận băm ảnh)
         try:
             gray_small = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             resized = cv2.resize(gray_small, (9, 8), interpolation=cv2.INTER_AREA)
@@ -124,7 +82,7 @@ def calculate_image_features(img_path):
         except Exception:
             features["dhash"] = None
 
-        # 3. HSV Histogram
+        # 3. HSV Histogram (So sánh phân bố màu sắc)
         try:
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
             hist = cv2.calcHist([hsv], [0, 1], None, [18, 16], [0, 180, 0, 256])
@@ -135,7 +93,8 @@ def calculate_image_features(img_path):
 
         save_feature_cache(img_path, features)
         return features
-    except Exception:
+    except Exception as e:
+        print(f"Lỗi trích xuất đặc trưng ảnh: {e}")
         return None
 
 
@@ -167,7 +126,7 @@ def lost():
             filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
             file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         
-            # Nén ảnh về kích thước nhỏ nhẹ để tiết kiệm RAM
+            # Nén ảnh về 800x800 để tiết kiệm bộ nhớ
             try:
                 img = Image.open(file)
                 img.thumbnail((800, 800))
@@ -175,13 +134,13 @@ def lost():
                     img = img.convert("RGB")
                 img.save(file_path, "JPEG", quality=75)
             except Exception as e:
-                print(f"Lỗi nén ảnh: {e}")
+                print(f"Lỗi nén ảnh lost: {e}")
                 file.save(file_path)
 
             try:
                 calculate_image_features(file_path)
             except Exception as e:
-                print(f"Lỗi tính đặc trưng: {e}")
+                print(f"Lỗi tính đặc trưng lost: {e}")
 
         item = LostItem(
             ten_do=request.form.get("ten_do"),
@@ -219,13 +178,13 @@ def found():
                     img = img.convert("RGB")
                 img.save(file_path, "JPEG", quality=75)
             except Exception as e:
-                print(f"Lỗi nén ảnh: {e}")
+                print(f"Lỗi nén ảnh found: {e}")
                 file.save(file_path)
 
             try:
                 calculate_image_features(file_path)
             except Exception as e:
-                print(f"Lỗi tính đặc trưng: {e}")
+                print(f"Lỗi tính đặc trưng found: {e}")
 
         item = FoundItem(
             ten_do=request.form.get("ten_do"),
@@ -317,9 +276,6 @@ def search():
     )
 
 
-# =========================================================
-# ROUTE QUẢN LÝ / CHỈNH SỬA / XÓA ĐỒ THẤT LẠC
-# =========================================================
 @app.route("/delete-lost/<int:item_id>")
 @app.route("/delete/<int:item_id>")
 def delete_item(item_id):
@@ -329,9 +285,6 @@ def delete_item(item_id):
     return redirect(url_for("list_items"))
 
 
-# =========================================================
-# ROUTE CHỈNH SỬA ĐỒ MẤT VÀ ĐỒ NHẶT
-# =========================================================
 @app.route("/edit-lost/<int:item_id>", methods=["GET", "POST"])
 @app.route("/edit/<int:item_id>", methods=["GET", "POST"])
 def edit_lost(item_id):
@@ -490,9 +443,6 @@ def found_return(id):
     return redirect(url_for("found_list"))
 
 
-# =========================================================
-# HÀM SO SÁNH CHUỖI TỐI ƯU
-# =========================================================
 def similarity(text1, text2):
     if not text1 or not text2:
         return 0.0
@@ -711,9 +661,6 @@ def match_items():
     return render_template("match.html", matches=matches)
 
 
-# =========================================================
-# ROUTE GIÁO VIÊN KIỂM TRA
-# =========================================================
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
 def teacher_check(lost_id, found_id):
     lost = LostItem.query.get_or_404(lost_id)
@@ -761,9 +708,6 @@ def teacher_check(lost_id, found_id):
     )
 
 
-# =========================================================
-# ROUTE XÁC NHẬN BẢO MẬT MÃ PIN CỦA GIÁO VIÊN
-# =========================================================
 @app.route("/confirm-return/<int:lost_id>/<int:found_id>", methods=["GET", "POST"])
 def confirm_return(lost_id, found_id):
     pin_code = request.form.get("pin_code", "").strip() if request.method == "POST" else request.args.get("pin_code", "").strip()
@@ -797,9 +741,6 @@ def confirm_return(lost_id, found_id):
     """
 
 
-# =========================================================
-# ROUTE XUẤT BÁO CÁO EXCEL DÀNH CHO BGH / GIÁO VIÊN
-# =========================================================
 from datetime import datetime
 from io import BytesIO
 
@@ -877,7 +818,7 @@ def export_excel():
         download_name=filename
     )
 
-# --- CÁC HÀM XỬ LÝ MÃ PIN TỰ ĐỘNG VỚI CONFIG.JSON ---
+
 def get_current_pin():
     try:
         with open("config.json", "r", encoding="utf-8") as f:
