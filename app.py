@@ -156,6 +156,9 @@ def home():
     return render_template("index.html")
 
 
+# =========================================================
+# HÀM BÁO MẤT ĐỒ (ĐÃ TỐI ƯU SIÊU NHẸ RAM)
+# =========================================================
 @app.route("/lost", methods=["GET", "POST"])
 def lost():
     if request.method == "POST":
@@ -167,7 +170,7 @@ def lost():
             filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
             file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         
-            # Nén ảnh để tránh tràn RAM 512MB trên Render
+            # Nén ảnh về kích thước nhỏ để tiết kiệm RAM
             try:
                 img = Image.open(file)
                 img.thumbnail((800, 800))
@@ -182,15 +185,6 @@ def lost():
                 calculate_image_features(file_path)
             except Exception as e:
                 print(f"Lỗi calculate_image_features lost: {e}")
-
-        ai_name = "Không xác định"
-        score = 0
-
-        if filename != "":
-            try:
-                ai_name, score = detect_object(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-            except Exception as e:
-                print(f"Lỗi detect_object lost: {e}")
 
         item = LostItem(
             ten_do=request.form.get("ten_do"),
@@ -210,6 +204,9 @@ def lost():
     return render_template("lost_form.html")
 
 
+# =========================================================
+# HÀM BÁO NHẶT ĐỒ (ĐÃ TỐI ƯU SIÊU NHẸ RAM)
+# =========================================================
 @app.route("/found", methods=["GET", "POST"])
 def found():
     if request.method == "POST":
@@ -235,15 +232,6 @@ def found():
                 calculate_image_features(file_path)
             except Exception as e:
                 print(f"Lỗi calculate_image_features found: {e}")
-
-        ai_name = "Không xác định"
-        score = 0
-
-        if filename != "":
-            try:
-                ai_name, score = detect_object(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-            except Exception as e:
-                print(f"Lỗi detect_object found: {e}")
 
         item = FoundItem(
             ten_do=request.form.get("ten_do"),
@@ -348,7 +336,7 @@ def delete_item(item_id):
 
 
 # =========================================================
-# ROUTE CHỈNH SỬA ĐỒ MẤT VÀ ĐỒ NHẶT (DÙNG CHUNG 1 TEMPLATE)
+# ROUTE CHỈNH SỬA ĐỒ MẤT VÀ ĐỒ NHẶT
 # =========================================================
 @app.route("/edit-lost/<int:item_id>", methods=["GET", "POST"])
 @app.route("/edit/<int:item_id>", methods=["GET", "POST"])
