@@ -97,18 +97,21 @@ def calculate_image_features(img_path):
         print(f"Lỗi trích xuất đặc trưng ảnh: {e}")
         return None
 
-
 app = Flask(__name__)
-app.secret_key = "smart_lost_found_secret_key"
-app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///lost_found.db"
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
-UPLOAD_FOLDER = "uploads"
-app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-db.init_app(app)
+# Cấu hình kết nối Cơ sở dữ liệu Cloud PostgreSQL trên Render
+db_url = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+# Tự động tạo bảng khi khởi chạy
 with app.app_context():
     db.create_all()
-
 
 @app.route("/")
 def home():
