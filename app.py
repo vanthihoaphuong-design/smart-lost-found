@@ -26,7 +26,7 @@ UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-# 2. Cấu hình PostgreSQL Cloud an toàn
+# 2. Cấu hình PostgreSQL Cloud trên Render
 db_url = os.environ.get("DATABASE_URL", "sqlite:///lost_found.db")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -42,7 +42,7 @@ db = SQLAlchemy(app)
 from models.lost_item import LostItem
 from models.found_item import FoundItem
 
-# 4. Tự động khởi tạo bảng trên Database
+# 4. Tự động tạo các bảng database
 with app.app_context():
     try:
         db.create_all()
@@ -51,7 +51,7 @@ with app.app_context():
         print(f"Lỗi khởi tạo database: {e}")
 
 # =========================================================
-# BỘ NHỚ ĐỆM CACHE ẢNH
+# BỘ NHỚ ĐỆM CACHE ẢNH TỐI ƯU HIỆU NĂNG
 # =========================================================
 FEATURE_CACHE = {}
 
@@ -121,7 +121,7 @@ def calculate_image_features(img_path):
         return None
 
 # =========================================================
-# ROUTES CHỨC NĂNG
+# ROUTES GIAO DIỆN VÀ LƯU DỮ LIỆU
 # =========================================================
 
 @app.route("/")
@@ -160,21 +160,38 @@ def lost():
         noi_mat = request.form.get("noi_mat", "")
         ngay_mat = request.form.get("ngay_mat", "")
 
-        item = LostItem()
-        for attr, val in [
-            ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
-            ('loai_do', loai_do), ('category', loai_do),
-            ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
-            ('noi_mat', noi_mat), ('location', noi_mat),
-            ('ngay_mat', ngay_mat), ('date', ngay_mat),
-            ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
-            ('trang_thai', 'DANG_TIM'), ('status', 'DANG_TIM')
-        ]:
-            if hasattr(item, attr):
-                setattr(item, attr, val)
+        # Khởi tạo đối tượng LostItem an toàn 100% bằng cách thử nhiều cách
+        try:
+            item = LostItem(
+                ten_do=ten_do,
+                loai_do=loai_do,
+                mau_sac=mau_sac,
+                noi_mat=noi_mat,
+                ngay_mat=ngay_mat,
+                hinh_anh=filename,
+                trang_thai="DANG_TIM"
+            )
+        except Exception:
+            item = LostItem()
+            for attr, val in [
+                ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
+                ('loai_do', loai_do), ('category', loai_do),
+                ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
+                ('noi_mat', noi_mat), ('location', noi_mat),
+                ('ngay_mat', ngay_mat), ('date', ngay_mat),
+                ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
+                ('trang_thai', 'DANG_TIM'), ('status', 'DANG_TIM')
+            ]:
+                if hasattr(item, attr):
+                    setattr(item, attr, val)
 
-        db.session.add(item)
-        db.session.commit()
+        try:
+            db.session.add(item)
+            db.session.commit()
+            print(">>> LƯU THÀNH CÔNG BÁO MẤT VÀO POSTGRESQL!")
+        except Exception as e:
+            db.session.rollback()
+            print(f">>> LỖI COMMIT BÁO MẤT: {e}")
 
         return redirect(url_for("list_items"))
 
@@ -212,21 +229,38 @@ def found():
         noi_nhat = request.form.get("noi_nhat", "")
         ngay_nhat = request.form.get("ngay_nhat", "")
 
-        item = FoundItem()
-        for attr, val in [
-            ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
-            ('loai_do', loai_do), ('category', loai_do),
-            ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
-            ('noi_nhat', noi_nhat), ('noi_mat', noi_nhat), ('location', noi_nhat),
-            ('ngay_nhat', ngay_nhat), ('ngay_mat', ngay_nhat), ('date', ngay_nhat),
-            ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
-            ('trang_thai', 'DANG_LUU_GIU'), ('status', 'DANG_LUU_GIU')
-        ]:
-            if hasattr(item, attr):
-                setattr(item, attr, val)
+        # Khởi tạo đối tượng FoundItem an toàn 100% bằng cách thử nhiều cách
+        try:
+            item = FoundItem(
+                ten_do=ten_do,
+                loai_do=loai_do,
+                mau_sac=mau_sac,
+                noi_nhat=noi_nhat,
+                ngay_nhat=ngay_nhat,
+                hinh_anh=filename,
+                trang_thai="DANG_LUU_GIU"
+            )
+        except Exception:
+            item = FoundItem()
+            for attr, val in [
+                ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
+                ('loai_do', loai_do), ('category', loai_do),
+                ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
+                ('noi_nhat', noi_nhat), ('noi_mat', noi_nhat), ('location', noi_nhat),
+                ('ngay_nhat', ngay_nhat), ('ngay_mat', ngay_nhat), ('date', ngay_nhat),
+                ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
+                ('trang_thai', 'DANG_LUU_GIU'), ('status', 'DANG_LUU_GIU')
+            ]:
+                if hasattr(item, attr):
+                    setattr(item, attr, val)
 
-        db.session.add(item)
-        db.session.commit()
+        try:
+            db.session.add(item)
+            db.session.commit()
+            print(">>> LƯU THÀNH CÔNG BÁO NHẶT VÀO POSTGRESQL!")
+        except Exception as e:
+            db.session.rollback()
+            print(f">>> LỖI COMMIT BÁO NHẶT: {e}")
 
         return redirect(url_for("found_list"))
 
@@ -252,7 +286,6 @@ def found_list():
         items = []
     return render_template("found_list.html", items=items)
 
-# ĐÃ SỬA CHUẨN TƯƠNG THÍCH POSTGRESQL TẠI MỤC SEARCH
 @app.route("/search")
 def search():
     keyword = request.args.get("keyword", "").strip()
@@ -506,7 +539,7 @@ def found_return(id):
     return redirect(url_for("found_list"))
 
 # =========================================================
-# THUẬT TOÁN ĐỐI SÁNH TRÍ TUỆ NHÂN TẠO
+# THUẬT TOÁN ĐỐI SÁNH TRÍ TUỆ NHÂN TẠO AI
 # =========================================================
 
 def similarity(text1, text2):
@@ -781,7 +814,7 @@ def teacher_check(lost_id, found_id):
     )
 
 # =========================================================
-# PIN VÀ XÁC NHẬN
+# QUẢN LÝ MÃ PIN & BÁO CÁO EXCEL
 # =========================================================
 
 def get_current_pin():
