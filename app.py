@@ -10,8 +10,10 @@ from PIL import Image
 import pandas as pd
 from werkzeug.utils import secure_filename
 from flask import Flask, render_template, request, send_from_directory, send_file, flash, redirect, url_for, jsonify
-from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
+
+# Import đối tượng db đã định nghĩa từ file database.py
+from database import db
 
 app = Flask(__name__)
 app.secret_key = 'smart_lost_found_secret_key'
@@ -27,15 +29,11 @@ if db_url.startswith("postgres://"):
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
 # Liên kết cơ sở dữ liệu với ứng dụng Flask
 db.init_app(app)
 
 # Tự động tạo bảng dữ liệu trên Cloud PostgreSQL
-with app.app_context():
-    db.create_all()
-
-
-# Tự động tạo bảng khi khởi chạy
 with app.app_context():
     db.create_all()
 
