@@ -160,35 +160,25 @@ def lost():
         noi_mat = request.form.get("noi_mat", "")
         ngay_mat = request.form.get("ngay_mat", "")
 
-        # Khởi tạo đối tượng LostItem an toàn 100% bằng cách thử nhiều cách
-        try:
-            item = LostItem(
-                ten_do=ten_do,
-                loai_do=loai_do,
-                mau_sac=mau_sac,
-                noi_mat=noi_mat,
-                ngay_mat=ngay_mat,
-                hinh_anh=filename,
-                trang_thai="DANG_TIM"
-            )
-        except Exception:
-            item = LostItem()
-            for attr, val in [
-                ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
-                ('loai_do', loai_do), ('category', loai_do),
-                ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
-                ('noi_mat', noi_mat), ('location', noi_mat),
-                ('ngay_mat', ngay_mat), ('date', ngay_mat),
-                ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
-                ('trang_thai', 'DANG_TIM'), ('status', 'DANG_TIM')
-            ]:
-                if hasattr(item, attr):
-                    setattr(item, attr, val)
+        # Khởi tạo đối tượng LostItem linh hoạt mọi tham số
+        item = LostItem.__new__(LostItem)
+        item.__init__()
+
+        for attr, val in [
+            ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
+            ('loai_do', loai_do), ('category', loai_do),
+            ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
+            ('noi_mat', noi_mat), ('location', noi_mat),
+            ('ngay_mat', ngay_mat), ('date', ngay_mat),
+            ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
+            ('trang_thai', 'DANG_TIM'), ('status', 'DANG_TIM')
+        ]:
+            setattr(item, attr, val)
 
         try:
             db.session.add(item)
             db.session.commit()
-            print(">>> LƯU THÀNH CÔNG BÁO MẤT VÀO POSTGRESQL!")
+            print(">>> ĐÃ LƯU THÀNH CÔNG BÁO MẤT!")
         except Exception as e:
             db.session.rollback()
             print(f">>> LỖI COMMIT BÁO MẤT: {e}")
@@ -229,35 +219,25 @@ def found():
         noi_nhat = request.form.get("noi_nhat", "")
         ngay_nhat = request.form.get("ngay_nhat", "")
 
-        # Khởi tạo đối tượng FoundItem an toàn 100% bằng cách thử nhiều cách
-        try:
-            item = FoundItem(
-                ten_do=ten_do,
-                loai_do=loai_do,
-                mau_sac=mau_sac,
-                noi_nhat=noi_nhat,
-                ngay_nhat=ngay_nhat,
-                hinh_anh=filename,
-                trang_thai="DANG_LUU_GIU"
-            )
-        except Exception:
-            item = FoundItem()
-            for attr, val in [
-                ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
-                ('loai_do', loai_do), ('category', loai_do),
-                ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
-                ('noi_nhat', noi_nhat), ('noi_mat', noi_nhat), ('location', noi_nhat),
-                ('ngay_nhat', ngay_nhat), ('ngay_mat', ngay_nhat), ('date', ngay_nhat),
-                ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
-                ('trang_thai', 'DANG_LUU_GIU'), ('status', 'DANG_LUU_GIU')
-            ]:
-                if hasattr(item, attr):
-                    setattr(item, attr, val)
+        # Khởi tạo đối tượng FoundItem linh hoạt mọi tham số
+        item = FoundItem.__new__(FoundItem)
+        item.__init__()
+
+        for attr, val in [
+            ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
+            ('loai_do', loai_do), ('category', loai_do),
+            ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
+            ('noi_nhat', noi_nhat), ('noi_mat', noi_nhat), ('location', noi_nhat),
+            ('ngay_nhat', ngay_nhat), ('ngay_mat', ngay_nhat), ('date', ngay_nhat),
+            ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
+            ('trang_thai', 'DANG_LUU_GIU'), ('status', 'DANG_LUU_GIU')
+        ]:
+            setattr(item, attr, val)
 
         try:
             db.session.add(item)
             db.session.commit()
-            print(">>> LƯU THÀNH CÔNG BÁO NHẶT VÀO POSTGRESQL!")
+            print(">>> ĐÃ LƯU THÀNH CÔNG BÁO NHẶT!")
         except Exception as e:
             db.session.rollback()
             print(f">>> LỖI COMMIT BÁO NHẶT: {e}")
