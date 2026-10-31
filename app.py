@@ -14,6 +14,22 @@ from database import db
 from models.lost_item import LostItem
 from models.found_item import FoundItem
 
+app = Flask(__name__)
+app.secret_key = 'smart_lost_found_secret_key'
+
+# Cấu hình kết nối Database PostgreSQL trên Render (nếu không có thì dùng SQLite local)
+db_url = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = db_url
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+
+db = SQLAlchemy(app)
+
+# Tự động tạo bảng khi khởi chạy (Chú ý căn lề dòng db.create_all)
+with app.app_context():
+    db.create_all()
 # Bọc import OpenCV an toàn (không nạp trực tiếp mô hình YOLOv8 để tiết kiệm 350MB RAM)
 try:
     import cv2
@@ -97,22 +113,7 @@ def calculate_image_features(img_path):
         print(f"Lỗi trích xuất đặc trưng ảnh: {e}")
         return None
 
-app = Flask(__name__)
-app.secret_key = 'smart_lost_found_secret_key'
 
-# Cấu hình kết nối Database PostgreSQL trên Render (nếu không có thì dùng SQLite local)
-db_url = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
-if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
-
-app.config['SQLALCHEMY_DATABASE_URI'] = db_url
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-
-db = SQLAlchemy(app)
-
-# Tự động tạo bảng khi khởi chạy (Chú ý căn lề dòng db.create_all)
-with app.app_context():
-    db.create_all()
 
 @app.route("/")
 def home():
