@@ -11,7 +11,7 @@ from sqlalchemy import func
 from difflib import SequenceMatcher
 from flask_sqlalchemy import SQLAlchemy
 
-# Bọc import OpenCV an toàn (không nạp trực tiếp YOLOv8 để tiết kiệm RAM)
+# Bọc import OpenCV an toàn
 try:
     import cv2
     import numpy as np
@@ -21,12 +21,12 @@ except Exception as e:
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "smart_lost_found_secret_key_123")
 
-# 1. Cấu hình thư mục upload ảnh an toàn
+# 1. Cấu hình thư mục upload ảnh
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-# 2. Cấu hình kết nối PostgreSQL Cloud trên Render (tự động tương thích SQLite khi chạy local)
+# 2. Cấu hình PostgreSQL Cloud an toàn
 db_url = os.environ.get("DATABASE_URL", "sqlite:///lost_found.db")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -42,7 +42,7 @@ db = SQLAlchemy(app)
 from models.lost_item import LostItem
 from models.found_item import FoundItem
 
-# 4. Tự động tạo bảng trên Cloud Database khi khởi chạy
+# 4. Tự động khởi tạo bảng trên Database
 with app.app_context():
     try:
         db.create_all()
@@ -51,7 +51,7 @@ with app.app_context():
         print(f"Lỗi khởi tạo database: {e}")
 
 # =========================================================
-# BỘ NHỚ ĐỆM (CACHE) ĐẶC TRƯNG ẢNH TỐI ƯU HIỆU NĂNG
+# BỘ NHỚ ĐỆM CACHE ẢNH
 # =========================================================
 FEATURE_CACHE = {}
 
@@ -78,7 +78,6 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        # Thu nhỏ ảnh về tối đa 400px để tính toán siêu nhanh
         max_size = 400
         h, w = img.shape[:2]
         if max(h, w) > max_size:
@@ -89,7 +88,6 @@ def calculate_image_features(img_path):
 
         features = {}
 
-        # 1. ORB (Trích xuất điểm đặc trưng)
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -101,7 +99,6 @@ def calculate_image_features(img_path):
             features["orb_keypoints"] = []
             features["orb_descriptors"] = None
 
-        # 2. dHASH (So sánh ma trận băm ảnh)
         try:
             gray_small = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             resized = cv2.resize(gray_small, (9, 8), interpolation=cv2.INTER_AREA)
@@ -109,7 +106,6 @@ def calculate_image_features(img_path):
         except Exception:
             features["dhash"] = None
 
-        # 3. HSV Histogram (So sánh phân bố màu sắc)
         try:
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
             hist = cv2.calcHist([hsv], [0, 1], None, [18, 16], [0, 180, 0, 256])
@@ -125,7 +121,7 @@ def calculate_image_features(img_path):
         return None
 
 # =========================================================
-# ROUTE QUẢN LÝ GIAO DIỆN & TÍNH NĂNG
+# ROUTES CHỨC NĂNG
 # =========================================================
 
 @app.route("/")
@@ -143,7 +139,6 @@ def lost():
             filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
             file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         
-            # Nén ảnh về 800x800 để tiết kiệm bộ nhớ
             try:
                 img = Image.open(file)
                 img.thumbnail((800, 800))
@@ -159,7 +154,6 @@ def lost():
             except Exception as e:
                 print(f"Lỗi tính đặc trưng lost: {e}")
 
-        # Khởi tạo đối tượng LostItem và hỗ trợ linh hoạt thuộc tính tên trường
         ten_do = request.form.get("ten_do", "")
         loai_do = request.form.get("loai_do", "")
         mau_sac = request.form.get("mau_sac", "")
@@ -258,6 +252,7 @@ def found_list():
         items = []
     return render_template("found_list.html", items=items)
 
+# ĐÃ SỬA CHUẨN TƯƠNG THÍCH POSTGRESQL TẠI MỤC SEARCH
 @app.route("/search")
 def search():
     keyword = request.args.get("keyword", "").strip()
@@ -268,37 +263,65 @@ def search():
 
     lost_query = LostItem.query
     if keyword:
-        lost_query = lost_query.filter(LostItem.ten_do.contains(keyword))
+        if hasattr(LostItem, 'ten_do'):
+            lost_query = lost_query.filter(LostItem.ten_do.ilike(f"%{keyword}%"))
+        elif hasattr(LostItem, 'name'):
+            lost_query = lost_query.filter(LostItem.name.ilike(f"%{keyword}%"))
     if category:
-        lost_query = lost_query.filter(LostItem.loai_do == category)
+        if hasattr(LostItem, 'loai_do'):
+            lost_query = lost_query.filter(LostItem.loai_do == category)
+        elif hasattr(LostItem, 'category'):
+            lost_query = lost_query.filter(LostItem.category == category)
     if location:
-        lost_query = lost_query.filter(LostItem.noi_mat == location)
+        if hasattr(LostItem, 'noi_mat'):
+            lost_query = lost_query.filter(LostItem.noi_mat == location)
+        elif hasattr(LostItem, 'location'):
+            lost_query = lost_query.filter(LostItem.location == location)
     if color:
-        lost_query = lost_query.filter(LostItem.mau_sac.contains(color))
+        if hasattr(LostItem, 'mau_sac'):
+            lost_query = lost_query.filter(LostItem.mau_sac.ilike(f"%{color}%"))
 
-    if status in ("DANG_TIM", "DA_TIM"):
-        lost_query = lost_query.filter(LostItem.trang_thai == status)
-    elif status in ("DANG_LUU_GIU", "DA_TRA"):
+    if status in ("DANG_TIM", "DA_TIM", "Chưa tìm thấy", "Đã tìm thấy"):
+        if hasattr(LostItem, 'trang_thai'):
+            lost_query = lost_query.filter(LostItem.trang_thai == status)
+    elif status in ("DANG_LUU_GIU", "DA_TRA", "Đang lưu giữ", "Đã hoàn trả"):
         lost_query = lost_query.filter(LostItem.id == -1)
 
-    lost_items = lost_query.order_by(LostItem.id.desc()).all()
+    try:
+        lost_items = lost_query.order_by(LostItem.id.desc()).all()
+    except Exception:
+        lost_items = []
 
     found_query = FoundItem.query
     if keyword:
-        found_query = found_query.filter(FoundItem.ten_do.contains(keyword))
+        if hasattr(FoundItem, 'ten_do'):
+            found_query = found_query.filter(FoundItem.ten_do.ilike(f"%{keyword}%"))
+        elif hasattr(FoundItem, 'name'):
+            found_query = found_query.filter(FoundItem.name.ilike(f"%{keyword}%"))
     if category:
-        found_query = found_query.filter(FoundItem.loai_do == category)
+        if hasattr(FoundItem, 'loai_do'):
+            found_query = found_query.filter(FoundItem.loai_do == category)
+        elif hasattr(FoundItem, 'category'):
+            found_query = found_query.filter(FoundItem.category == category)
     if location:
-        found_query = found_query.filter(FoundItem.noi_nhat == location)
+        if hasattr(FoundItem, 'noi_nhat'):
+            found_query = found_query.filter(FoundItem.noi_nhat == location)
+        elif hasattr(FoundItem, 'location'):
+            found_query = found_query.filter(FoundItem.location == location)
     if color:
-        found_query = found_query.filter(FoundItem.mau_sac.contains(color))
+        if hasattr(FoundItem, 'mau_sac'):
+            found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
 
-    if status in ("DANG_LUU_GIU", "DA_TRA"):
-        found_query = found_query.filter(FoundItem.trang_thai == status)
-    elif status in ("DANG_TIM", "DA_TIM"):
+    if status in ("DANG_LUU_GIU", "DA_TRA", "Đang lưu giữ", "Đã hoàn trả"):
+        if hasattr(FoundItem, 'trang_thai'):
+            found_query = found_query.filter(FoundItem.trang_thai == status)
+    elif status in ("DANG_TIM", "DA_TIM", "Chưa tìm thấy", "Đã tìm thấy"):
         found_query = found_query.filter(FoundItem.id == -1)
 
-    found_items = found_query.order_by(FoundItem.id.desc()).all()
+    try:
+        found_items = found_query.order_by(FoundItem.id.desc()).all()
+    except Exception:
+        found_items = []
 
     return render_template(
         "search.html",
@@ -483,7 +506,7 @@ def found_return(id):
     return redirect(url_for("found_list"))
 
 # =========================================================
-# THUẬT TOÁN ĐỐI SÁNH TRÍ TUỆ NHÂN TẠO (AI MATCHING)
+# THUẬT TOÁN ĐỐI SÁNH TRÍ TUỆ NHÂN TẠO
 # =========================================================
 
 def similarity(text1, text2):
@@ -758,7 +781,7 @@ def teacher_check(lost_id, found_id):
     )
 
 # =========================================================
-# QUẢN LÝ MÃ PIN & XÁC NHẬN HOÀN TRẢ
+# PIN VÀ XÁC NHẬN
 # =========================================================
 
 def get_current_pin():
