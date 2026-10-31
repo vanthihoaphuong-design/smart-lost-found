@@ -1,9 +1,4 @@
-from flask_sqlalchemy import SQLAlchemy
-
-try:
-    from database import db
-except Exception:
-    db = SQLAlchemy()
+from database import db
 
 class FoundItem(db.Model):
     __tablename__ = 'found_item'
