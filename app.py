@@ -1,21 +1,24 @@
 import os
 import io
+import uuid
+import json
+from datetime import datetime
+from difflib import SequenceMatcher
+from io import BytesIO
+
 from PIL import Image
 import pandas as pd
-from flask import send_file, flash, redirect, url_for
-import uuid
-from flask import Flask, render_template, request, send_from_directory
 from werkzeug.utils import secure_filename
+from flask import Flask, render_template, request, send_from_directory, send_file, flash, redirect, url_for, jsonify
+from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import func
-from difflib import SequenceMatcher
-from datetime import datetime
-import json
-from database import db
-from models.lost_item import LostItem
-from models.found_item import FoundItem
 
 app = Flask(__name__)
 app.secret_key = 'smart_lost_found_secret_key'
+
+# Cấu hình thư mục chứa ảnh tải lên
+app.config["UPLOAD_FOLDER"] = os.path.join(os.path.dirname(__file__), "uploads")
+os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
 
 # Cấu hình kết nối Database PostgreSQL trên Render (nếu không có thì dùng SQLite local)
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
@@ -27,17 +30,20 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# Tự động tạo bảng khi khởi chạy (Chú ý căn lề dòng db.create_all)
+# Tự động tạo bảng khi khởi chạy
 with app.app_context():
     db.create_all()
-# Bọc import OpenCV an toàn (không nạp trực tiếp mô hình YOLOv8 để tiết kiệm 350MB RAM)
+
+# Bọc import OpenCV an toàn (không nạp trực tiếp mô hình YOLOv8 để tiết kiệm RAM)
 try:
     import cv2
     import numpy as np
 except Exception as e:
     print(f"Lỗi khởi tạo OpenCV/NumPy: {e}")
 
-from flask import jsonify
+# Import các Model Database
+from models.lost_item import LostItem
+from models.found_item import FoundItem
 
 # =========================================================
 # BỘ NHỚ ĐỆM (CACHE) ĐẶC TRƯNG ẢNH TỐI ƯU HIỆU NĂNG
@@ -67,7 +73,6 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        # Thu nhỏ ảnh về tối đa 400px để tính toán siêu nhanh
         max_size = 400
         h, w = img.shape[:2]
         if max(h, w) > max_size:
@@ -78,7 +83,7 @@ def calculate_image_features(img_path):
 
         features = {}
 
-        # 1. ORB (Trích xuất điểm đặc trưng)
+        # 1. ORB
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, (3, 3), 0)
@@ -90,7 +95,7 @@ def calculate_image_features(img_path):
             features["orb_keypoints"] = []
             features["orb_descriptors"] = None
 
-        # 2. dHASH (So sánh ma trận băm ảnh)
+        # 2. dHASH
         try:
             gray_small = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             resized = cv2.resize(gray_small, (9, 8), interpolation=cv2.INTER_AREA)
@@ -98,7 +103,7 @@ def calculate_image_features(img_path):
         except Exception:
             features["dhash"] = None
 
-        # 3. HSV Histogram (So sánh phân bố màu sắc)
+        # 3. HSV Histogram
         try:
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
             hist = cv2.calcHist([hsv], [0, 1], None, [18, 16], [0, 180, 0, 256])
@@ -114,7 +119,6 @@ def calculate_image_features(img_path):
         return None
 
 
-
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -125,13 +129,12 @@ def lost():
     if request.method == "POST":
         filename = ""
         file = request.files.get("hinh_anh")
-    
+        
         if file and file.filename != "":
             original_name = secure_filename(file.filename)
             filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
             file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
         
-            # Nén ảnh về 800x800 để tiết kiệm bộ nhớ
             try:
                 img = Image.open(file)
                 img.thumbnail((800, 800))
@@ -745,9 +748,6 @@ def confirm_return(lost_id, found_id):
     </script>
     """
 
-
-from datetime import datetime
-from io import BytesIO
 
 @app.route("/export-excel", methods=["GET"])
 def export_excel():
