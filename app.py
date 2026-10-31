@@ -98,8 +98,9 @@ def calculate_image_features(img_path):
         return None
 
 app = Flask(__name__)
+app.secret_key = 'smart_lost_found_secret_key'
 
-# Cấu hình kết nối Cơ sở dữ liệu Cloud PostgreSQL trên Render
+# Cấu hình kết nối Database PostgreSQL trên Render (nếu không có thì dùng SQLite local)
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
 if db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql://", 1)
@@ -109,7 +110,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# Tự động tạo bảng khi khởi chạy
+# Tự động tạo bảng khi khởi chạy (Chú ý căn lề dòng db.create_all)
 with app.app_context():
     db.create_all()
 
