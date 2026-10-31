@@ -61,14 +61,15 @@ def lost_item():
                 image_path = f"uploads/{filename}"
 
             new_item = LostItem()
-            # Gán linh hoạt cho mọi kiểu thiết kế Model (Tiếng Việt hoặc Tiếng Anh)
+            # Gán giá trị khớp 100% với các thuộc tính của Model
             for attr, val in [
                 ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
                 ('loai_do', loai_do), ('category', loai_do),
                 ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
                 ('noi_mat', noi_mat), ('location', noi_mat),
                 ('ngay_mat', ngay_mat), ('date', ngay_mat),
-                ('hinh_anh', image_path), ('image_path', image_path), ('image', image_path)
+                ('hinh_anh', image_path), ('image_path', image_path), ('image', image_path),
+                ('trang_thai', 'Chưa tìm thấy'), ('status', 'Chưa tìm thấy')
             ]:
                 if hasattr(new_item, attr):
                     setattr(new_item, attr, val)
@@ -102,13 +103,15 @@ def found_item():
                 image_path = f"uploads/{filename}"
 
             new_item = FoundItem()
+            # Gán giá trị khớp 100% với các thuộc tính của Model
             for attr, val in [
                 ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
                 ('loai_do', loai_do), ('category', loai_do),
                 ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
-                ('noi_nhat', noi_nhat), ('location', noi_nhat),
-                ('ngay_nhat', ngay_nhat), ('date', ngay_nhat),
-                ('hinh_anh', image_path), ('image_path', image_path), ('image', image_path)
+                ('noi_nhat', noi_nhat), ('noi_mat', noi_nhat), ('location', noi_nhat),
+                ('ngay_nhat', ngay_nhat), ('ngay_mat', ngay_nhat), ('date', ngay_nhat),
+                ('hinh_anh', image_path), ('image_path', image_path), ('image', image_path),
+                ('trang_thai', 'Đang giữ'), ('status', 'Đang giữ')
             ]:
                 if hasattr(new_item, attr):
                     setattr(new_item, attr, val)
