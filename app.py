@@ -33,9 +33,12 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 # Liên kết cơ sở dữ liệu với ứng dụng Flask
 db.init_app(app)
 
-# Tự động tạo bảng dữ liệu trên Cloud PostgreSQL
+# Tự động tạo bảng dữ liệu trên Cloud PostgreSQL (An toàn)
 with app.app_context():
-    db.create_all()
+    try:
+        db.create_all()
+    except Exception as e:
+        print(f"Lỗi tạo bảng database: {e}")
 
 # Bọc import OpenCV an toàn (không nạp trực tiếp mô hình YOLOv8 để tiết kiệm RAM)
 try:
