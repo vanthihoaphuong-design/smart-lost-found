@@ -27,8 +27,13 @@ if db_url.startswith("postgres://"):
 
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+# Liên kết cơ sở dữ liệu với ứng dụng Flask
+db.init_app(app)
 
-db = SQLAlchemy(app)
+# Tự động tạo bảng dữ liệu trên Cloud PostgreSQL
+with app.app_context():
+    db.create_all()
+
 
 # Tự động tạo bảng khi khởi chạy
 with app.app_context():
