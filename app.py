@@ -5,7 +5,7 @@ import json
 from datetime import datetime
 from PIL import Image
 import pandas as pd
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, send_file, send_from_directory
+from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 from sqlalchemy import func
 from difflib import SequenceMatcher
@@ -26,7 +26,7 @@ UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-# 2. Cấu hình PostgreSQL Cloud trên Render
+# 2. Kết nối Database Cloud PostgreSQL trên Render
 db_url = os.environ.get("DATABASE_URL", "sqlite:///lost_found.db")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -38,17 +38,22 @@ app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
 db = SQLAlchemy(app)
 
-# 3. Import các Model Database
+# Đồng bộ hóa db giữa app và models
+import models.lost_item
+import models.found_item
+models.lost_item.db = db
+models.found_item.db = db
+
 from models.lost_item import LostItem
 from models.found_item import FoundItem
 
-# 4. Tự động tạo các bảng database
+# 3. Khởi tạo bảng PostgreSQL tự động
 with app.app_context():
     try:
         db.create_all()
-        print("Đã khởi tạo thành công các bảng database!")
+        print("Đã khởi tạo thành công các bảng database trên Cloud!")
     except Exception as e:
-        print(f"Lỗi khởi tạo database: {e}")
+        print(f"Lỗi tạo bảng database: {e}")
 
 # =========================================================
 # BỘ NHỚ ĐỆM CACHE ẢNH TỐI ƯU HIỆU NĂNG
@@ -121,7 +126,7 @@ def calculate_image_features(img_path):
         return None
 
 # =========================================================
-# ROUTES GIAO DIỆN VÀ LƯU DỮ LIỆU
+# XỬ LÝ GIAO DIỆN VÀ LƯU DỮ LIỆU
 # =========================================================
 
 @app.route("/")
@@ -154,31 +159,20 @@ def lost():
             except Exception as e:
                 print(f"Lỗi tính đặc trưng lost: {e}")
 
-        ten_do = request.form.get("ten_do", "")
-        loai_do = request.form.get("loai_do", "")
-        mau_sac = request.form.get("mau_sac", "")
-        noi_mat = request.form.get("noi_mat", "")
-        ngay_mat = request.form.get("ngay_mat", "")
-
-        # Khởi tạo đối tượng LostItem linh hoạt mọi tham số
-        item = LostItem.__new__(LostItem)
-        item.__init__()
-
-        for attr, val in [
-            ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
-            ('loai_do', loai_do), ('category', loai_do),
-            ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
-            ('noi_mat', noi_mat), ('location', noi_mat),
-            ('ngay_mat', ngay_mat), ('date', ngay_mat),
-            ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
-            ('trang_thai', 'DANG_TIM'), ('status', 'DANG_TIM')
-        ]:
-            setattr(item, attr, val)
+        # Tạo record chuẩn theo đúng tên trường trong LostItem
+        item = LostItem()
+        item.ten_do = request.form.get("ten_do", "")
+        item.loai_do = request.form.get("loai_do", "")
+        item.mau_sac = request.form.get("mau_sac", "")
+        item.noi_mat = request.form.get("noi_mat", "")
+        item.ngay_mat = request.form.get("ngay_mat", "")
+        item.hinh_anh = filename
+        item.trang_thai = "DANG_TIM"
 
         try:
             db.session.add(item)
             db.session.commit()
-            print(">>> ĐÃ LƯU THÀNH CÔNG BÁO MẤT!")
+            print(">>> ĐÃ LƯU THÀNH CÔNG BÁO MẤT VÀO POSTGRESQL!")
         except Exception as e:
             db.session.rollback()
             print(f">>> LỖI COMMIT BÁO MẤT: {e}")
@@ -213,31 +207,20 @@ def found():
             except Exception as e:
                 print(f"Lỗi tính đặc trưng found: {e}")
 
-        ten_do = request.form.get("ten_do", "")
-        loai_do = request.form.get("loai_do", "")
-        mau_sac = request.form.get("mau_sac", "")
-        noi_nhat = request.form.get("noi_nhat", "")
-        ngay_nhat = request.form.get("ngay_nhat", "")
-
-        # Khởi tạo đối tượng FoundItem linh hoạt mọi tham số
-        item = FoundItem.__new__(FoundItem)
-        item.__init__()
-
-        for attr, val in [
-            ('ten_do', ten_do), ('name', ten_do), ('title', ten_do),
-            ('loai_do', loai_do), ('category', loai_do),
-            ('mau_sac', mau_sac), ('color', mau_sac), ('description', f"Màu sắc: {mau_sac}"),
-            ('noi_nhat', noi_nhat), ('noi_mat', noi_nhat), ('location', noi_nhat),
-            ('ngay_nhat', ngay_nhat), ('ngay_mat', ngay_nhat), ('date', ngay_nhat),
-            ('hinh_anh', filename), ('image_path', f"uploads/{filename}" if filename else None), ('image', filename),
-            ('trang_thai', 'DANG_LUU_GIU'), ('status', 'DANG_LUU_GIU')
-        ]:
-            setattr(item, attr, val)
+        # Tạo record chuẩn theo đúng tên trường trong FoundItem
+        item = FoundItem()
+        item.ten_do = request.form.get("ten_do", "")
+        item.loai_do = request.form.get("loai_do", "")
+        item.mau_sac = request.form.get("mau_sac", "")
+        item.noi_nhat = request.form.get("noi_nhat", "")
+        item.ngay_nhat = request.form.get("ngay_nhat", "")
+        item.hinh_anh = filename
+        item.trang_thai = "DANG_LUU_GIU"
 
         try:
             db.session.add(item)
             db.session.commit()
-            print(">>> ĐÃ LƯU THÀNH CÔNG BÁO NHẶT!")
+            print(">>> ĐÃ LƯU THÀNH CÔNG BÁO NHẶT VÀO POSTGRESQL!")
         except Exception as e:
             db.session.rollback()
             print(f">>> LỖI COMMIT BÁO NHẶT: {e}")
@@ -254,16 +237,18 @@ def uploaded_file(filename):
 def list_items():
     try:
         items = LostItem.query.order_by(LostItem.id.desc()).all()
-    except Exception:
+    except Exception as e:
         items = []
+        print(f"Lỗi truy vấn danh sách mất: {e}")
     return render_template("list_items.html", items=items)
 
 @app.route("/found-list")
 def found_list():
     try:
         items = FoundItem.query.order_by(FoundItem.id.desc()).all()
-    except Exception:
+    except Exception as e:
         items = []
+        print(f"Lỗi truy vấn danh sách nhặt: {e}")
     return render_template("found_list.html", items=items)
 
 @app.route("/search")
@@ -276,28 +261,17 @@ def search():
 
     lost_query = LostItem.query
     if keyword:
-        if hasattr(LostItem, 'ten_do'):
-            lost_query = lost_query.filter(LostItem.ten_do.ilike(f"%{keyword}%"))
-        elif hasattr(LostItem, 'name'):
-            lost_query = lost_query.filter(LostItem.name.ilike(f"%{keyword}%"))
+        lost_query = lost_query.filter(LostItem.ten_do.ilike(f"%{keyword}%"))
     if category:
-        if hasattr(LostItem, 'loai_do'):
-            lost_query = lost_query.filter(LostItem.loai_do == category)
-        elif hasattr(LostItem, 'category'):
-            lost_query = lost_query.filter(LostItem.category == category)
+        lost_query = lost_query.filter(LostItem.loai_do == category)
     if location:
-        if hasattr(LostItem, 'noi_mat'):
-            lost_query = lost_query.filter(LostItem.noi_mat == location)
-        elif hasattr(LostItem, 'location'):
-            lost_query = lost_query.filter(LostItem.location == location)
+        lost_query = lost_query.filter(LostItem.noi_mat == location)
     if color:
-        if hasattr(LostItem, 'mau_sac'):
-            lost_query = lost_query.filter(LostItem.mau_sac.ilike(f"%{color}%"))
+        lost_query = lost_query.filter(LostItem.mau_sac.ilike(f"%{color}%"))
 
-    if status in ("DANG_TIM", "DA_TIM", "Chưa tìm thấy", "Đã tìm thấy"):
-        if hasattr(LostItem, 'trang_thai'):
-            lost_query = lost_query.filter(LostItem.trang_thai == status)
-    elif status in ("DANG_LUU_GIU", "DA_TRA", "Đang lưu giữ", "Đã hoàn trả"):
+    if status in ("DANG_TIM", "DA_TIM"):
+        lost_query = lost_query.filter(LostItem.trang_thai == status)
+    elif status in ("DANG_LUU_GIU", "DA_TRA"):
         lost_query = lost_query.filter(LostItem.id == -1)
 
     try:
@@ -307,28 +281,17 @@ def search():
 
     found_query = FoundItem.query
     if keyword:
-        if hasattr(FoundItem, 'ten_do'):
-            found_query = found_query.filter(FoundItem.ten_do.ilike(f"%{keyword}%"))
-        elif hasattr(FoundItem, 'name'):
-            found_query = found_query.filter(FoundItem.name.ilike(f"%{keyword}%"))
+        found_query = found_query.filter(FoundItem.ten_do.ilike(f"%{keyword}%"))
     if category:
-        if hasattr(FoundItem, 'loai_do'):
-            found_query = found_query.filter(FoundItem.loai_do == category)
-        elif hasattr(FoundItem, 'category'):
-            found_query = found_query.filter(FoundItem.category == category)
+        found_query = found_query.filter(FoundItem.loai_do == category)
     if location:
-        if hasattr(FoundItem, 'noi_nhat'):
-            found_query = found_query.filter(FoundItem.noi_nhat == location)
-        elif hasattr(FoundItem, 'location'):
-            found_query = found_query.filter(FoundItem.location == location)
+        found_query = found_query.filter(FoundItem.noi_nhat == location)
     if color:
-        if hasattr(FoundItem, 'mau_sac'):
-            found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
+        found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
 
-    if status in ("DANG_LUU_GIU", "DA_TRA", "Đang lưu giữ", "Đã hoàn trả"):
-        if hasattr(FoundItem, 'trang_thai'):
-            found_query = found_query.filter(FoundItem.trang_thai == status)
-    elif status in ("DANG_TIM", "DA_TIM", "Chưa tìm thấy", "Đã tìm thấy"):
+    if status in ("DANG_LUU_GIU", "DA_TRA"):
+        found_query = found_query.filter(FoundItem.trang_thai == status)
+    elif status in ("DANG_TIM", "DA_TIM"):
         found_query = found_query.filter(FoundItem.id == -1)
 
     try:
@@ -460,7 +423,7 @@ def dashboard():
     category_counts = {cat: 0 for cat in CATEGORIES_MAP.keys()}
 
     for item in all_items:
-        raw_cat = str(getattr(item, 'loai_do', getattr(item, 'category', 'Khác'))).strip()
+        raw_cat = str(item.loai_do).strip() if item.loai_do else "Khác"
         mapped = False
         
         for new_cat, old_list in CATEGORIES_MAP.items():
@@ -513,8 +476,7 @@ def heatmap():
 def found_return(id):
     item = FoundItem.query.get_or_404(id)
     item.trang_thai = "DA_TRA"
-    if hasattr(item, 'thoi_diem_tra'):
-        item.thoi_diem_tra = datetime.now()
+    item.thoi_diem_tra = datetime.now()
     db.session.commit()
     return redirect(url_for("found_list"))
 
@@ -662,23 +624,19 @@ def match_items():
 
     for lost in lost_items:
         for found in found_items:
-            anh_score, image_ratio = image_score(getattr(lost, 'hinh_anh', None), getattr(found, 'hinh_anh', None))
-            ten_score = int(similarity(getattr(lost, 'ten_do', ''), getattr(found, 'ten_do', '')) * 15)
-            mau_score = int(similarity(getattr(lost, 'mau_sac', ''), getattr(found, 'mau_sac', '')) * 15)
+            anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+            ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
+            mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15) if (lost.mau_sac and found.mau_sac) else 0
 
             vi_tri_score = 0
-            noi_mat = getattr(lost, 'noi_mat', getattr(lost, 'location', ''))
-            noi_nhat = getattr(found, 'noi_nhat', getattr(found, 'location', ''))
-            if noi_mat and noi_nhat:
-                vi_tri = similarity(noi_mat, noi_nhat)
+            if lost.noi_mat and found.noi_nhat:
+                vi_tri = similarity(lost.noi_mat, found.noi_nhat)
                 if vi_tri > 0.8:
                     vi_tri_score = 10
                 elif vi_tri > 0.5:
                     vi_tri_score = 5
 
-            ngay_mat = getattr(lost, 'ngay_mat', getattr(lost, 'date', ''))
-            ngay_nhat = getattr(found, 'ngay_nhat', getattr(found, 'date', ''))
-            ngay_score = date_score(ngay_mat, ngay_nhat)
+            ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
             image_confidence = int(min(100, image_ratio * 100))
@@ -748,26 +706,22 @@ def teacher_check(lost_id, found_id):
     lost = LostItem.query.get_or_404(lost_id)
     found = FoundItem.query.get_or_404(found_id)
 
-    anh_score, image_ratio = image_score(getattr(lost, 'hinh_anh', None), getattr(found, 'hinh_anh', None))
-    ten_score = int(similarity(getattr(lost, 'ten_do', ''), getattr(found, 'ten_do', '')) * 15)
+    anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+    ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
 
     mau_score = 0
-    if getattr(lost, 'mau_sac', None) and getattr(found, 'mau_sac', None):
+    if lost.mau_sac and found.mau_sac:
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
 
     vi_tri_score = 0
-    noi_mat = getattr(lost, 'noi_mat', getattr(lost, 'location', ''))
-    noi_nhat = getattr(found, 'noi_nhat', getattr(found, 'location', ''))
-    if noi_mat and noi_nhat:
-        vi_tri = similarity(noi_mat, noi_nhat)
+    if lost.noi_mat and found.noi_nhat:
+        vi_tri = similarity(lost.noi_mat, found.noi_nhat)
         if vi_tri > 0.8:
             vi_tri_score = 10
         elif vi_tri > 0.5:
             vi_tri_score = 5
 
-    ngay_mat = getattr(lost, 'ngay_mat', getattr(lost, 'date', ''))
-    ngay_nhat = getattr(found, 'ngay_nhat', getattr(found, 'date', ''))
-    ngay_score = date_score(ngay_mat, ngay_nhat)
+    ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
@@ -794,7 +748,7 @@ def teacher_check(lost_id, found_id):
     )
 
 # =========================================================
-# QUẢN LÝ MÃ PIN & BÁO CÁO EXCEL
+# MÃ PIN VÀ EXCEL
 # =========================================================
 
 def get_current_pin():
@@ -843,10 +797,8 @@ def confirm_return(lost_id, found_id):
     lost.trang_thai = "DA_TIM"
     
     thoi_diem = datetime.now()
-    if hasattr(found, 'thoi_diem_tra'):
-        found.thoi_diem_tra = thoi_diem
-    if hasattr(lost, 'thoi_diem_tra'):
-        lost.thoi_diem_tra = thoi_diem
+    found.thoi_diem_tra = thoi_diem
+    lost.thoi_diem_tra = thoi_diem
 
     db.session.commit()
 
@@ -893,22 +845,22 @@ def export_excel():
 
     lost_data = [{
         "STT": i + 1,
-        "Tên đồ vật": getattr(item, 'ten_do', getattr(item, 'name', '')),
-        "Loại đồ": getattr(item, 'loai_do', getattr(item, 'category', '')),
-        "Màu sắc": getattr(item, 'mau_sac', getattr(item, 'color', '')),
-        "Nơi mất": getattr(item, 'noi_mat', getattr(item, 'location', '')),
-        "Ngày mất": getattr(item, 'ngay_mat', getattr(item, 'date', '')),
-        "Trạng thái": "Đã tìm thấy" if getattr(item, 'trang_thai', '') in ["DA_TIM", "Đã tìm thấy"] else "Đang tìm"
+        "Tên đồ vật": item.ten_do,
+        "Loại đồ": item.loai_do,
+        "Màu sắc": item.mau_sac,
+        "Nơi mất": item.noi_mat,
+        "Ngày mất": item.ngay_mat,
+        "Trạng thái": "Đã tìm thấy" if item.trang_thai in ["DA_TIM", "Đã tìm thấy"] else "Đang tìm"
     } for i, item in enumerate(lost_items)]
 
     found_data = [{
         "STT": i + 1,
-        "Tên đồ vật": getattr(item, 'ten_do', getattr(item, 'name', '')),
-        "Loại đồ": getattr(item, 'loai_do', getattr(item, 'category', '')),
-        "Màu sắc": getattr(item, 'mau_sac', getattr(item, 'color', '')),
-        "Nơi nhặt": getattr(item, 'noi_nhat', getattr(item, 'location', '')),
-        "Ngày nhặt": getattr(item, 'ngay_nhat', getattr(item, 'date', '')),
-        "Trạng thái": "Đã hoàn trả" if getattr(item, 'trang_thai', '') in ["DA_TRA", "Đã hoàn trả"] else "Đang lưu giữ"
+        "Tên đồ vật": item.ten_do,
+        "Loại đồ": item.loai_do,
+        "Màu sắc": item.mau_sac,
+        "Nơi nhặt": item.noi_nhat,
+        "Ngày nhặt": item.ngay_nhat,
+        "Trạng thái": "Đã hoàn trả" if item.trang_thai in ["DA_TRA", "Đã hoàn trả"] else "Đang lưu giữ"
     } for i, item in enumerate(found_items)]
 
     df_lost = pd.DataFrame(lost_data)
