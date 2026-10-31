@@ -1,10 +1,4 @@
-from flask_sqlalchemy import SQLAlchemy
-
-# Đảm bảo không bị xung đột import database
-try:
-    from database import db
-except Exception:
-    db = SQLAlchemy()
+from database import db
 
 class LostItem(db.Model):
     __tablename__ = 'lost_item'
