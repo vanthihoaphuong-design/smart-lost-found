@@ -5,7 +5,7 @@ from flask_sqlalchemy import SQLAlchemy
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key')
 
-# 1. Cấu hình đường dẫn kết nối PostgreSQL an toàn cho Render
+# 1. Cấu hình kết nối Cloud PostgreSQL
 db_url = os.environ.get('DATABASE_URL', 'sqlite:///app.db')
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -17,18 +17,18 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# 2. Bọc import OpenCV/NumPy an toàn để tiết kiệm tài nguyên
+# 2. Bọc OpenCV/NumPy an toàn
 try:
     import cv2
     import numpy as np
 except Exception as e:
     print(f"Lỗi khởi tạo OpenCV/NumPy: {e}")
 
-# 3. Import toàn bộ các Model Database TRƯỚC khi gọi create_all
+# 3. Import các Model Database
 from models.lost_item import LostItem
 from models.found_item import FoundItem
 
-# 4. Tự động khởi tạo đầy đủ các bảng trên PostgreSQL Cloud
+# 4. Tự động tạo bảng trên Database PostgreSQL
 with app.app_context():
     try:
         db.create_all()
@@ -37,7 +37,7 @@ with app.app_context():
         print(f"Lỗi tạo bảng database: {e}")
 
 # ==========================================
-# CÁC ROUTE TRANG WEB
+# CÁC ROUTE ĐÃ ĐƯỢC KHỚP CHUẨN FILE HTML
 # ==========================================
 
 @app.route('/')
@@ -47,26 +47,24 @@ def index():
 @app.route('/lost', methods=['GET', 'POST'])
 def lost_item():
     if request.method == 'POST':
-        # Thao tác lưu thông tin đồ mất vào Postgres
         pass
-    return render_template('lost.html')
+    return render_template('lost_form.html')  # Đã sửa thành lost_form.html
 
 @app.route('/found', methods=['GET', 'POST'])
 def found_item():
     if request.method == 'POST':
-        # Thao tác lưu thông tin đồ nhặt vào Postgres
         pass
-    return render_template('found.html')
+    return render_template('found_form.html')  # Đã sửa thành found_form.html
 
 @app.route('/lost-list')
 def lost_list():
     items = LostItem.query.order_by(LostItem.id.desc()).all()
-    return render_template('lost_list.html', items=items)
+    return render_template('list_items.html', items=items)  # Đã sửa thành list_items.html
 
 @app.route('/found-list')
 def found_list():
     items = FoundItem.query.order_by(FoundItem.id.desc()).all()
-    return render_template('found_list.html', items=items)
+    return render_template('found_list.html', items=items)  # Đã sửa thành found_list.html
 
 @app.route('/match')
 def match_items():
