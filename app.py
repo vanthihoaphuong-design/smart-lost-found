@@ -9,24 +9,20 @@ from flask import Flask, render_template, request, redirect, url_for, jsonify, s
 from werkzeug.utils import secure_filename
 from sqlalchemy import func
 from difflib import SequenceMatcher
-from flask_sqlalchemy import SQLAlchemy
 
-# Bọc import OpenCV an toàn
 try:
     import cv2
     import numpy as np
 except Exception as e:
-    print(f"Lỗi khởi tạo OpenCV/NumPy: {e}")
+    print(f"Lỗi OpenCV: {e}")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "smart_lost_found_secret_key_123")
 
-# 1. Cấu hình thư mục upload ảnh
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-# 2. Kết nối Database Cloud PostgreSQL trên Render
 db_url = os.environ.get("DATABASE_URL", "sqlite:///lost_found.db")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -36,39 +32,27 @@ elif db_url and db_url.startswith("postgresql://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-db = SQLAlchemy(app)
-
-# Đồng bộ hóa db giữa app và models
-import models.lost_item
-import models.found_item
-models.lost_item.db = db
-models.found_item.db = db
+# Import duy nhất 1 db từ database.py và kích hoạt theo chuẩn Flask
+from database import db
+db.init_app(app)
 
 from models.lost_item import LostItem
 from models.found_item import FoundItem
 
-# 3. Khởi tạo bảng PostgreSQL tự động
 with app.app_context():
     try:
         db.create_all()
-        print("Đã khởi tạo thành công các bảng database trên Cloud!")
     except Exception as e:
-        print(f"Lỗi tạo bảng database: {e}")
+        print(f"Lỗi khởi tạo DB: {e}")
 
-# =========================================================
-# BỘ NHỚ ĐỆM CACHE ẢNH TỐI ƯU HIỆU NĂNG
-# =========================================================
 FEATURE_CACHE = {}
 
 def get_feature_cache(img_path):
-    if not img_path:
-        return None
-    return FEATURE_CACHE.get(img_path)
+    return FEATURE_CACHE.get(img_path) if img_path else None
 
 def save_feature_cache(img_path, features):
-    if not img_path:
-        return
-    FEATURE_CACHE[img_path] = features
+    if img_path:
+        FEATURE_CACHE[img_path] = features
 
 def calculate_image_features(img_path):
     cached = get_feature_cache(img_path)
@@ -121,13 +105,8 @@ def calculate_image_features(img_path):
 
         save_feature_cache(img_path, features)
         return features
-    except Exception as e:
-        print(f"Lỗi trích xuất đặc trưng ảnh: {e}")
+    except Exception:
         return None
-
-# =========================================================
-# XỬ LÝ GIAO DIỆN VÀ LƯU DỮ LIỆU
-# =========================================================
 
 @app.route("/")
 def home():
@@ -150,32 +129,30 @@ def lost():
                 if img.mode in ("RGBA", "P"):
                     img = img.convert("RGB")
                 img.save(file_path, "JPEG", quality=75)
-            except Exception as e:
-                print(f"Lỗi nén ảnh lost: {e}")
+            except Exception:
                 file.save(file_path)
 
             try:
                 calculate_image_features(file_path)
-            except Exception as e:
-                print(f"Lỗi tính đặc trưng lost: {e}")
+            except Exception:
+                pass
 
-        # Tạo record chuẩn theo đúng tên trường trong LostItem
-        item = LostItem()
-        item.ten_do = request.form.get("ten_do", "")
-        item.loai_do = request.form.get("loai_do", "")
-        item.mau_sac = request.form.get("mau_sac", "")
-        item.noi_mat = request.form.get("noi_mat", "")
-        item.ngay_mat = request.form.get("ngay_mat", "")
-        item.hinh_anh = filename
-        item.trang_thai = "DANG_TIM"
+        item = LostItem(
+            ten_do=request.form.get("ten_do", ""),
+            loai_do=request.form.get("loai_do", ""),
+            mau_sac=request.form.get("mau_sac", ""),
+            noi_mat=request.form.get("noi_mat", ""),
+            ngay_mat=request.form.get("ngay_mat", ""),
+            hinh_anh=filename,
+            trang_thai="DANG_TIM"
+        )
 
         try:
             db.session.add(item)
             db.session.commit()
-            print(">>> ĐÃ LƯU THÀNH CÔNG BÁO MẤT VÀO POSTGRESQL!")
         except Exception as e:
             db.session.rollback()
-            print(f">>> LỖI COMMIT BÁO MẤT: {e}")
+            print(f"Lỗi commit lost: {e}")
 
         return redirect(url_for("list_items"))
 
@@ -198,32 +175,30 @@ def found():
                 if img.mode in ("RGBA", "P"):
                     img = img.convert("RGB")
                 img.save(file_path, "JPEG", quality=75)
-            except Exception as e:
-                print(f"Lỗi nén ảnh found: {e}")
+            except Exception:
                 file.save(file_path)
 
             try:
                 calculate_image_features(file_path)
-            except Exception as e:
-                print(f"Lỗi tính đặc trưng found: {e}")
+            except Exception:
+                pass
 
-        # Tạo record chuẩn theo đúng tên trường trong FoundItem
-        item = FoundItem()
-        item.ten_do = request.form.get("ten_do", "")
-        item.loai_do = request.form.get("loai_do", "")
-        item.mau_sac = request.form.get("mau_sac", "")
-        item.noi_nhat = request.form.get("noi_nhat", "")
-        item.ngay_nhat = request.form.get("ngay_nhat", "")
-        item.hinh_anh = filename
-        item.trang_thai = "DANG_LUU_GIU"
+        item = FoundItem(
+            ten_do=request.form.get("ten_do", ""),
+            loai_do=request.form.get("loai_do", ""),
+            mau_sac=request.form.get("mau_sac", ""),
+            noi_nhat=request.form.get("noi_nhat", ""),
+            ngay_nhat=request.form.get("ngay_nhat", ""),
+            hinh_anh=filename,
+            trang_thai="DANG_LUU_GIU"
+        )
 
         try:
             db.session.add(item)
             db.session.commit()
-            print(">>> ĐÃ LƯU THÀNH CÔNG BÁO NHẶT VÀO POSTGRESQL!")
         except Exception as e:
             db.session.rollback()
-            print(f">>> LỖI COMMIT BÁO NHẶT: {e}")
+            print(f"Lỗi commit found: {e}")
 
         return redirect(url_for("found_list"))
 
@@ -479,10 +454,6 @@ def found_return(id):
     item.thoi_diem_tra = datetime.now()
     db.session.commit()
     return redirect(url_for("found_list"))
-
-# =========================================================
-# THUẬT TOÁN ĐỐI SÁNH TRÍ TUỆ NHÂN TẠO AI
-# =========================================================
 
 def similarity(text1, text2):
     if not text1 or not text2:
@@ -746,10 +717,6 @@ def teacher_check(lost_id, found_id):
         ket_luan=ket_luan,
         image_warning=image_warning
     )
-
-# =========================================================
-# MÃ PIN VÀ EXCEL
-# =========================================================
 
 def get_current_pin():
     try:
