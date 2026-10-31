@@ -25,7 +25,11 @@
     <tr>
         <td>
             {% if m.lost.hinh_anh %}
-                <img src="{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}" width="130" height="100" class="rounded shadow-sm mb-2" style="object-fit: cover;">
+                <img src="{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}" 
+                     class="rounded shadow-sm mb-2" 
+                     style="width: 130px; height: 100px; object-fit: cover; cursor: pointer; display: block;" 
+                     onclick="event.stopPropagation(); openProModal('{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}')"
+                     title="Bấm để soi chi tiết">
                 <br>
             {% endif %}
             <strong>{{ m.lost.ten_do }}</strong><br>
@@ -36,7 +40,11 @@
 
         <td>
             {% if m.found.hinh_anh %}
-                <img src="{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}" width="130" height="100" class="rounded shadow-sm mb-2" style="object-fit: cover;">
+                <img src="{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}" 
+                     class="rounded shadow-sm mb-2" 
+                     style="width: 130px; height: 100px; object-fit: cover; cursor: pointer; display: block;" 
+                     onclick="event.stopPropagation(); openProModal('{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}')"
+                     title="Bấm me soi chi tiết">
                 <br>
             {% endif %}
             <strong>{{ m.found.ten_do }}</strong><br>
@@ -78,7 +86,7 @@
 
             <hr>
 
-            <!-- PHÂN LOẠI V3.4 -->
+            <!-- PHÂN LOẠI -->
             {% if m.ket_luan %}
                 {% if m.ket_luan.startswith("🟢") %}
                     <div class="text-center text-success fw-bold">
@@ -108,7 +116,6 @@
             <!-- XÁC NHẬN TRẢ ĐỒ -->
             {% if m.score >= 40 %}
                 <hr class="my-2">
-                <!-- ĐÃ SỬA: Thay match.lost.id thành m.lost.id và sửa lại đường dẫn hợp lệ -->
                 <a href="/teacher-check/{{ m.lost.id }}/{{ m.found.id }}" class="btn btn-primary">
                     👩‍🏫 Giáo viên kiểm tra
                 </a>
