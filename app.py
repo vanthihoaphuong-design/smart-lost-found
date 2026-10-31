@@ -6,7 +6,7 @@ from werkzeug.utils import secure_filename
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'super-secret-key')
 
-# 1. Cấu hình upload thư mục ảnh an toàn
+# 1. Cấu hình upload thư mục ảnh
 UPLOAD_FOLDER = os.path.join('static', 'uploads')
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
@@ -23,24 +23,17 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db = SQLAlchemy(app)
 
-# 3. Bọc OpenCV/NumPy an toàn
-try:
-    import cv2
-    import numpy as np
-except Exception as e:
-    print(f"Lỗi khởi tạo OpenCV/NumPy: {e}")
-
-# 4. Import các Model Database
+# 3. Import các Model Database
 from models.lost_item import LostItem
 from models.found_item import FoundItem
 
-# 5. Tự động khởi tạo đầy đủ các bảng trên Cloud PostgreSQL
+# 4. Tự động khởi tạo đầy đủ các bảng trên Cloud PostgreSQL
 with app.app_context():
     try:
         db.create_all()
-        print("Đã khởi tạo thành công các bảng database trên Cloud PostgreSQL!")
+        print("Đã tạo bảng database thành công!")
     except Exception as e:
-        print(f"Lỗi tạo bảng database: {e}")
+        print(f"Lỗi tạo bảng: {e}")
 
 # ==========================================
 # CÁC ROUTE XỬ LÝ GIAO DIỆN VÀ DỮ LIỆU
@@ -54,35 +47,40 @@ def index():
 def lost_item():
     if request.method == 'POST':
         try:
-            # Lấy thông tin từ form
-            name = request.form.get('name') or request.form.get('item_name')
-            category = request.form.get('category')
-            description = request.form.get('description')
-            location = request.form.get('location')
+            # Lấy thông tin linh hoạt từ Form báo mất
+            name = request.form.get('name') or request.form.get('item_name') or request.form.get('title')
+            category = request.form.get('category') or request.form.get('type')
+            description = request.form.get('description') or request.form.get('detail')
+            location = request.form.get('location') or request.form.get('place')
             contact = request.form.get('contact') or request.form.get('phone')
             
-            # Xử lý lưu ảnh nếu có
-            file = request.files.get('image')
+            # Xử lý lưu ảnh
+            file = request.files.get('image') or request.files.get('file')
             image_path = None
             if file and file.filename != '':
                 filename = secure_filename(file.filename)
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 image_path = f"uploads/{filename}"
 
-            new_item = LostItem(
-                name=name,
-                category=category,
-                description=description,
-                location=location,
-                contact=contact,
-                image_path=image_path
-            )
+            # Khởi tạo đối tượng LostItem
+            new_item = LostItem()
+            if hasattr(new_item, 'name'): new_item.name = name
+            if hasattr(new_item, 'title'): new_item.title = name
+            if hasattr(new_item, 'category'): new_item.category = category
+            if hasattr(new_item, 'description'): new_item.description = description
+            if hasattr(new_item, 'location'): new_item.location = location
+            if hasattr(new_item, 'contact'): new_item.contact = contact
+            if hasattr(new_item, 'phone'): new_item.phone = contact
+            if hasattr(new_item, 'image_path'): new_item.image_path = image_path
+            if hasattr(new_item, 'image'): new_item.image = image_path
+
             db.session.add(new_item)
             db.session.commit()
+            print(">>> LƯU THÀNH CÔNG BÀI BÁO MẤT ĐỒ!")
             return redirect(url_for('lost_list'))
         except Exception as e:
             db.session.rollback()
-            print(f"Lỗi lưu đồ mất: {e}")
+            print(f">>> LỖI KHI LƯU BÁO MẤT: {e}")
             
     return render_template('lost_form.html')
 
@@ -90,56 +88,59 @@ def lost_item():
 def found_item():
     if request.method == 'POST':
         try:
-            # Lấy thông tin từ form
-            name = request.form.get('name') or request.form.get('item_name')
-            category = request.form.get('category')
-            description = request.form.get('description')
-            location = request.form.get('location')
+            # Lấy thông tin linh hoạt từ Form báo nhặt
+            name = request.form.get('name') or request.form.get('item_name') or request.form.get('title')
+            category = request.form.get('category') or request.form.get('type')
+            description = request.form.get('description') or request.form.get('detail')
+            location = request.form.get('location') or request.form.get('place')
             contact = request.form.get('contact') or request.form.get('phone')
             
-            # Xử lý lưu ảnh nếu có
-            file = request.files.get('image')
+            # Xử lý lưu ảnh
+            file = request.files.get('image') or request.files.get('file')
             image_path = None
             if file and file.filename != '':
                 filename = secure_filename(file.filename)
                 file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
                 image_path = f"uploads/{filename}"
 
-            new_item = FoundItem(
-                name=name,
-                category=category,
-                description=description,
-                location=location,
-                contact=contact,
-                image_path=image_path
-            )
+            # Khởi tạo đối tượng FoundItem
+            new_item = FoundItem()
+            if hasattr(new_item, 'name'): new_item.name = name
+            if hasattr(new_item, 'title'): new_item.title = name
+            if hasattr(new_item, 'category'): new_item.category = category
+            if hasattr(new_item, 'description'): new_item.description = description
+            if hasattr(new_item, 'location'): new_item.location = location
+            if hasattr(new_item, 'contact'): new_item.contact = contact
+            if hasattr(new_item, 'phone'): new_item.phone = contact
+            if hasattr(new_item, 'image_path'): new_item.image_path = image_path
+            if hasattr(new_item, 'image'): new_item.image = image_path
+
             db.session.add(new_item)
             db.session.commit()
+            print(">>> LƯU THÀNH CÔNG BÀI BÁO NHẶT ĐỒ!")
             return redirect(url_for('found_list'))
         except Exception as e:
             db.session.rollback()
-            print(f"Lỗi lưu đồ nhặt: {e}")
+            print(f">>> LỖI KHI LƯU BÁO NHẶT: {e}")
 
     return render_template('found_form.html')
 
 @app.route('/lost-list')
 def lost_list():
     try:
-        items = LostItem.query.all()
+        items = LostItem.query.order_by(LostItem.id.desc()).all()
     except Exception as e:
         items = []
-        print(f"Lỗi truy vấn danh sách đồ mất: {e}")
-    # Render file list_items.html chuẩn trong thư mục templates
+        print(f"Lỗi lấy danh sách báo mất: {e}")
     return render_template('list_items.html', items=items, type='lost')
 
 @app.route('/found-list')
 def found_list():
     try:
-        items = FoundItem.query.all()
+        items = FoundItem.query.order_by(FoundItem.id.desc()).all()
     except Exception as e:
         items = []
-        print(f"Lỗi truy vấn danh sách đồ nhặt: {e}")
-    # Ưu tiên render found_list.html hoặc list_items.html
+        print(f"Lỗi lấy danh sách báo nhặt: {e}")
     try:
         return render_template('found_list.html', items=items, type='found')
     except:
@@ -152,7 +153,6 @@ def match_items():
         found_items = FoundItem.query.all()
     except Exception as e:
         lost_items, found_items = [], []
-        print(f"Lỗi đối sánh: {e}")
     return render_template('match.html', lost_items=lost_items, found_items=found_items)
 
 @app.route('/dashboard')
@@ -162,7 +162,6 @@ def dashboard():
         total_found = FoundItem.query.count()
     except Exception as e:
         total_lost, total_found = 0, 0
-        print(f"Lỗi dashboard: {e}")
     return render_template('dashboard.html', total_lost=total_lost, total_found=total_found)
 
 @app.route('/heatmap')
@@ -172,7 +171,6 @@ def heatmap():
         found_items = FoundItem.query.all()
     except Exception as e:
         lost_items, found_items = [], []
-        print(f"Lỗi heatmap: {e}")
     return render_template('heatmap.html', lost_items=lost_items, found_items=found_items)
 
 if __name__ == '__main__':
