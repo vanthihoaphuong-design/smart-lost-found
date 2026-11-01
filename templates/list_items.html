@@ -1,148 +1,175 @@
 {% extends "base.html" %}
 
+{% block title %}
+Danh sách đồ thất lạc
+{% endblock %}
+
 {% block content %}
-<div class="container mt-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h2 class="fw-bold text-primary mb-0">📋 Danh sách đồ thất lạc</h2>
-        <div>
-            <a href="/lost" class="btn btn-primary shadow-sm">
-                ➕ Thêm đồ thất lạc
-            </a>
-        </div>
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="fw-bold text-primary mb-0">📋 Danh sách đồ thất lạc</h2>
+    <div>
+        <a href="{{ url_for('lost') }}" class="btn btn-primary shadow-sm">➕ Thêm đồ thất lạc</a>
+        <a href="{{ url_for('search') }}" class="btn btn-success shadow-sm ms-2">🔍 Tìm kiếm</a>
     </div>
-
-    {% if items %}
-    <div class="table-responsive shadow-sm rounded">
-        <table class="table table-bordered table-hover align-middle bg-white mb-0">
-            <thead class="table-primary text-center align-middle">
-                <tr>
-                    <th style="width: 5%;">ID</th>
-                    <th style="width: 12%;">Ảnh</th>
-                    <th style="width: 18%;">Tên đồ</th>
-                    <th style="width: 20%;">Loại đồ</th>
-                    <th style="width: 13%;">Nơi mất</th>
-                    <th style="width: 12%;">Ngày mất</th>
-                    <th style="width: 10%;">Trạng thái</th>
-                    <th style="width: 10%;">Thao tác</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for item in items %}
-                <tr>
-                    <td class="text-center fw-bold">{{ item.id }}</td>
-                    
-                    <td class="text-center">
-                        <img src="/static/uploads/{{ item.hinh_anh }}" 
-                             class="img-thumbnail shadow-sm" 
-                             style="max-height: 70px; object-fit: cover; cursor: pointer;" 
-                             title="Bấm để xem ảnh phóng to"
-                             onclick="zoomImage('/static/uploads/{{ item.hinh_anh }}', '{{ item.ten_do }}')"
-                             onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh'; this.onclick=null;">
-                    </td>
-
-                    <td class="text-center fw-bold text-dark">{{ item.ten_do }}</td>
-
-                    <td class="text-center">
-                        <span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span>
-                    </td>
-
-                    <td class="text-center">{{ item.noi_mat }}</td>
-
-                    <td class="text-center">{{ item.ngay_mat }}</td>
-
-                    <td class="text-center">
-                        {% if item.trang_thai == 'DA_TIM_THAY' %}
-                            <span class="badge bg-success">Đã tìm thấy</span>
-                        {% else %}
-                            <span class="badge bg-warning text-dark">🔑 Đang tìm</span>
-                        {% endif %}
-                    </td>
-
-                    <td class="text-center">
-                        <div class="d-flex flex-column gap-1 align-items-center">
-                            <a href="/match" class="btn btn-sm btn-outline-primary w-100" style="max-width: 90px;">
-                                🔍 Đối sánh
-                            </a>
-                            <a href="/edit-lost/{{ item.id }}" class="btn btn-sm btn-warning w-100" style="max-width: 90px;">
-                                ✏️ Sửa
-                            </a>
-                            <form action="/delete-lost/{{ item.id }}" method="POST" class="w-100 d-flex justify-content-center" onsubmit="return confirm('Bạn có chắc chắn muốn xóa đồ vật này?');">
-                                <button type="submit" class="btn btn-sm btn-danger w-100" style="max-width: 90px;">
-                                    🗑️ Xóa
-                                </button>
-                            </form>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <div class="alert alert-info text-center" role="alert">
-        Chưa có dữ liệu đồ thất lạc nào!
-    </div>
-    {% endif %}
 </div>
 
-<!-- POPUP MODAL PHÓNG TO & KÉO THẢ ẢNH -->
-<div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
+{% if items %}
+<div class="table-responsive shadow-sm rounded">
+    <table class="table table-bordered table-hover align-middle bg-white mb-0 text-center">
+        <thead class="table-primary align-middle">
+            <tr>
+                <th style="width: 5%;">ID</th>
+                <th style="width: 12%;">Ảnh</th>
+                <th style="width: 18%;">Tên đồ</th>
+                <th style="width: 18%;">Loại đồ</th>
+                <th style="width: 13%;">Nơi mất</th>
+                <th style="width: 12%;">Ngày mất</th>
+                <th style="width: 12%;">Trạng thái</th>
+                <th style="width: 10%;">Thao tác</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for item in items %}
+            <tr>
+                <td class="fw-bold">{{ item.id }}</td>
+                <td>
+                    {% if item.hinh_anh %}
+                        <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" 
+                             class="rounded shadow-sm cursor-pointer border" 
+                             style="max-height: 70px; object-fit: cover;" 
+                             onclick="zoomImage('{{ url_for('uploaded_file', filename=item.hinh_anh) }}', '{{ item.ten_do }}')"
+                             title="Bấm để phóng to / thu nhỏ"
+                             onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                    {% else %}
+                        <span class="text-muted small">Không có ảnh</span>
+                    {% endif %}
+                </td>
+                <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                <td><span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span></td>
+                <td>{{ item.noi_mat }}</td>
+                <td>{{ item.ngay_mat }}</td>
+                <td>
+                    {% if item.trang_thai == 'DA_TIM' or item.trang_thai == 'DA_TRA' or item.trang_thai == 'Đã tìm thấy' %}
+                        <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã tìm thấy</span>
+                    {% else %}
+                        <span class="badge bg-warning text-dark py-2 px-3 fw-bold">🔑 Đang tìm</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if item.trang_thai == "DA_TIM_THAY" or item.trang_thai == "DA_TRA" %}
+                        <span class="badge bg-light text-muted border">Lưu trữ</span>
+                    {% else %}
+                        <div class="d-flex flex-column gap-1 align-items-center">
+                            <a href="{{ url_for('match_items') }}" class="btn btn-sm btn-outline-primary w-100">🔍 Đối sánh</a>
+                            <a href="{{ url_for('edit_lost', item_id=item.id) }}" class="btn btn-sm btn-warning w-100">✏️ Sửa</a>
+                            <a href="{{ url_for('delete_item', item_id=item.id) }}" class="btn btn-sm btn-danger w-100" onclick="confirmDeletePIN(event, this.href);">🗑️ Xóa</a>
+                        </div>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+    <div class="alert alert-warning text-center mt-3">Chưa có dữ liệu đồ thất lạc.</div>
+{% endif %}
+
+<!-- Modal nhập PIN ẩn mật khẩu -->
+<div class="modal fade" id="pinModal" tabindex="-1" aria-labelledby="pinModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
         <div class="modal-content">
-            <div class="modal-header d-flex justify-content-between align-items-center">
-                <h5 class="modal-title fw-bold" id="imageModalTitle">Chi tiết ảnh</h5>
-                <div>
-                    <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnZoomIn" title="Phóng to">➕</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnZoomOut" title="Thu nhỏ">➖</button>
-                    <button type="button" class="btn btn-sm btn-outline-danger me-2" id="btnReset" title="Về ban đầu">🔄 Đặt lại</button>
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title fw-bold" id="pinModalLabel">🔒 Xác Nhận Quyền Quản Trị</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-secondary mb-2">Thao tác này cần quyền giáo viên / quản trị viên. Vui lòng nhập Mã PIN:</p>
+                <input type="password" id="modalPinInput" class="form-control form-control-lg text-center" placeholder="••••••••" autocomplete="new-password">
+                <div id="pinErrorMsg" class="text-danger mt-2 small text-center" style="display: none;">❌ Mã PIN không chính xác!</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
+                <button type="button" class="btn btn-danger fw-bold" onclick="submitPinCheck()">Xác nhận xóa</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL PHÓNG TO & KÉO THẢ ẢNH -->
+<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content shadow-lg">
+            <div class="modal-header d-flex justify-content-between align-items-center py-2 bg-light">
+                <h6 class="modal-title fw-bold text-primary" id="zoomModalTitle">Chi tiết hình ảnh</h6>
+                <div class="d-flex align-items-center gap-1">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnZoomIn" title="Phóng to">🔍+</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnZoomOut" title="Thu nhỏ">🔍-</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger me-2" id="btnResetZoom" title="Đặt lại">🔄</button>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
             </div>
-            <div class="modal-body text-center p-0 overflow-hidden" style="background-color: #1e1e1e; height: 70vh; cursor: grab;">
-                <div id="panzoom-container" class="w-100 h-100 d-flex align-items-center justify-content-center">
-                    <img id="modalImage" src="" class="img-fluid rounded" style="max-height: 100%; max-width: 100%; object-fit: contain;">
+            <div class="modal-body p-0 text-center overflow-hidden" style="background: #111; height: 68vh; cursor: grab;" id="panzoom-wrapper">
+                <div class="w-100 h-100 d-flex align-items-center justify-content-center">
+                    <img id="zoomModalImage" src="" class="img-fluid" style="max-height: 100%; max-width: 100%; object-fit: contain;">
                 </div>
             </div>
-            <div class="modal-footer justify-content-center py-1 bg-light">
-                <small class="text-muted">💡 <strong>Mẹo:</strong> Cuộn chuột để Phóng to/Thu nhỏ | Kéo giữ chuột để Di chuyển vị trí xem ảnh.</small>
+            <div class="modal-footer py-1 bg-light justify-content-center">
+                <small class="text-muted">💡 <strong>Hướng dẫn:</strong> Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ và kéo chuột để Di chuyển góc xem.</small>
             </div>
         </div>
     </div>
 </div>
 
 <script>
+let pendingDeleteUrl = "";
+
+function confirmDeletePIN(event, deleteUrl) {
+    event.preventDefault();
+    pendingDeleteUrl = deleteUrl;
+    document.getElementById('modalPinInput').value = '';
+    document.getElementById('pinErrorMsg').style.display = 'none';
+    let pinModal = new bootstrap.Modal(document.getElementById('pinModal'));
+    pinModal.show();
+}
+
+function submitPinCheck() {
+    let userPin = document.getElementById('modalPinInput').value.trim();
+    fetch('/get-pin?t=' + new Date().getTime())
+        .then(response => response.json())
+        .then(data => {
+            if (userPin === String(data.pin).trim()) {
+                window.location.href = pendingDeleteUrl;
+            } else {
+                document.getElementById('pinErrorMsg').style.display = 'block';
+            }
+        })
+        .catch(err => alert("❌ Lỗi kiểm tra mã PIN!"));
+}
+
 let panzoomInstance = null;
-
 function zoomImage(src, title) {
-    const modalImage = document.getElementById('modalImage');
-    const modalTitle = document.getElementById('imageModalTitle');
-    const container = document.getElementById('panzoom-container');
+    const imgEl = document.getElementById('zoomModalImage');
+    const titleEl = document.getElementById('zoomModalTitle');
+    const wrapper = document.getElementById('panzoom-wrapper');
     
-    modalImage.src = src;
-    modalTitle.innerText = 'Chi tiết ảnh: ' + title;
+    imgEl.src = src;
+    titleEl.innerText = 'Chi tiết ảnh: ' + title;
 
-    if (panzoomInstance) {
-        panzoomInstance.destroy();
-    }
+    if (panzoomInstance) panzoomInstance.destroy();
 
-    const modalElement = document.getElementById('imageModal');
-    const myModal = new bootstrap.Modal(modalElement);
-    myModal.show();
+    const modalEl = document.getElementById('imageZoomModal');
+    const bsModal = new bootstrap.Modal(modalEl);
+    bsModal.show();
 
-    modalElement.addEventListener('shown.bs.modal', function onModalShown() {
-        panzoomInstance = Panzoom(modalImage, {
-            maxScale: 5,
-            minScale: 0.8,
-            contain: 'outside'
-        });
-
-        container.parentElement.addEventListener('wheel', panzoomInstance.zoomWithWheel);
-
+    modalEl.addEventListener('shown.bs.modal', function onModalShown() {
+        panzoomInstance = Panzoom(imgEl, { maxScale: 6, minScale: 0.8, step: 0.25, contain: 'outside' });
+        wrapper.addEventListener('wheel', panzoomInstance.zoomWithWheel);
         document.getElementById('btnZoomIn').onclick = panzoomInstance.zoomIn;
         document.getElementById('btnZoomOut').onclick = panzoomInstance.zoomOut;
-        document.getElementById('btnReset').onclick = panzoomInstance.reset;
-
-        modalElement.removeEventListener('shown.bs.modal', onModalShown);
+        document.getElementById('btnResetZoom').onclick = panzoomInstance.reset;
+        modalEl.removeEventListener('shown.bs.modal', onModalShown);
     });
 }
 </script>
