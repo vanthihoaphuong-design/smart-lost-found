@@ -22,10 +22,12 @@
                     <!-- Cột Đồ bị mất -->
                     <td class="text-center p-3">
                         <div class="d-flex justify-content-center mb-2">
-                            <img src="{{ url_for('uploaded_file', filename=match.lost.hinh_anh) }}" 
-                                 class="img-fluid rounded border shadow-sm" 
-                                 style="max-height: 120px; object-fit: cover;" 
-                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
+                            <img src="/static/uploads/{{ match.lost.hinh_anh }}" 
+                                 class="img-fluid rounded border shadow-sm cursor-pointer" 
+                                 style="max-height: 120px; object-fit: cover; cursor: pointer;" 
+                                 title="Bấm để xem ảnh phóng to"
+                                 onclick="zoomImage('/static/uploads/{{ match.lost.hinh_anh }}', '{{ match.lost.ten_do }}')"
+                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh'; this.onclick=null;">
                         </div>
                         <h5 class="fw-bold text-dark mb-1">{{ match.lost.ten_do }}</h5>
                         <div class="mb-1">
@@ -40,10 +42,12 @@
                     <!-- Cột Đồ nhặt được -->
                     <td class="text-center p-3">
                         <div class="d-flex justify-content-center mb-2">
-                            <img src="{{ url_for('uploaded_file', filename=match.found.hinh_anh) }}" 
-                                 class="img-fluid rounded border shadow-sm" 
-                                 style="max-height: 120px; object-fit: cover;" 
-                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
+                            <img src="/static/uploads/{{ match.found.hinh_anh }}" 
+                                 class="img-fluid rounded border shadow-sm cursor-pointer" 
+                                 style="max-height: 120px; object-fit: cover; cursor: pointer;" 
+                                 title="Bấm để xem ảnh phóng to"
+                                 onclick="zoomImage('/static/uploads/{{ match.found.hinh_anh }}', '{{ match.found.ten_do }}')"
+                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh'; this.onclick=null;">
                         </div>
                         <h5 class="fw-bold text-dark mb-1">{{ match.found.ten_do }}</h5>
                         <div class="mb-1">
@@ -85,11 +89,13 @@
                         </div>
 
                         <div class="mb-3">
-                            <span class="fw-bold text-dark small">{{ match.ket_luan }}</span>
+                            <span class="badge {% if match.score >= 80 %}bg-success{% elif match.score >= 40 %}bg-warning text-dark{% else %}bg-secondary{% endif %} p-2">
+                                {{ match.ket_luan }}
+                            </span>
                         </div>
 
                         <div>
-                            <a href="{{ url_for('teacher_check', lost_id=match.lost.id, found_id=match.found.id) }}" 
+                            <a href="/teacher-check/{{ match.lost.id }}/{{ match.found.id }}" 
                                class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm">
                                 👨‍🏫 Giáo viên kiểm tra
                             </a>
@@ -106,4 +112,28 @@
     </div>
     {% endif %}
 </div>
+
+<!-- POPUP MODAL PHÓNG TO ẢNH -->
+<div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="imageModalTitle">Chi tiết ảnh</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center p-2">
+                <img id="modalImage" src="" class="img-fluid rounded shadow" style="max-height: 75vh; object-fit: contain;">
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function zoomImage(src, title) {
+    document.getElementById('modalImage').src = src;
+    document.getElementById('imageModalTitle').innerText = 'Chi tiết ảnh: ' + title;
+    var myModal = new bootstrap.Modal(document.getElementById('imageModal'));
+    myModal.show();
+}
+</script>
 {% endblock %}
