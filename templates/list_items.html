@@ -97,18 +97,18 @@ Danh sách đồ thất lạc
     </div>
 </div>
 
-<!-- MODAL XEM ẢNH NGUYÊN BẢN CĂN GIỮA TUYỆT ĐỐI -->
+<!-- MODAL PHÓNG TO MƯỢT MÀ BẰNG CON LĂN CHUỘT & KÉO THẢ -->
 <div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
             <div class="modal-header border-0 pb-0 pt-2 pe-3">
                 <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="modal-body p-3 d-flex align-items-center justify-content-center" style="min-height: 60vh;">
-                <img id="zoomModalImage" src="" class="img-fluid rounded shadow" style="max-height: 75vh; width: auto; object-fit: contain; cursor: zoom-in;" onclick="toggleFullZoom(this)">
+            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative;" id="zoomViewport">
+                <img id="zoomModalImage" src="" style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center;">
             </div>
             <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
-                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Nhấp trực tiếp vào ảnh để Phóng to / Thu nhỏ</small>
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Kéo giữ chuột để Di chuyển góc xem</small>
             </div>
         </div>
     </div>
@@ -140,25 +140,69 @@ function submitPinCheck() {
         .catch(err => alert("❌ Lỗi kiểm tra mã PIN!"));
 }
 
+let scale = 1;
+let pointX = 0;
+let pointY = 0;
+let startX = 0;
+let startY = 0;
+let isDragging = false;
+
 function zoomImage(src) {
     const imgEl = document.getElementById('zoomModalImage');
-    imgEl.src = src;
-    imgEl.style.maxHeight = '75vh';
-    imgEl.style.cursor = 'zoom-in';
     
+    scale = 1;
+    pointX = 0;
+    pointY = 0;
+    updateTransform(imgEl);
+    
+    imgEl.src = src;
+
     const modalEl = document.getElementById('imageZoomModal');
     const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
     bsModal.show();
 }
 
-function toggleFullZoom(img) {
-    if (img.style.maxHeight === '75vh') {
-        img.style.maxHeight = 'none';
-        img.style.cursor = 'zoom-out';
-    } else {
-        img.style.maxHeight = '75vh';
-        img.style.cursor = 'zoom-in';
-    }
+function updateTransform(img) {
+    img.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
 }
+
+document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const imgEl = document.getElementById('zoomModalImage');
+    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    scale = Math.min(Math.max(1, scale + delta), 6);
+    
+    if (scale === 1) {
+        pointX = 0;
+        pointY = 0;
+    }
+    updateTransform(imgEl);
+}, { passive: false });
+
+const imgEl = document.getElementById('zoomModalImage');
+
+imgEl.addEventListener('mousedown', function(e) {
+    if (scale <= 1) return;
+    e.preventDefault();
+    isDragging = true;
+    startX = e.clientX - pointX;
+    startY = e.clientY - pointY;
+    imgEl.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    pointX = e.clientX - startX;
+    pointY = e.clientY - startY;
+    updateTransform(imgEl);
+});
+
+window.addEventListener('mouseup', function() {
+    if (isDragging) {
+        isDragging = false;
+        imgEl.style.cursor = 'grab';
+    }
+});
 </script>
 {% endblock %}
