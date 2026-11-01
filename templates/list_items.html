@@ -97,18 +97,20 @@ Danh sách đồ thất lạc
     </div>
 </div>
 
-<!-- MODAL PHÓNG TO MƯỢT MÀ BẰNG CON LĂN CHUỘT & KÉO THẢ -->
+<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT CHUẨN 100% -->
 <div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
             <div class="modal-header border-0 pb-0 pt-2 pe-3">
                 <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative;" id="zoomViewport">
-                <img id="zoomModalImage" src="" style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center;">
+            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
+                <img id="zoomModalImage" src="" 
+                     draggable="false"
+                     style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
             </div>
             <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
-                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Kéo giữ chuột để Di chuyển góc xem</small>
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem</small>
             </div>
         </div>
     </div>
@@ -153,6 +155,7 @@ function zoomImage(src) {
     scale = 1;
     pointX = 0;
     pointY = 0;
+    isDragging = false;
     updateTransform(imgEl);
     
     imgEl.src = src;
@@ -170,6 +173,7 @@ document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
     e.preventDefault();
     const imgEl = document.getElementById('zoomModalImage');
     const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    
     scale = Math.min(Math.max(1, scale + delta), 6);
     
     if (scale === 1) {
@@ -182,7 +186,7 @@ document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
 const imgEl = document.getElementById('zoomModalImage');
 
 imgEl.addEventListener('mousedown', function(e) {
-    if (scale <= 1) return;
+    if (e.button !== 0) return;
     e.preventDefault();
     isDragging = true;
     startX = e.clientX - pointX;
