@@ -1,138 +1,134 @@
 {% extends "base.html" %}
 
+{% block title %}
+Đối sánh thông minh
+{% endblock %}
+
 {% block content %}
-<div class="container mt-4">
-    <h2 class="text-center fw-bold text-primary mb-4">
-        🤖 Kết quả đối sánh thông minh
-    </h2>
 
-    {% if matches %}
-    <div class="table-responsive shadow-sm rounded">
-        <table class="table table-bordered table-hover align-middle bg-white mb-0">
-            <thead class="table-primary text-center align-middle">
-                <tr>
-                    <th style="width: 35%;">Đồ bị mất</th>
-                    <th style="width: 35%;">Đồ nhặt được</th>
-                    <th style="width: 30%;">Điểm phù hợp</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for match in matches %}
-                <tr>
-                    <!-- Cột Đồ bị mất -->
-                    <td class="text-center p-3">
+<h2 class="mb-4 text-primary text-center fw-bold">
+    🤖 Kết quả đối sánh thông minh
+</h2>
+
+{% if matches %}
+<div class="table-responsive shadow-sm rounded">
+    <table class="table table-bordered table-hover align-middle bg-white mb-0">
+        <thead class="table-primary text-center">
+            <tr>
+                <th style="width: 35%;">Đồ bị mất</th>
+                <th style="width: 35%;">Đồ nhặt được</th>
+                <th style="width: 30%;">Điểm phù hợp</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for m in matches %}
+            <tr>
+                <!-- Đồ bị mất -->
+                <td class="text-center p-3">
+                    {% if m.lost.hinh_anh %}
                         <div class="d-flex justify-content-center mb-2">
-                            <img src="/static/uploads/{{ match.lost.hinh_anh }}" 
-                                 class="img-fluid rounded border shadow-sm" 
-                                 style="max-height: 120px; object-fit: cover; cursor: pointer;" 
-                                 title="Bấm để xem ảnh phóng to"
-                                 onclick="zoomImage('/static/uploads/{{ match.lost.hinh_anh }}', '{{ match.lost.ten_do }}')"
-                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh'; this.onclick=null;">
+                            <img src="{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}" 
+                                 class="rounded shadow-sm cursor-pointer border" 
+                                 style="max-height: 110px; object-fit: cover;" 
+                                 onclick="zoomImage('{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}', '{{ m.lost.ten_do }}')"
+                                 title="Bấm để phóng to / thu nhỏ"
+                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
                         </div>
-                        <h5 class="fw-bold text-dark mb-1">{{ match.lost.ten_do }}</h5>
-                        <div class="mb-1">
-                            <span class="badge bg-danger text-wrap">{{ match.lost.loai_do }}</span>
-                        </div>
-                        <p class="small text-muted mb-0">
-                            📍 {{ match.lost.noi_mat }}<br>
-                            📅 {{ match.lost.ngay_mat }}
-                        </p>
-                    </td>
+                    {% endif %}
+                    <h5 class="fw-bold mb-1">{{ m.lost.ten_do }}</h5>
+                    <span class="badge bg-danger mb-1">{{ m.lost.loai_do }}</span><br>
+                    <small class="text-muted">
+                        📍 {{ m.lost.noi_mat }}<br>
+                        📅 {{ m.lost.ngay_mat }}
+                    </small>
+                </td>
 
-                    <!-- Cột Đồ nhặt được -->
-                    <td class="text-center p-3">
+                <!-- Đồ nhặt được -->
+                <td class="text-center p-3">
+                    {% if m.found.hinh_anh %}
                         <div class="d-flex justify-content-center mb-2">
-                            <img src="/static/uploads/{{ match.found.hinh_anh }}" 
-                                 class="img-fluid rounded border shadow-sm" 
-                                 style="max-height: 120px; object-fit: cover; cursor: pointer;" 
-                                 title="Bấm để xem ảnh phóng to"
-                                 onclick="zoomImage('/static/uploads/{{ match.found.hinh_anh }}', '{{ match.found.ten_do }}')"
-                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh'; this.onclick=null;">
+                            <img src="{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}" 
+                                 class="rounded shadow-sm cursor-pointer border" 
+                                 style="max-height: 110px; object-fit: cover;" 
+                                 onclick="zoomImage('{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}', '{{ m.found.ten_do }}')"
+                                 title="Bấm để phóng to / thu nhỏ"
+                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
                         </div>
-                        <h5 class="fw-bold text-dark mb-1">{{ match.found.ten_do }}</h5>
-                        <div class="mb-1">
-                            <span class="badge bg-success text-wrap">{{ match.found.loai_do }}</span>
-                        </div>
-                        <p class="small text-muted mb-0">
-                            📍 {{ match.found.noi_nhat }}<br>
-                            📅 {{ match.found.ngay_nhat }}
-                        </p>
-                    </td>
+                    {% endif %}
+                    <h5 class="fw-bold mb-1">{{ m.found.ten_do }}</h5>
+                    <span class="badge bg-success mb-1">{{ m.found.loai_do }}</span><br>
+                    <small class="text-muted">
+                        📍 {{ m.found.noi_nhat }}<br>
+                        📅 {{ m.found.ngay_nhat }}
+                    </small>
+                </td>
 
-                    <!-- Cột Điểm phù hợp -->
-                    <td class="text-center p-3">
-                        <div class="fw-bold text-primary display-6 mb-2">
-                            🎯 {{ match.score }}/100
-                        </div>
+                <!-- Điểm phù hợp -->
+                <td class="text-center p-3">
+                    <div class="text-muted small">🎯 ĐIỂM PHÙ HỢP</div>
+                    <div class="display-6 fw-bold text-primary mb-2">{{ m.score }}/100</div>
 
-                        <div class="bg-light p-2 rounded text-start d-inline-block w-100 mb-2 border" style="max-width: 240px;">
-                            <div class="d-flex justify-content-between small mb-1">
-                                <span>🖼️ Hình ảnh</span>
-                                <span class="fw-bold">{{ match.details.hinh_anh }}/50</span>
-                            </div>
-                            <div class="d-flex justify-content-between small mb-1">
-                                <span>📝 Tên đồ</span>
-                                <span class="fw-bold">{{ match.details.ten_do }}/15</span>
-                            </div>
-                            <div class="d-flex justify-content-between small mb-1">
-                                <span>🎨 Màu sắc</span>
-                                <span class="fw-bold">{{ match.details.mau_sac }}/15</span>
-                            </div>
-                            <div class="d-flex justify-content-between small mb-1">
-                                <span>📍 Vị trí</span>
-                                <span class="fw-bold">{{ match.details.vi_tri }}/10</span>
-                            </div>
-                            <div class="d-flex justify-content-between small">
-                                <span>📅 Ngày</span>
-                                <span class="fw-bold">{{ match.details.ngay }}/10</span>
-                            </div>
+                    <div class="bg-light p-2 rounded text-start d-inline-block w-100 mb-2 border" style="max-width: 240px;">
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span>🖼️ Hình ảnh</span><strong>{{ m.details.hinh_anh }}/50</strong>
                         </div>
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span>📝 Tên đồ</span><strong>{{ m.details.ten_do }}/15</strong>
+                        </div>
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span>🎨 Màu sắc</span><strong>{{ m.details.mau_sac }}/15</strong>
+                        </div>
+                        <div class="d-flex justify-content-between small mb-1">
+                            <span>📍 Vị trí</span><strong>{{ m.details.vi_tri }}/10</strong>
+                        </div>
+                        <div class="d-flex justify-content-between small">
+                            <span>📅 Ngày</span><strong>{{ m.details.ngay }}/10</strong>
+                        </div>
+                    </div>
 
-                        <div class="mb-3">
-                            <span class="badge {% if match.score >= 80 %}bg-success{% elif match.score >= 40 %}bg-warning text-dark{% else %}bg-secondary{% endif %} p-2">
-                                {{ match.ket_luan }}
-                            </span>
+                    {% if m.ket_luan %}
+                        <div class="mb-2 fw-bold small">
+                            {{ m.ket_luan }}
                         </div>
+                    {% endif %}
 
-                        <div>
-                            <a href="/teacher-check/{{ match.lost.id }}/{{ match.found.id }}" 
-                               class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm">
-                                👨‍🏫 Giáo viên kiểm tra
-                            </a>
-                        </div>
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
-    </div>
-    {% else %}
-    <div class="alert alert-info text-center" role="alert">
-        Chưa có dữ liệu đồ mất hoặc đồ nhặt để đối sánh!
-    </div>
-    {% endif %}
+                    {% if m.score >= 40 %}
+                        <a href="/teacher-check/{{ m.lost.id }}/{{ m.found.id }}" class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm">
+                            👨‍🏫 Giáo viên kiểm tra
+                        </a>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
 </div>
+{% else %}
+<div class="alert alert-warning text-center">
+    Chưa tìm thấy cặp đồ nào phù hợp.
+</div>
+{% endif %}
 
-<!-- POPUP MODAL PHÓNG TO & KÉO THẢ ẢNH -->
-<div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
+<!-- MODAL PHÓNG TO & KÉO THẢ ẢNH -->
+<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content">
-            <div class="modal-header d-flex justify-content-between align-items-center">
-                <h5 class="modal-title fw-bold" id="imageModalTitle">Chi tiết ảnh</h5>
-                <div>
-                    <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnZoomIn" title="Phóng to">➕</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnZoomOut" title="Thu nhỏ">➖</button>
-                    <button type="button" class="btn btn-sm btn-outline-danger me-2" id="btnReset" title="Về ban đầu">🔄 Đặt lại</button>
+        <div class="modal-content shadow-lg">
+            <div class="modal-header d-flex justify-content-between align-items-center py-2 bg-light">
+                <h6 class="modal-title fw-bold text-primary" id="zoomModalTitle">Chi tiết hình ảnh</h6>
+                <div class="d-flex align-items-center gap-1">
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnZoomIn" title="Phóng to">🔍+</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnZoomOut" title="Thu nhỏ">🔍-</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger me-2" id="btnResetZoom" title="Đặt lại">🔄</button>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
             </div>
-            <div class="modal-body text-center p-0 overflow-hidden" style="background-color: #1e1e1e; height: 70vh; cursor: grab;">
-                <div id="panzoom-container" class="w-100 h-100 d-flex align-items-center justify-content-center">
-                    <img id="modalImage" src="" class="img-fluid rounded" style="max-height: 100%; max-width: 100%; object-fit: contain;">
+            <div class="modal-body p-0 text-center overflow-hidden" style="background: #111; height: 68vh; cursor: grab;" id="panzoom-wrapper">
+                <div class="w-100 h-100 d-flex align-items-center justify-content-center">
+                    <img id="zoomModalImage" src="" class="img-fluid" style="max-height: 100%; max-width: 100%; object-fit: contain; transition: cursor 0.1s;">
                 </div>
             </div>
-            <div class="modal-footer justify-content-center py-1 bg-light">
-                <small class="text-muted">💡 <strong>Mẹo:</strong> Cuộn chuột để Phóng to/Thu nhỏ | Kéo giữ chuột để Di chuyển vị trí xem ảnh.</small>
+            <div class="modal-footer py-1 bg-light justify-content-center">
+                <small class="text-muted">💡 <strong>Hướng dẫn:</strong> Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ và kéo chuột để Di chuyển góc xem.</small>
             </div>
         </div>
     </div>
@@ -142,35 +138,39 @@
 let panzoomInstance = null;
 
 function zoomImage(src, title) {
-    const modalImage = document.getElementById('modalImage');
-    const modalTitle = document.getElementById('imageModalTitle');
-    const container = document.getElementById('panzoom-container');
+    const imgEl = document.getElementById('zoomModalImage');
+    const titleEl = document.getElementById('zoomModalTitle');
+    const wrapper = document.getElementById('panzoom-wrapper');
     
-    modalImage.src = src;
-    modalTitle.innerText = 'Chi tiết ảnh: ' + title;
+    imgEl.src = src;
+    titleEl.innerText = 'Chi tiết ảnh: ' + title;
 
     if (panzoomInstance) {
         panzoomInstance.destroy();
     }
 
-    const modalElement = document.getElementById('imageModal');
-    const myModal = new bootstrap.Modal(modalElement);
-    myModal.show();
+    const modalEl = document.getElementById('imageZoomModal');
+    const bsModal = new bootstrap.Modal(modalEl);
+    bsModal.show();
 
-    modalElement.addEventListener('shown.bs.modal', function onModalShown() {
-        panzoomInstance = Panzoom(modalImage, {
-            maxScale: 5,
+    modalEl.addEventListener('shown.bs.modal', function onModalShown() {
+        panzoomInstance = Panzoom(imgEl, {
+            maxScale: 6,
             minScale: 0.8,
+            step: 0.25,
             contain: 'outside'
         });
 
-        container.parentElement.addEventListener('wheel', panzoomInstance.zoomWithWheel);
-
+        wrapper.addEventListener('wheel', panzoomInstance.zoomWithWheel);
+        
         document.getElementById('btnZoomIn').onclick = panzoomInstance.zoomIn;
         document.getElementById('btnZoomOut').onclick = panzoomInstance.zoomOut;
-        document.getElementById('btnReset').onclick = panzoomInstance.reset;
+        document.getElementById('btnResetZoom').onclick = panzoomInstance.reset;
 
-        modalElement.removeEventListener('shown.bs.modal', onModalShown);
+        wrapper.addEventListener('panzoomstart', () => wrapper.style.cursor = 'grabbing');
+        wrapper.addEventListener('panzoomend', () => wrapper.style.cursor = 'grab');
+
+        modalEl.removeEventListener('shown.bs.modal', onModalShown);
     });
 }
 </script>
