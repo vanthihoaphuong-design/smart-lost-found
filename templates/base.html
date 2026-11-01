@@ -26,10 +26,10 @@
 </head>
 <body>
 
-    <!-- NAVBAR PHƯƠNG ÁN 2 (ĐÃ SỬA LỖI URL_FOR) -->
+    <!-- NAVBAR CHUẨN ĐƯỜNG DẪN TĨNH - KHÔNG BỎ LỖI 500 -->
     <nav class="navbar navbar-expand-lg navbar-custom shadow-sm py-2">
         <div class="container-fluid px-4">
-            <a class="navbar-brand fw-bold d-flex align-items-center" href="{{ url_for('home') if 'home' in endpoints else '/' }}">
+            <a class="navbar-brand fw-bold d-flex align-items-center" href="/">
                 🤖 AI Smart Lost & Found System
             </a>
             
@@ -43,25 +43,25 @@
                         <a class="nav-link px-2" href="/">🏠 Trang chủ</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('lost_form') }}">➕ Báo mất</a>
+                        <a class="nav-link px-2" href="/lost">➕ Báo mất</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('found_form') }}">📥 Báo nhặt</a>
+                        <a class="nav-link px-2" href="/found">📥 Báo nhặt</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('list_items') }}">📋 DS Đồ mất</a>
+                        <a class="nav-link px-2" href="/lost-list">📋 DS Đồ mất</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('found_list') }}">📦 DS Đồ nhặt</a>
+                        <a class="nav-link px-2" href="/found-list">📦 DS Đồ nhặt</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('match') }}">🤖 Đối sánh AI</a>
+                        <a class="nav-link px-2" href="/match">🤖 Đối sánh AI</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('dashboard') }}">📊 Thống kê</a>
+                        <a class="nav-link px-2" href="/dashboard">📊 Thống kê</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('heatmap') }}">🗺️ Bản đồ nhiệt</a>
+                        <a class="nav-link px-2" href="/heatmap">🗺️ Bản đồ nhiệt</a>
                     </li>
                 </ul>
             </div>
