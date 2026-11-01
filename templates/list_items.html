@@ -38,8 +38,8 @@ Danh sách đồ thất lạc
                         <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" 
                              class="rounded shadow-sm cursor-pointer border" 
                              style="max-height: 70px; object-fit: cover;" 
-                             onclick="zoomImage('{{ url_for('uploaded_file', filename=item.hinh_anh) }}', '{{ item.ten_do }}')"
-                             title="Bấm để phóng to / thu nhỏ"
+                             onclick="zoomImage('{{ url_for('uploaded_file', filename=item.hinh_anh) }}')"
+                             title="Bấm để xem phóng to"
                              onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
                     {% else %}
                         <span class="text-muted small">Không có ảnh</span>
@@ -97,26 +97,18 @@ Danh sách đồ thất lạc
     </div>
 </div>
 
-<!-- MODAL PHÓNG TO & KÉO THẢ ẢNH -->
+<!-- MODAL XEM ẢNH TỐI GIẢN - CĂN GIỮA TUYỆT ĐỐI -->
 <div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content shadow-lg">
-            <div class="modal-header d-flex justify-content-between align-items-center py-2 bg-light">
-                <h6 class="modal-title fw-bold text-primary" id="zoomModalTitle">Chi tiết hình ảnh</h6>
-                <div class="d-flex align-items-center gap-1">
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnZoomIn" title="Phóng to">🔍+</button>
-                    <button type="button" class="btn btn-sm btn-outline-secondary" id="btnZoomOut" title="Thu nhỏ">🔍-</button>
-                    <button type="button" class="btn btn-sm btn-outline-danger me-2" id="btnResetZoom" title="Đặt lại">🔄</button>
-                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
-                </div>
+        <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
+            <div class="modal-header border-0 pb-0 pt-2 pe-3">
+                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="modal-body p-0 text-center overflow-hidden" style="background: #111; height: 68vh; cursor: grab;" id="panzoom-wrapper">
-                <div class="w-100 h-100 d-flex align-items-center justify-content-center">
-                    <img id="zoomModalImage" src="" class="img-fluid" style="max-height: 100%; max-width: 100%; object-fit: contain;">
-                </div>
+            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 75vh; cursor: grab;" id="panzoom-wrapper">
+                <img id="zoomModalImage" src="" class="img-fluid" style="max-height: 100%; max-width: 100%; object-fit: contain; display: block; margin: auto;">
             </div>
-            <div class="modal-footer py-1 bg-light justify-content-center">
-                <small class="text-muted">💡 <strong>Hướng dẫn:</strong> Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ và kéo chuột để Di chuyển góc xem.</small>
+            <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Kéo giữ chuột để Di chuyển ảnh</small>
             </div>
         </div>
     </div>
@@ -149,27 +141,42 @@ function submitPinCheck() {
 }
 
 let panzoomInstance = null;
-function zoomImage(src, title) {
+
+function zoomImage(src) {
     const imgEl = document.getElementById('zoomModalImage');
-    const titleEl = document.getElementById('zoomModalTitle');
     const wrapper = document.getElementById('panzoom-wrapper');
     
     imgEl.src = src;
-    titleEl.innerText = 'Chi tiết ảnh: ' + title;
 
-    if (panzoomInstance) panzoomInstance.destroy();
+    if (panzoomInstance) {
+        panzoomInstance.destroy();
+        panzoomInstance = null;
+    }
 
     const modalEl = document.getElementById('imageZoomModal');
     const bsModal = new bootstrap.Modal(modalEl);
     bsModal.show();
 
     modalEl.addEventListener('shown.bs.modal', function onModalShown() {
-        panzoomInstance = Panzoom(imgEl, { maxScale: 6, minScale: 0.8, step: 0.25, contain: 'outside' });
-        wrapper.addEventListener('wheel', panzoomInstance.zoomWithWheel);
-        document.getElementById('btnZoomIn').onclick = panzoomInstance.zoomIn;
-        document.getElementById('btnZoomOut').onclick = panzoomInstance.zoomOut;
-        document.getElementById('btnResetZoom').onclick = panzoomInstance.reset;
+        panzoomInstance = Panzoom(imgEl, {
+            maxScale: 5,
+            minScale: 1,
+            contain: 'outside',
+            canvas: true
+        });
+
+        wrapper.onwheel = panzoomInstance.zoomWithWheel;
+        wrapper.addEventListener('panzoomstart', () => wrapper.style.cursor = 'grabbing');
+        wrapper.addEventListener('panzoomend', () => wrapper.style.cursor = 'grab');
+
         modalEl.removeEventListener('shown.bs.modal', onModalShown);
+    });
+
+    modalEl.addEventListener('hidden.bs.modal', function onModalHidden() {
+        if (panzoomInstance) {
+            panzoomInstance.reset();
+        }
+        modalEl.removeEventListener('hidden.bs.modal', onModalHidden);
     });
 }
 </script>
