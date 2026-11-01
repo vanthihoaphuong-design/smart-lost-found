@@ -466,21 +466,36 @@ def similarity(text1, text2):
 
     return SequenceMatcher(None, t1, t2).ratio()
 
-def date_score(date1, date2):
-    try:
-        d1 = datetime.strptime(str(date1), "%Y-%m-%d")
-        d2 = datetime.strptime(str(date2), "%Y-%m-%d")
-        diff = abs((d1 - d2).days)
+def parse_date_flexible(date_str):
+    if not date_str:
+        return None
+    d_str = str(date_str).strip()
+    formats = ["%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"]
+    for fmt in formats:
+        try:
+            return datetime.strptime(d_str, fmt)
+        except Exception:
+            pass
+    return None
 
-        if diff == 0:
-            return 10
-        elif diff == 1:
-            return 7
-        elif diff == 2:
-            return 3
-        else:
-            return 0
-    except Exception:
+def date_score(date1, date2):
+    d1 = parse_date_flexible(date1)
+    d2 = parse_date_flexible(date2)
+    
+    if not d1 or not d2:
+        return 0
+
+    diff = abs((d1 - d2).days)
+
+    if diff == 0:
+        return 10
+    elif diff == 1:
+        return 8
+    elif diff == 2:
+        return 5
+    elif diff == 3:
+        return 3
+    else:
         return 0
 
 def image_score(img1_filename, img2_filename):
