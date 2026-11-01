@@ -33,9 +33,11 @@
                     
                     <td class="text-center">
                         <img src="/static/uploads/{{ item.hinh_anh }}" 
-                             class="img-thumbnail shadow-sm" 
-                             style="max-height: 70px; object-fit: cover;" 
-                             onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                             class="img-thumbnail shadow-sm cursor-pointer" 
+                             style="max-height: 70px; object-fit: cover; cursor: pointer;" 
+                             title="Bấm để xem ảnh phóng to"
+                             onclick="zoomImage('/static/uploads/{{ item.hinh_anh }}', '{{ item.ten_do }}')"
+                             onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh'; this.onclick=null;">
                     </td>
 
                     <td class="text-center fw-bold text-dark">{{ item.ten_do }}</td>
@@ -82,4 +84,28 @@
     </div>
     {% endif %}
 </div>
+
+<!-- POPUP MODAL PHÓNG TO ẢNH -->
+<div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title fw-bold" id="imageModalTitle">Chi tiết ảnh</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center p-2">
+                <img id="modalImage" src="" class="img-fluid rounded shadow" style="max-height: 75vh; object-fit: contain;">
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function zoomImage(src, title) {
+    document.getElementById('modalImage').src = src;
+    document.getElementById('imageModalTitle').innerText = 'Chi tiết ảnh: ' + title;
+    var myModal = new bootstrap.Modal(document.getElementById('imageModal'));
+    myModal.show();
+}
+</script>
 {% endblock %}
