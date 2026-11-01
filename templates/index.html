@@ -1,81 +1,79 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="container mt-4">
-    <!-- HERO BANNER CHÀO MỪNG -->
-    <div class="p-4 p-md-5 mb-4 rounded-3 text-white bg-primary shadow-sm text-center">
-        <div class="container-fluid py-2">
-            <h1 class="display-6 fw-bold mb-3">🎒 HỆ THỐNG QUẢN LÝ ĐỒ THẤT LẠC THÔNG MINH</h1>
-            <p class="fs-5 col-md-10 mx-auto text-light">
-                Ứng dụng trí tuệ nhân tạo (AI & OpenCV) giúp hỗ trợ tìm kiếm, đối sánh tự động và hoàn trả đồ thất lạc trong nhà trường.
-            </p>
-        </div>
+<div class="container mt-3">
+    <!-- BANNER GỌN GÀNG -->
+    <div class="p-3 p-md-4 mb-3 rounded-3 text-white bg-primary shadow-sm text-center">
+        <h2 class="fw-bold mb-2 fs-3">🎒 HỆ THỐNG QUẢN LÝ ĐỒ THẤT LẠC THÔNG MINH</h2>
+        <p class="mb-0 small text-light">
+            Ứng dụng trí tuệ nhân tạo (AI & OpenCV) giúp hỗ trợ tìm kiếm, đối sánh tự động và hoàn trả đồ thất lạc trong nhà trường.
+        </p>
     </div>
 
-    <!-- KHỐI CHỨC NĂNG CHÍNH -->
-    <div class="row g-4 mb-4">
+    <!-- KHỐI 3 NÚT TÍNH NĂNG CHÍNH -->
+    <div class="row g-3 mb-3">
         <!-- Báo mất đồ -->
         <div class="col-md-4">
-            <div class="card h-100 shadow-sm border-0 text-center p-3">
-                <div class="card-body d-flex flex-column justify-content-between">
+            <div class="card h-100 shadow-sm border-0 text-center p-2">
+                <div class="card-body d-flex flex-column justify-content-between p-2">
                     <div>
-                        <div class="display-4 text-danger mb-2">🚨</div>
-                        <h4 class="fw-bold card-title text-danger">Báo Mất Đồ</h4>
-                        <p class="card-text text-muted small">Gửi thông tin đồ vật bạn bị đánh rơi hoặc thất lạc trong trường.</p>
+                        <div class="fs-1 text-danger mb-1">🚨</div>
+                        <h5 class="fw-bold card-title text-danger mb-1">Báo Mất Đồ</h5>
+                        <p class="card-text text-muted small mb-2">Gửi thông tin đồ vật bạn bị đánh rơi hoặc thất lạc trong trường.</p>
                     </div>
-                    <a href="/lost" class="btn btn-danger btn-lg w-100 mt-3 shadow-sm fw-bold">➕ Tạo Báo Mất</a>
+                    <a href="/lost" class="btn btn-danger btn-sm w-100 fw-bold py-2 shadow-sm">➕ Tạo Báo Mất</a>
                 </div>
             </div>
         </div>
 
         <!-- Báo nhặt đồ -->
         <div class="col-md-4">
-            <div class="card h-100 shadow-sm border-0 text-center p-3">
-                <div class="card-body d-flex flex-column justify-content-between">
+            <div class="card h-100 shadow-sm border-0 text-center p-2">
+                <div class="card-body d-flex flex-column justify-content-between p-2">
                     <div>
-                        <div class="display-4 text-success mb-2">📦</div>
-                        <h4 class="fw-bold card-title text-success">Báo Nhặt Đồ</h4>
-                        <p class="card-text text-muted small">Đăng thông tin vật phẩm bạn nhặt được để trả lại cho chủ nhân.</p>
+                        <div class="fs-1 text-success mb-1">📦</div>
+                        <h5 class="fw-bold card-title text-success mb-1">Báo Nhặt Đồ</h5>
+                        <p class="card-text text-muted small mb-2">Đăng thông tin vật phẩm bạn nhặt được để trả lại cho chủ nhân.</p>
                     </div>
-                    <a href="/found" class="btn btn-success btn-lg w-100 mt-3 shadow-sm fw-bold">📥 Tạo Báo Nhặt</a>
+                    <a href="/found" class="btn btn-success btn-sm w-100 fw-bold py-2 shadow-sm">📥 Tạo Báo Nhặt</a>
                 </div>
             </div>
         </div>
 
         <!-- Đối sánh AI -->
         <div class="col-md-4">
-            <div class="card h-100 shadow-sm border-0 text-center p-3">
-                <div class="card-body d-flex flex-column justify-content-between">
+            <div class="card h-100 shadow-sm border-0 text-center p-2">
+                <div class="card-body d-flex flex-column justify-content-between p-2">
                     <div>
-                        <div class="display-4 text-primary mb-2">🤖</div>
-                        <h4 class="fw-bold card-title text-primary">Đối Sánh AI</h4>
-                        <p class="card-text text-muted small">Thuật toán phân tích hình ảnh, vị trí và ngày tháng để gợi ý trùng khớp.</p>
+                        <div class="fs-1 text-primary mb-1">🤖</div>
+                        <h5 class="fw-bold card-title text-primary mb-1">Đối Sánh AI</h5>
+                        <p class="card-text text-muted small mb-2">Thuật toán phân tích hình ảnh, vị trí và ngày tháng gợi ý trùng khớp.</p>
                     </div>
-                    <a href="/match" class="btn btn-primary btn-lg w-100 mt-3 shadow-sm fw-bold">🔍 Tìm Trùng Khớp</a>
+                    <a href="/match" class="btn btn-primary btn-sm w-100 fw-bold py-2 shadow-sm">🔍 Tìm Trùng Khớp</a>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- KHỐI TRA CỨU & THỐNG KÊ -->
-    <div class="row g-3">
+    <!-- KHỐI TRA CỨU NHANH -->
+    <div class="row g-2">
         <div class="col-6 col-md-3">
-            <a href="/lost-list" class="btn btn-outline-danger w-100 py-3 shadow-sm fw-bold">
+            <a href="/lost-list" class="btn btn-outline-danger btn-sm w-100 py-2 shadow-sm fw-bold">
                 📋 Danh sách đồ mất
             </a>
         </div>
         <div class="col-6 col-md-3">
-            <a href="/found-list" class="btn btn-outline-success w-100 py-3 shadow-sm fw-bold">
+            <a href="/found-list" class="btn btn-outline-success btn-sm w-100 py-2 shadow-sm fw-bold">
                 📦 Danh sách đồ nhặt
             </a>
         </div>
         <div class="col-6 col-md-3">
-            <a href="/dashboard" class="btn btn-outline-primary w-100 py-3 shadow-sm fw-bold">
+            <a href="/dashboard" class="btn btn-outline-primary btn-sm w-100 py-2 shadow-sm fw-bold">
                 📊 Thống kê báo cáo
             </a>
         </div>
         <div class="col-6 col-md-3">
-            <a href="/heatmap" class="btn btn-outline-warning text-dark w-100 py-3 shadow-sm fw-bold">
+            <a href="/heatmap" class="btn btn-outline-warning text-dark btn-sm w-100 py-2 shadow-sm fw-bold">
                 🗺️ Bản đồ nhiệt
             </a>
         </div>
