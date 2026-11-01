@@ -33,7 +33,7 @@
                     
                     <td class="text-center">
                         <img src="/static/uploads/{{ item.hinh_anh }}" 
-                             class="img-thumbnail shadow-sm cursor-pointer" 
+                             class="img-thumbnail shadow-sm" 
                              style="max-height: 70px; object-fit: cover; cursor: pointer;" 
                              title="Bấm để xem ảnh phóng to"
                              onclick="zoomImage('/static/uploads/{{ item.hinh_anh }}', '{{ item.ten_do }}')"
@@ -73,27 +73,65 @@
     {% endif %}
 </div>
 
-<!-- POPUP MODAL PHÓNG TO ẢNH -->
+<!-- POPUP MODAL PHÓNG TO & KÉO THẢ ẢNH -->
 <div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content">
-            <div class="modal-header">
+            <div class="modal-header d-flex justify-content-between align-items-center">
                 <h5 class="modal-title fw-bold" id="imageModalTitle">Chi tiết ảnh</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                <div>
+                    <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnZoomIn" title="Phóng to">➕</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnZoomOut" title="Thu nhỏ">➖</button>
+                    <button type="button" class="btn btn-sm btn-outline-danger me-2" id="btnReset" title="Về ban đầu">🔄 Đặt lại</button>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
             </div>
-            <div class="modal-body text-center p-2">
-                <img id="modalImage" src="" class="img-fluid rounded shadow" style="max-height: 75vh; object-fit: contain;">
+            <div class="modal-body text-center p-0 overflow-hidden" style="background-color: #1e1e1e; height: 70vh; cursor: grab;">
+                <div id="panzoom-container" class="w-100 h-100 d-flex align-items-center justify-content-center">
+                    <img id="modalImage" src="" class="img-fluid rounded" style="max-height: 100%; max-width: 100%; object-fit: contain;">
+                </div>
+            </div>
+            <div class="modal-footer justify-content-center py-1 bg-light">
+                <small class="text-muted">💡 <strong>Mẹo:</strong> Cuộn chuột để Phóng to/Thu nhỏ | Kéo giữ chuột để Di chuyển vị trí xem ảnh.</small>
             </div>
         </div>
     </div>
 </div>
 
 <script>
+let panzoomInstance = null;
+
 function zoomImage(src, title) {
-    document.getElementById('modalImage').src = src;
-    document.getElementById('imageModalTitle').innerText = 'Chi tiết ảnh: ' + title;
-    var myModal = new bootstrap.Modal(document.getElementById('imageModal'));
+    const modalImage = document.getElementById('modalImage');
+    const modalTitle = document.getElementById('imageModalTitle');
+    const container = document.getElementById('panzoom-container');
+    
+    modalImage.src = src;
+    modalTitle.innerText = 'Chi tiết ảnh: ' + title;
+
+    if (panzoomInstance) {
+        panzoomInstance.destroy();
+    }
+
+    const modalElement = document.getElementById('imageModal');
+    const myModal = new bootstrap.Modal(modalElement);
     myModal.show();
+
+    modalElement.addEventListener('shown.bs.modal', function onModalShown() {
+        panzoomInstance = Panzoom(modalImage, {
+            maxScale: 5,
+            minScale: 0.8,
+            contain: 'outside'
+        });
+
+        container.parentElement.addEventListener('wheel', panzoomInstance.zoomWithWheel);
+
+        document.getElementById('btnZoomIn').onclick = panzoomInstance.zoomIn;
+        document.getElementById('btnZoomOut').onclick = panzoomInstance.zoomOut;
+        document.getElementById('btnReset').onclick = panzoomInstance.reset;
+
+        modalElement.removeEventListener('shown.bs.modal', onModalShown);
+    });
 }
 </script>
 {% endblock %}
