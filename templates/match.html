@@ -1,135 +1,109 @@
 {% extends "base.html" %}
 
-{% block title %}
-Đối sánh thông minh
-{% endblock %}
-
 {% block content %}
+<div class="container mt-4">
+    <h2 class="text-center fw-bold text-primary mb-4">
+        🤖 Kết quả đối sánh thông minh
+    </h2>
 
-<h2 class="mb-4 text-primary">
-    🤖 Kết quả đối sánh thông minh
-</h2>
+    {% if matches %}
+    <div class="table-responsive shadow-sm rounded">
+        <table class="table table-bordered table-hover align-middle bg-white mb-0">
+            <thead class="table-primary text-center align-middle">
+                <tr>
+                    <th style="width: 35%;">Đồ bị mất</th>
+                    <th style="width: 35%;">Đồ nhặt được</th>
+                    <th style="width: 30%;">Điểm phù hợp</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for match in matches %}
+                <tr>
+                    <!-- Cột Đồ bị mất -->
+                    <td class="text-center p-3">
+                        <div class="d-flex justify-content-center mb-2">
+                            <img src="{{ url_for('uploaded_file', filename=match.lost.hinh_anh) }}" 
+                                 class="img-fluid rounded border shadow-sm" 
+                                 style="max-height: 120px; object-fit: cover;" 
+                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
+                        </div>
+                        <h5 class="fw-bold text-dark mb-1">{{ match.lost.ten_do }}</h5>
+                        <div class="mb-1">
+                            <span class="badge bg-danger text-wrap">{{ match.lost.loai_do }}</span>
+                        </div>
+                        <p class="small text-muted mb-0">
+                            📍 {{ match.lost.noi_mat }}<br>
+                            📅 {{ match.lost.ngay_mat }}
+                        </p>
+                    </td>
 
-{% if matches %}
+                    <!-- Cột Đồ nhặt được -->
+                    <td class="text-center p-3">
+                        <div class="d-flex justify-content-center mb-2">
+                            <img src="{{ url_for('uploaded_file', filename=match.found.hinh_anh) }}" 
+                                 class="img-fluid rounded border shadow-sm" 
+                                 style="max-height: 120px; object-fit: cover;" 
+                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
+                        </div>
+                        <h5 class="fw-bold text-dark mb-1">{{ match.found.ten_do }}</h5>
+                        <div class="mb-1">
+                            <span class="badge bg-success text-wrap">{{ match.found.loai_do }}</span>
+                        </div>
+                        <p class="small text-muted mb-0">
+                            📍 {{ match.found.noi_nhat }}<br>
+                            📅 {{ match.found.ngay_nhat }}
+                        </p>
+                    </td>
 
-<table class="table table-bordered table-hover align-middle">
-<thead class="table-primary">
-    <tr>
-        <th>Đồ bị mất</th>
-        <th>Đồ nhặt được</th>
-        <th style="width: 40%;">Điểm phù hợp</th>
-    </tr>
-</thead>
-<tbody>
-{% for m in matches %}
-    <tr>
-        <td>
-            {% if m.lost.hinh_anh %}
-                <img src="{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}" 
-                     class="rounded shadow-sm mb-2" 
-                     style="width: 130px; height: 100px; object-fit: cover; cursor: pointer; display: block;" 
-                     onclick="event.stopPropagation(); openProModal('{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}')"
-                     title="Bấm để soi chi tiết">
-                <br>
-            {% endif %}
-            <strong>{{ m.lost.ten_do }}</strong><br>
-            <span class="badge bg-danger">{{ m.lost.loai_do }}</span><br>
-            📍 {{ m.lost.noi_mat }}<br>
-            📅 {{ m.lost.ngay_mat }}
-        </td>
+                    <!-- Cột Điểm phù hợp -->
+                    <td class="text-center p-3">
+                        <div class="fw-bold text-primary display-6 mb-2">
+                            🎯 {{ match.score }}/100
+                        </div>
 
-        <td>
-            {% if m.found.hinh_anh %}
-                <img src="{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}" 
-                     class="rounded shadow-sm mb-2" 
-                     style="width: 130px; height: 100px; object-fit: cover; cursor: pointer; display: block;" 
-                     onclick="event.stopPropagation(); openProModal('{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}')"
-                     title="Bấm me soi chi tiết">
-                <br>
-            {% endif %}
-            <strong>{{ m.found.ten_do }}</strong><br>
-            <span class="badge bg-success">{{ m.found.loai_do }}</span><br>
-            📍 {{ m.found.noi_nhat }}<br>
-            📅 {{ m.found.ngay_nhat }}
-        </td>
+                        <div class="bg-light p-2 rounded text-start d-inline-block w-100 mb-2 border" style="max-width: 240px;">
+                            <div class="d-flex justify-content-between small mb-1">
+                                <span>🖼️ Hình ảnh</span>
+                                <span class="fw-bold">{{ match.details.hinh_anh }}/50</span>
+                            </div>
+                            <div class="d-flex justify-content-between small mb-1">
+                                <span>📝 Tên đồ</span>
+                                <span class="fw-bold">{{ match.details.ten_do }}/15</span>
+                            </div>
+                            <div class="d-flex justify-content-between small mb-1">
+                                <span>🎨 Màu sắc</span>
+                                <span class="fw-bold">{{ match.details.mau_sac }}/15</span>
+                            </div>
+                            <div class="d-flex justify-content-between small mb-1">
+                                <span>📍 Vị trí</span>
+                                <span class="fw-bold">{{ match.details.vi_tri }}/10</span>
+                            </div>
+                            <div class="d-flex justify-content-between small">
+                                <span>📅 Ngày</span>
+                                <span class="fw-bold">{{ match.details.ngay }}/10</span>
+                            </div>
+                        </div>
 
-        <td>
-            <!-- ĐIỂM TỔNG -->
-            <div class="text-center mb-3">
-                <div class="text-muted small">🎯 ĐIỂM PHÙ HỢP</div>
-                <div class="display-6 fw-bold text-primary">{{ m.score }}/100</div>
-            </div>
+                        <div class="mb-3">
+                            <span class="fw-bold text-dark small">{{ match.ket_luan }}</span>
+                        </div>
 
-            <!-- ĐIỂM CHI TIẾT -->
-            <div class="small">
-                <div class="d-flex justify-content-between mb-1">
-                    <span>🖼️ Hình ảnh</span>
-                    <strong>{{ m.details.hinh_anh }}/50</strong>
-                </div>
-                <div class="d-flex justify-content-between mb-1">
-                    <span>📝 Tên đồ</span>
-                    <strong>{{ m.details.ten_do }}/15</strong>
-                </div>
-                <div class="d-flex justify-content-between mb-1">
-                    <span>🎨 Màu sắc</span>
-                    <strong>{{ m.details.mau_sac }}/15</strong>
-                </div>
-                <div class="d-flex justify-content-between mb-1">
-                    <span>📍 Vị trí</span>
-                    <strong>{{ m.details.vi_tri }}/10</strong>
-                </div>
-                <div class="d-flex justify-content-between mb-1">
-                    <span>📅 Ngày</span>
-                    <strong>{{ m.details.ngay }}/10</strong>
-                </div>
-            </div>
-
-            <hr>
-
-            <!-- PHÂN LOẠI -->
-            {% if m.ket_luan %}
-                {% if m.ket_luan.startswith("🟢") %}
-                    <div class="text-center text-success fw-bold">
-                        {{ m.ket_luan }}
-                    </div>
-                {% elif m.ket_luan.startswith("🟡") %}
-                    <div class="text-center text-warning fw-bold">
-                        {{ m.ket_luan }}
-                    </div>
-                {% elif m.ket_luan.startswith("🟠") %}
-                    <div class="text-center fw-bold" style="color: #fd7e14;">
-                        {{ m.ket_luan }}
-                    </div>
-                {% else %}
-                    <div class="text-center text-danger fw-bold">
-                        {{ m.ket_luan }}
-                    </div>
-                {% endif %}
-
-                {% if m.image_warning %}
-                    <div class="text-center small text-danger mt-1">
-                        {{ m.image_warning }}
-                    </div>
-                {% endif %}
-            {% endif %}
-
-            <!-- XÁC NHẬN TRẢ ĐỒ -->
-            {% if m.score >= 40 %}
-                <hr class="my-2">
-                <a href="/teacher-check/{{ m.lost.id }}/{{ m.found.id }}" class="btn btn-primary">
-                    👩‍🏫 Giáo viên kiểm tra
-                </a>
-            {% endif %}
-        </td>
-    </tr>
-{% endfor %}
-</tbody>
-</table>
-
-{% else %}
-<div class="alert alert-warning">
-    Chưa tìm thấy cặp đồ nào phù hợp.
+                        <div>
+                            <a href="{{ url_for('teacher_check', lost_id=match.lost.id, found_id=match.found.id) }}" 
+                               class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm">
+                                👨‍🏫 Giáo viên kiểm tra
+                            </a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="alert alert-info text-center" role="alert">
+        Chưa có dữ liệu đồ mất hoặc đồ nhặt để đối sánh!
+    </div>
+    {% endif %}
 </div>
-{% endif %}
-
 {% endblock %}
