@@ -5,8 +5,6 @@
 {% block content %}
 <style>
 .hm-page {
-    --blue: #1769aa;
-    --teal: #16a6a1;
     --ink: #18324b;
     --muted: #6b7c8f;
     color: var(--ink);
@@ -15,9 +13,9 @@
     margin: 0 auto;
 }
 
-/* KHUNG HERO ĐẦU TIÊN VỚI NỀN SÁNG TƯƠI SÁNG & SANG TRỌNG */
+/* BANNER CHÍNH */
 .hm-page .hero {
-    padding: 26px 30px;
+    padding: 24px 30px;
     border-radius: 18px;
     color: #fff;
     background: linear-gradient(135deg, #0d6efd 0%, #0dcaf0 100%);
@@ -30,14 +28,12 @@
     font-weight: 800;
     margin: 0 0 7px;
     color: #ffffff;
-    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .hm-page .hero p {
     margin: 0;
     opacity: .95;
     font-size: 0.98rem;
-    color: #f8fafc;
 }
 
 .hm-page .stat,
@@ -84,7 +80,7 @@
     margin: 0 0 18px;
 }
 
-/* KHUNG NỘI DUNG CUỘN GỌN GÀNG */
+/* KHUNG NỘI DUNG CUỘN */
 .hm-page .bar-container {
     max-height: 420px;
     overflow-y: auto;
@@ -119,17 +115,16 @@
 .hm-page .bar {
     height: 100%;
     border-radius: 99px;
-    background: linear-gradient(90deg, #0d6efd, #0dcaf0);
+    transition: width 0.3s ease;
 }
 
 .hm-page .count {
     text-align: right;
     font-weight: 800;
-    color: #124d80;
     font-variant-numeric: tabular-nums;
 }
 
-/* LƯỚI KHU VỰC CHUẨN Ô KHÔNG BỊ MẤT CHỮ */
+/* LƯỚI BẢN ĐỒ NHIỆT */
 .hm-page .tiles {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -142,14 +137,13 @@
 .hm-page .tile {
     padding: 10px 6px;
     border-radius: 12px;
-    border: 1px solid #cbdfee;
-    background: #edf5fc;
     min-height: 80px;
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
     text-align: center;
+    transition: transform 0.2s;
 }
 
 .hm-page .tile-name {
@@ -182,8 +176,8 @@
 
 .hm-page .dot {
     display: inline-block;
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     border-radius: 3px;
     margin-right: 6px;
 }
@@ -205,13 +199,13 @@
 
 <div class="hm-page">
 
-{# KHỞI TẠO VÀ XỬ LÝ BIẾN DỮ LIỆU AN TOÀN TRÁNH LỖI BACKEND #}
+{# KHỞI TẠO VÀ XỬ LÝ BIẾN DỮ LIỆU AN TOÀN #}
 {% if data is defined and data %}
     {% set heatmap_data = data %}
 {% elif location_counts is defined and location_counts %}
     {% set heatmap_data = location_counts.items()|list %}
 {% else %}
-    {% set heatmap_data = [('Khu Văn phòng', 3), ('Phòng Tin học 1', 2), ('6A1', 2), ('Phòng Sử - Địa', 1), ('Phòng Hội trường', 1), ('Phòng Đoàn - Đội', 1), ('Phòng Tâm lý', 1), ('9A3', 1), ('Sân trường', 0), ('Nhà xe', 0), ('Căn tin', 0), ('Thư viện', 0)] %}
+    {% set heatmap_data = [('Phòng Tin học 1', 3), ('Khu Văn phòng', 3), ('Phòng Đoàn - Đội', 2), ('6A1', 2), ('Phòng Sử - Địa', 1), ('Phòng Hội trường', 1), ('Phòng Tâm lý', 1), ('9A3', 1), ('Sân trường', 0), ('Nhà xe', 0), ('Căn tin', 0), ('Thư viện', 0)] %}
 {% endif %}
 
 {% set ns = namespace(total=0, active=0, top_name='Chưa có dữ liệu', top_count=0) %}
@@ -231,22 +225,20 @@
 
 {% set max_count = ([heatmap_data|map(attribute=1)|list|max, 1]|max) if heatmap_data else 1 %}
 
-<!-- BANNER ĐẦU NỀN SÁNG ĐỒNG BỘ -->
+<!-- BANNER ĐẦU -->
 <section class="hero">
     <h1>🗺️ Bản đồ khu vực thất lạc</h1>
     <p>
-        Thống kê số đồ vật bị mất theo khu vực trong trường học,
-        giúp nhận biết những nơi cần lưu ý.
+        Thống kê số đồ vật bị mất theo khu vực trong trường học, giúp nhận biết những nơi cần lưu ý.
     </p>
 </section>
 
 <!-- Ba ô thống kê -->
 <div class="row g-3 mb-4">
-
     <div class="col-12 col-md-4">
         <div class="stat">
             <div class="label">Tổng lượt ghi nhận đồ mất</div>
-            <div class="value">{{ ns.total }}</div>
+            <div class="value text-danger">{{ ns.total }}</div>
             <div class="note">Tổng số bản ghi hiện có trong dữ liệu.</div>
         </div>
     </div>
@@ -254,49 +246,56 @@
     <div class="col-12 col-md-4">
         <div class="stat">
             <div class="label">Khu vực có ghi nhận</div>
-            <div class="value">{{ ns.active }}</div>
+            <div class="value text-primary">{{ ns.active }}</div>
             <div class="note">Số khu vực có ít nhất một bản ghi.</div>
         </div>
     </div>
 
     <div class="col-12 col-md-4">
         <div class="stat">
-            <div class="label">Khu vực ghi nhận nhiều nhất</div>
-            <div class="value" style="font-size:1.45rem">
+            <div class="label">Điểm nóng thất lạc nhất</div>
+            <div class="value text-danger" style="font-size:1.45rem">
                 {{ ns.top_name }}
             </div>
             <div class="note">{{ ns.top_count }} lượt ghi nhận</div>
         </div>
     </div>
-
 </div>
 
 <div class="row g-3 mb-4">
-
     <!-- Biểu đồ thanh ngang -->
     <div class="col-12 col-lg-6">
         <section class="panel">
             <h2>Số lượt theo từng khu vực</h2>
             <div class="subtitle">
-                Thanh dài hơn tương ứng với số lượt ghi nhận nhiều hơn.
+                Thanh đỏ tương ứng với nơi mất đồ nhiều nhất (Hot spot).
             </div>
 
             {% if heatmap_data %}
                 <div class="bar-container">
                     {% for area, count in heatmap_data|sort(attribute=1, reverse=true) %}
 
+                    {% set intensity = (count / max_count) if max_count else 0 %}
+                    {% if count == 0 %}
+                        {% set bar_color = '#cbd5e1' %}
+                    {% elif intensity >= 0.8 %}
+                        {% set bar_color = '#dc2626' %}
+                    {% elif intensity >= 0.5 %}
+                        {% set bar_color = '#f97316' %}
+                    {% elif intensity >= 0.25 %}
+                        {% set bar_color = '#eab308' %}
+                    {% else %}
+                        {% set bar_color = '#3b82f6' %}
+                    {% endif %}
+
                     <div class="bar-row">
                         <div class="area" title="{{ area }}">{{ area }}</div>
 
-                        <div class="track"
-                             role="img"
-                             aria-label="{{ area }}: {{ count }} lượt">
-                            <div class="bar"
-                                 style="width:{{ ((count / max_count) * 100)|round if max_count else 0 }}%">
-                            </div>
+                        <div class="track" role="img" aria-label="{{ area }}: {{ count }} lượt">
+                            <div class="bar" style="width:{{ ((count / max_count) * 100)|round if max_count else 0 }}%; background: {{ bar_color }};"></div>
                         </div>
 
-                        <div class="count">{{ count }}</div>
+                        <div class="count" style="color: {{ bar_color if count > 0 else '#94a3b8' }}">{{ count }}</div>
                     </div>
 
                     {% endfor %}
@@ -310,72 +309,70 @@
     <!-- Bản đồ màu theo khu vực -->
     <div class="col-12 col-lg-6">
         <section class="panel">
-            <h2>Mức độ ghi nhận</h2>
+            <h2>Mức độ ghi nhận (Nhiệt độ)</h2>
             <div class="subtitle">
-                Tổng quan nhanh theo số lượt trong từng khu vực.
+                Tông màu đỏ thể hiện mật độ thất lạc đồ đạc rất cao.
             </div>
 
             {% if heatmap_data %}
             <div class="tiles">
-
                 {% for area, count in heatmap_data %}
 
                     {% set intensity = (count / max_count) if max_count else 0 %}
 
                     {% if count == 0 %}
-                        {% set bg = '#f4f8fb' %}
-                        {% set border = '#e4edf5' %}
-                        {% set color = '#7b8b9a' %}
-                    {% elif intensity >= 0.7 %}
-                        {% set bg = '#d7f3ef' %}
-                        {% set border = '#62c8bd' %}
-                        {% set color = '#116e70' %}
-                    {% elif intensity >= 0.35 %}
-                        {% set bg = '#e1effb' %}
-                        {% set border = '#8abce5' %}
-                        {% set color = '#175d91' %}
+                        {% set bg = '#f8fafc' %}
+                        {% set border = '#e2e8f0' %}
+                        {% set color = '#64748b' %}
+                    {% elif intensity >= 0.8 %}
+                        {% set bg = '#fef2f2' %}
+                        {% set border = '#fca5a5' %}
+                        {% set color = '#991b1b' %}
+                    {% elif intensity >= 0.5 %}
+                        {% set bg = '#fff7ed' %}
+                        {% set border = '#ffedd5' %}
+                        {% set color = '#c2410c' %}
+                    {% elif intensity >= 0.25 %}
+                        {% set bg = '#fefce8' %}
+                        {% set border = '#fef08a' %}
+                        {% set color = '#854d0e' %}
                     {% else %}
-                        {% set bg = '#edf5fc' %}
-                        {% set border = '#cbdfee' %}
-                        {% set color = '#345b78' %}
+                        {% set bg = '#eff6ff' %}
+                        {% set border = '#bfdbfe' %}
+                        {% set color = '#1e40af' %}
                     {% endif %}
 
-                    <div class="tile"
-                         style="background:{{ bg }};border-color:{{ border }}">
-
+                    <div class="tile" style="background:{{ bg }}; border: 1px solid {{ border }};">
                         <div class="tile-name" style="color:{{ color }}" title="{{ area }}">
                             {{ area }}
                         </div>
-
                         <div class="tile-count" style="color:{{ color }}">
                             {{ count }}
                         </div>
                     </div>
 
                 {% endfor %}
-
             </div>
 
+            <!-- CHÚ THÍCH MÀU CHUẨN HEATMAP -->
             <div class="legend">
-                <span><i class="dot" style="background:#62c8bd"></i>Nhiều</span>
-                <span><i class="dot" style="background:#8abce5"></i>Trung bình</span>
-                <span><i class="dot" style="background:#cbdfee"></i>Ít</span>
-                <span><i class="dot" style="background:#e4edf5"></i>Chưa ghi nhận</span>
+                <span><i class="dot" style="background:#dc2626"></i>Rất nhiều (Đỏ)</span>
+                <span><i class="dot" style="background:#f97316"></i>Nhiều (Cam)</span>
+                <span><i class="dot" style="background:#eab308"></i>Trung bình (Vàng)</span>
+                <span><i class="dot" style="background:#3b82f6"></i>Ít (Xanh)</span>
+                <span><i class="dot" style="background:#cbd5e1"></i>Chưa có (Xám)</span>
             </div>
 
             {% else %}
                 <div class="empty">Chưa có dữ liệu để hiển thị.</div>
             {% endif %}
-
         </section>
     </div>
-
 </div>
 
 <div class="text-muted small text-center mt-3">
     <strong>Lưu ý:</strong>
-    Bản đồ được tổng hợp từ các bản ghi đồ thất lạc đã lưu trong hệ thống.
-    Kết quả phản ánh dữ liệu hiện có, không khẳng định đây là nơi chắc chắn làm mất đồ.
+    Bản đồ nhiệt được tự động phân cấp màu sắc dựa trên mật độ bản ghi thực tế trong hệ thống.
 </div>
 
 </div>
