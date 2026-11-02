@@ -12,19 +12,40 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
         }
         .navbar-custom { 
-            background-color: #0d6efd; 
+            background: linear-gradient(135deg, #0d6efd 0%, #0a58ca 100%);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         }
-        .navbar-custom .navbar-brand, 
-        .navbar-custom .nav-link { 
+        .navbar-custom .navbar-brand { 
             color: #ffffff !important; 
-            font-weight: 500; 
+            font-size: 1.15rem;
         }
-        .navbar-custom .nav-link:hover { 
+        .navbar-custom .nav-link { 
+            color: rgba(255, 255, 255, 0.9) !important; 
+            font-weight: 500;
+            font-size: 0.92rem;
+            padding: 0.5rem 0.8rem !important;
+            border-radius: 6px;
+            transition: all 0.2s ease-in-out;
+        }
+        .navbar-custom .nav-link:hover, 
+        .navbar-custom .nav-link:focus { 
             color: #ffca28 !important; 
+            background-color: rgba(255, 255, 255, 0.1);
         }
-        .nav-link { 
-            white-space: nowrap; 
-            font-size: 0.9rem; 
+        .dropdown-menu {
+            border: none;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+            border-radius: 8px;
+            padding: 0.5rem 0;
+        }
+        .dropdown-item {
+            font-size: 0.9rem;
+            font-weight: 500;
+            padding: 0.5rem 1.2rem;
+        }
+        .dropdown-item:hover {
+            background-color: #e9ecef;
+            color: #0d6efd;
         }
         .cursor-pointer { 
             cursor: pointer; 
@@ -37,10 +58,10 @@
 </head>
 <body>
 
-    <!-- NAVBAR ĐIỀU HƯỚNG ĐẦY ĐỦ CÁC NÚT BÁO CHUẨN FLASK -->
-    <nav class="navbar navbar-expand-xl navbar-custom shadow-sm py-2">
-        <div class="container-fluid px-3">
-            <a class="navbar-brand fw-bold me-2 text-nowrap d-flex align-items-center" href="{{ url_for('home') }}">
+    <!-- NAVBAR GỌN ĐẸP TỐI ƯU CẢ NỀN MÁY TÍNH VÀ ĐIỆN THOẠI -->
+    <nav class="navbar navbar-expand-lg navbar-custom py-2 sticky-top">
+        <div class="container px-3">
+            <a class="navbar-brand fw-bold text-nowrap d-flex align-items-center me-3" href="{{ url_for('home') }}">
                 🤖 Smart Lost & Found
             </a>
             
@@ -49,36 +70,43 @@
             </button>
 
             <div class="collapse navbar-collapse" id="navbarNav">
-                <ul class="navbar-nav ms-auto mb-2 mb-lg-0 align-items-center">
+                <ul class="navbar-nav ms-auto align-items-lg-center">
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('home') }}">🏠 Trang chủ</a>
+                        <a class="nav-link" href="{{ url_for('home') }}">🏠 Trang chủ</a>
                     </li>
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('search') }}">🔍 Tìm kiếm</a>
+                        <a class="nav-link" href="{{ url_for('search') }}">🔍 Tìm kiếm</a>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('lost') }}">➕ Báo mất</a>
+
+                    <!-- DROPDOWN QUẢN LÝ ĐỒ -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            📦 Quản lý đồ
+                        </a>
+                        <ul class="dropdown-menu shadow">
+                            <li><a class="dropdown-item" href="{{ url_for('lost') }}">➕ Báo mất đồ</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('found') }}">📥 Báo nhặt đồ</a></li>
+                            <li><hr class="dropdown-divider"></li>
+                            <li><a class="dropdown-item" href="{{ url_for('list_items') }}">📋 Danh sách đồ mất</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('found_list') }}">📦 Danh sách đồ nhặt</a></li>
+                        </ul>
                     </li>
-                    <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('found') }}">📥 Báo nhặt</a>
+
+                    <!-- DROPDOWN CÔNG CỤ AI & BÁO CÁO -->
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown" aria-expanded="false">
+                            📊 Thống kê & AI
+                        </a>
+                        <ul class="dropdown-menu shadow">
+                            <li><a class="dropdown-item" href="{{ url_for('match_items') }}">🤖 Đối sánh AI</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('dashboard') }}">📈 Thống kê báo cáo</a></li>
+                            <li><a class="dropdown-item" href="{{ url_for('heatmap') }}">🗺️ Bản đồ nhiệt</a></li>
+                        </ul>
                     </li>
+
+                    <!-- MỤC QUẢN TRỊ -->
                     <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('list_items') }}">📋 Đồ mất</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('found_list') }}">📦 Đồ nhặt</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('match_items') }}">🤖 Đối sánh</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('dashboard') }}">📊 Thống kê</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('heatmap') }}">🗺️ Bản đồ nhiệt</a>
-                    </li>
-                    <li class="nav-item">
-                        <a class="nav-link px-2" href="{{ url_for('change_pin') }}">🔑 Đổi PIN</a>
+                        <a class="nav-link" href="{{ url_for('change_pin') }}">🔑 Đổi PIN</a>
                     </li>
                 </ul>
             </div>
