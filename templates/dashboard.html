@@ -25,7 +25,7 @@ Dashboard Thống kê
                 <div class="d-flex align-items-center justify-content-between">
                     <div>
                         <span class="text-muted fw-semibold small">🚨 Tổng số đồ mất</span>
-                        <h1 class="display-5 fw-bold text-danger my-1">{{ total_items }}</h1>
+                        <h1 class="display-5 fw-bold text-danger my-1">{{ total_items if total_items is defined else 0 }}</h1>
                         <small class="text-muted">Bản ghi trên hệ thống</small>
                     </div>
                     <div class="p-3 bg-danger-subtle rounded-circle fs-3 text-danger">📋</div>
@@ -84,13 +84,19 @@ Dashboard Thống kê
                             </tr>
                         </thead>
                         <tbody class="small">
-                            {% for cat, count in category_counts.items() %}
-                            <tr>
-                                <td>{{ loop.index }}</td>
-                                <td class="fw-semibold text-secondary">{{ cat }}</td>
-                                <td class="text-center"><span class="badge bg-primary rounded-pill px-3 py-1">{{ count }}</span></td>
-                            </tr>
-                            {% endfor %}
+                            {% if category_counts is defined and category_counts %}
+                                {% for cat, count in category_counts.items() %}
+                                <tr>
+                                    <td>{{ loop.index }}</td>
+                                    <td class="fw-semibold text-secondary">{{ cat }}</td>
+                                    <td class="text-center"><span class="badge bg-primary rounded-pill px-3 py-1">{{ count }}</span></td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                                <tr>
+                                    <td colspan="3" class="text-center text-muted">Chưa có dữ liệu</td>
+                                </tr>
+                            {% endif %}
                         </tbody>
                     </table>
                 </div>
@@ -101,17 +107,22 @@ Dashboard Thống kê
             <div class="card border-0 shadow-sm rounded-4 p-3 bg-white h-100">
                 <h6 class="fw-bold text-dark mb-3">📊 Biểu đồ số lượng theo loại đồ</h6>
                 <div class="d-flex flex-column gap-3 mt-2">
-                    {% for cat, count in category_counts.items() %}
-                    <div>
-                        <div class="d-flex justify-content-between small fw-semibold text-secondary mb-1">
-                            <span>{{ cat }}</span>
-                            <span>{{ count }} món</span>
+                    {% if category_counts is defined and category_counts %}
+                        {% for cat, count in category_counts.items() %}
+                        <div>
+                            <div class="d-flex justify-content-between small fw-semibold text-secondary mb-1">
+                                <span>{{ cat }}</span>
+                                <span>{{ count }} món</span>
+                            </div>
+                            <div class="progress rounded-pill" style="height: 12px;">
+                                <div class="progress-bar bg-primary rounded-pill" role="progressbar" 
+                                     style="width: {% if total_items is defined and total_items > 0 %}{{ ((count / total_items) * 100)|round }}{% else %}0{% endif %}%;"></div>
+                            </div>
                         </div>
-                        <div class="progress rounded-pill" style="height: 12px;">
-                            <div class="progress-bar bg-primary rounded-pill" role="progressbar" style="width: {{ (count / total_items * 100)|round }}%;"></div>
-                        </div>
-                    </div>
-                    {% endfor %}
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-muted small text-center py-3">Chưa có dữ liệu biểu đồ.</div>
+                    {% endif %}
                 </div>
             </div>
         </div>
