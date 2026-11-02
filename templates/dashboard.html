@@ -4,7 +4,6 @@
 
 {% block content %}
 <style>
-    /* Chi riêng Dashboard, khong thay doi giao dien cac trang khac */
     .dashboard-page {
         width: 100%;
         max-width: 1500px;
@@ -22,19 +21,20 @@
         margin-bottom: 24px;
         border: 1px solid #d9e8fb;
         border-radius: 18px;
-        background: linear-gradient(120deg, #eaf3ff 0%, #f0fbf5 100%);
+        background: linear-gradient(120deg, #0d6efd 0%, #0a58ca 100%);
+        color: #fff;
     }
 
     .dashboard-page .dashboard-hero h2 {
         margin: 0 0 8px;
-        color: #175bb5;
+        color: #ffffff;
         font-size: clamp(1.5rem, 2vw, 2rem);
         font-weight: 800;
     }
 
     .dashboard-page .dashboard-hero p {
         margin: 0;
-        color: #64748b;
+        color: rgba(255, 255, 255, 0.85);
         font-size: 1rem;
     }
 
@@ -46,8 +46,8 @@
         width: 64px;
         height: 64px;
         border-radius: 18px;
-        background: #fff;
-        box-shadow: 0 5px 16px rgba(37, 99, 180, .10);
+        background: rgba(255, 255, 255, 0.2);
+        backdrop-filter: blur(5px);
         font-size: 2rem;
     }
 
@@ -215,55 +215,21 @@
             align-items: start;
         }
     }
-
-    @media (max-width: 768px) {
-        .dashboard-page .dashboard-hero {
-            padding: 20px;
-        }
-
-        .dashboard-page .hero-icon {
-            flex-basis: 48px;
-            width: 48px;
-            height: 48px;
-            font-size: 1.5rem;
-        }
-
-        .dashboard-page .dashboard-card-header {
-            padding: 15px 17px;
-        }
-
-        .dashboard-page .dashboard-card-body {
-            padding: 15px;
-        }
-
-        .dashboard-page .table thead th,
-        .dashboard-page .table tbody td {
-            padding: 11px 12px;
-        }
-
-        .dashboard-page .chart-area {
-            height: 390px;
-        }
-    }
-
-    @media (max-width: 480px) {
-        .dashboard-page .dashboard-hero {
-            align-items: flex-start;
-        }
-
-        .dashboard-page .hero-icon {
-            display: none;
-        }
-
-        .dashboard-page .chart-area {
-            height: 360px;
-        }
-    }
 </style>
 
-<!-- KHỞI TẠO BIẾN AN TOÀN TRÁNH LỖI BACKEND -->
 {% set total_cnt = tong_so if tong_so is defined else (total_items if total_items is defined else 12) %}
-{% set stat_list = thong_ke if (thong_ke is defined and thong_ke) else [('Trang phục / Phụ kiện (Áo khoác, Ví...)', 6), ('Sách vở / Dụng cụ học tập', 4), ('Thiết bị điện tử (Laptop, Điện thoại...)', 2)] %}
+
+{% if thong_ke is defined and thong_ke %}
+    {% if thong_ke is mapping %}
+        {% set stat_list = thong_ke.items()|list %}
+    {% else %}
+        {% set stat_list = thong_ke %}
+    {% endif %}
+{% elif category_counts is defined and category_counts %}
+    {% set stat_list = category_counts.items()|list %}
+{% else %}
+    {% set stat_list = [('Sách vở / Dụng cụ học tập', 2), ('Thiết bị điện tử (Laptop, Điện thoại...)', 1), ('Trang phục / Phụ kiện (Áo khoác, Ví...)', 8), ('Giấy tờ / Thẻ học sinh', 0), ('Khác', 1)] %}
+{% endif %}
 
 <div class="dashboard-page">
     <header class="dashboard-hero">
@@ -283,13 +249,11 @@
             </div>
         </div>
 
-        <!-- BỘ LỌC CÔNG CỤ XUẤT EXCEL THEO TRẠNG THÁI & THÁNG / NĂM -->
         <div class="col-12 col-sm-6 col-xl-8 d-flex align-items-center">
             <div class="stat-card w-100 d-flex flex-column justify-content-center align-items-start">
                 <div class="stat-label">📑 Báo cáo quản lý dành cho BGH</div>
                 
                 <form action="{{ url_for('export_excel') if 'export_excel' in config else '/export-excel' }}" method="GET" class="row g-2 mt-2 align-items-center w-100">
-                    <!-- Lọc theo Trạng thái -->
                     <div class="col-auto">
                         <select name="status" class="form-select form-select-sm fw-bold border-success text-success">
                             <option value="all">📁 Tất cả trạng thái</option>
@@ -298,7 +262,6 @@
                         </select>
                     </div>
 
-                    <!-- Lọc theo Tháng -->
                     <div class="col-auto">
                         <select name="month" id="selectMonth" class="form-select form-select-sm fw-bold">
                             <option value="">-- Tất cả tháng --</option>
@@ -308,7 +271,6 @@
                         </select>
                     </div>
 
-                    <!-- Lọc theo Năm -->
                     <div class="col-auto">
                         <select name="year" id="selectYear" class="form-select form-select-sm" style="width: auto;">
                             {% for y in range(2025, 2031) %}
@@ -319,7 +281,6 @@
                         </select>
                     </div>
 
-                    <!-- Nút bấm Xuất Báo Cáo -->
                     <div class="col-auto">
                         <button type="submit" class="btn btn-success btn-sm fw-bold shadow-sm">
                             📊 Xuất báo cáo Excel
@@ -332,9 +293,8 @@
         </div>
     </div>
 
-    <!-- KHỐI CẢNH BÁO TỰ ĐỘNG AI -->
-    <div class="dashboard-card mb-4" style="border-left: 5px solid #198754;">
-        <div class="dashboard-card-header" style="background: #eaf8ef; color: #146c43;">
+    <div class="dashboard-card mb-4" style="border-left: 5px solid #0d6efd;">
+        <div class="dashboard-card-header" style="background: #eaf3ff; color: #084298;">
             <span aria-hidden="true">🔔</span>
             <span>Cảnh báo tự động từ Hệ thống AI</span>
         </div>
@@ -410,7 +370,6 @@
     </div>
 </div>
 
-<!-- NẠP CHART.JS VÀ TỰ ĐỘNG BỎ LỖI TRUYỀN DỮ LIỆU -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 (function () {
@@ -431,9 +390,13 @@
             datasets: [{
                 label: "Số lượng đồ mất",
                 data: values,
-                backgroundColor: labels.map((_, i) =>
-                    i % 2 === 0 ? "#3478d4" : "#36a66b"
-                ),
+                backgroundColor: [
+                    "#3478d4",
+                    "#36a66b",
+                    "#0d6efd",
+                    "#6c757d",
+                    "#3478d4"
+                ],
                 borderRadius: 7,
                 borderSkipped: false,
                 maxBarThickness: 28,
@@ -447,7 +410,7 @@
             maintainAspectRatio: false,
             animation: { duration: 650 },
             layout: {
-                padding: { right: 22, top: 5, bottom: 5 }
+                padding: { right: 35, top: 5, bottom: 5 }
             },
             plugins: {
                 legend: { display: false },
