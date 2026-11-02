@@ -79,9 +79,9 @@
     margin: 0 0 18px;
 }
 
-/* KHỐI NỘI DUNG CUỘN GỌN GÀNG - TRÁNH TRÀN TRANG */
+/* KHUNG NỘI DUNG CUỘN GỌN GÀNG */
 .hm-page .bar-container {
-    max-height: 400px;
+    max-height: 420px;
     overflow-y: auto;
     padding-right: 6px;
 }
@@ -124,45 +124,46 @@
     font-variant-numeric: tabular-nums;
 }
 
+/* LƯỚI KHU VỰC CHUẨN Ô KHÔNG BỊ MẤT CHỮ */
 .hm-page .tiles {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 10px;
-    max-height: 400px;
+    max-height: 420px;
     overflow-y: auto;
     padding-right: 4px;
 }
 
 .hm-page .tile {
-    padding: 12px;
-    border-radius: 14px;
+    padding: 10px 6px;
+    border-radius: 12px;
     border: 1px solid #cbdfee;
     background: #edf5fc;
-    min-height: 90px;
+    min-height: 80px;
     display: flex;
     flex-direction: column;
+    align-items: center;
     justify-content: center;
     text-align: center;
 }
 
 .hm-page .tile-name {
-    font-size: .82rem;
+    font-size: .8rem;
     font-weight: 700;
-    white-space: nowrap;
+    line-height: 1.25;
+    margin-bottom: 4px;
+    width: 100%;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
     overflow: hidden;
-    text-overflow: ellipsis;
 }
 
 .hm-page .tile-count {
-    font-size: 1.5rem;
+    font-size: 1.4rem;
     font-weight: 800;
-    line-height: 1.2;
-    margin-top: 4px;
-}
-
-.hm-page .tile-unit {
-    font-size: .75rem;
-    color: var(--muted);
+    line-height: 1;
 }
 
 .hm-page .legend {
@@ -343,8 +344,6 @@
                         <div class="tile-count" style="color:{{ color }}">
                             {{ count }}
                         </div>
-
-                        <div class="tile-unit">lượt ghi nhận</div>
                     </div>
 
                 {% endfor %}
