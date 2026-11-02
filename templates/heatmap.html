@@ -15,24 +15,29 @@
     margin: 0 auto;
 }
 
+/* KHUNG HERO ĐẦU TIÊN VỚI NỀN SÁNG TƯƠI SÁNG & SANG TRỌNG */
 .hm-page .hero {
-    padding: 24px;
+    padding: 26px 30px;
     border-radius: 18px;
     color: #fff;
-    background: linear-gradient(120deg, #1769aa, #168fba 58%, #16a6a1);
+    background: linear-gradient(135deg, #0d6efd 0%, #0dcaf0 100%);
     margin-bottom: 22px;
-    box-shadow: 0 10px 26px rgba(23, 105, 170, .13);
+    box-shadow: 0 8px 24px rgba(13, 110, 253, 0.18);
 }
 
 .hm-page .hero h1 {
     font-size: clamp(1.4rem, 2.5vw, 2rem);
     font-weight: 800;
     margin: 0 0 7px;
+    color: #ffffff;
+    text-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
 .hm-page .hero p {
     margin: 0;
-    opacity: .92;
+    opacity: .95;
+    font-size: 0.98rem;
+    color: #f8fafc;
 }
 
 .hm-page .stat,
@@ -114,7 +119,7 @@
 .hm-page .bar {
     height: 100%;
     border-radius: 99px;
-    background: linear-gradient(90deg, #1769aa, #16a6a1);
+    background: linear-gradient(90deg, #0d6efd, #0dcaf0);
 }
 
 .hm-page .count {
@@ -226,6 +231,7 @@
 
 {% set max_count = ([heatmap_data|map(attribute=1)|list|max, 1]|max) if heatmap_data else 1 %}
 
+<!-- BANNER ĐẦU NỀN SÁNG ĐỒNG BỘ -->
 <section class="hero">
     <h1>🗺️ Bản đồ khu vực thất lạc</h1>
     <p>
