@@ -37,7 +37,7 @@
 </head>
 <body>
 
-    <!-- NAVBAR ĐIỀU HƯỚNG ĐẦY ĐỦ VÀ CHUẨN ĐƯỜNG DẪN FLASK -->
+    <!-- NAVBAR ĐIỀU HƯỚNG ĐẦY ĐỦ CÁC NÚT BÁO CHUẨN FLASK -->
     <nav class="navbar navbar-expand-xl navbar-custom shadow-sm py-2">
         <div class="container-fluid px-3">
             <a class="navbar-brand fw-bold me-2 text-nowrap d-flex align-items-center" href="{{ url_for('home') }}">
@@ -52,6 +52,9 @@
                 <ul class="navbar-nav ms-auto mb-2 mb-lg-0 align-items-center">
                     <li class="nav-item">
                         <a class="nav-link px-2" href="{{ url_for('home') }}">🏠 Trang chủ</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link px-2" href="{{ url_for('search') }}">🔍 Tìm kiếm</a>
                     </li>
                     <li class="nav-item">
                         <a class="nav-link px-2" href="{{ url_for('lost') }}">➕ Báo mất</a>
