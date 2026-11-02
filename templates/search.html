@@ -1,188 +1,263 @@
 {% extends "base.html" %}
 
-{% block title %}Tìm kiếm đồ thất lạc{% endblock %}
+{% block title %}
+Tìm kiếm đồ thất lạc
+{% endblock %}
 
 {% block content %}
-<div class="container my-4">
-    <div class="card shadow-sm border-0 rounded-3 mb-4">
+<div class="container py-2">
+    <!-- KHUNG BỘ LỌC TÌM KIẾM HIỆN ĐẠI -->
+    <div class="card border-0 shadow-sm rounded-4 mb-4">
         <div class="card-body p-4">
-            <h4 class="fw-bold mb-3 text-primary">🔍 Tìm kiếm đồ thất lạc</h4>
-            <form action="/search" method="GET">
+            <h4 class="fw-bold text-primary mb-3 d-flex align-items-center gap-2">
+                🔍 Bộ lọc tìm kiếm thông minh
+            </h4>
+            <form method="GET" action="{{ url_for('search') }}">
                 <div class="row g-3">
-                    <!-- Tên đồ -->
                     <div class="col-md-4">
-                        <label class="form-label fw-bold">Tên đồ</label>
-                        <input type="text" name="keyword" class="form-control" placeholder="Nhập tên đồ..." value="{{ keyword }}">
+                        <label class="form-label fw-semibold text-secondary small">Tên đồ vật</label>
+                        <input type="text" name="keyword" class="form-control rounded-3" placeholder="Ví dụ: Ví tiền, Sách, Điện thoại..." value="{{ keyword }}">
                     </div>
-
-                    <!-- Loại đồ chuẩn 5 nhóm -->
                     <div class="col-md-4">
-                        <label class="form-label fw-bold">Loại đồ</label>
-                        <select name="category" class="form-select">
-                            <option value="">Tất cả loại đồ</option>
+                        <label class="form-label fw-semibold text-secondary small">Loại đồ</label>
+                        <select name="category" class="form-select rounded-3">
+                            <option value="">-- Tất cả loại đồ --</option>
                             <option value="Sách vở / Dụng cụ học tập" {% if category == 'Sách vở / Dụng cụ học tập' %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
-                            <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if category == 'Thiết bị điện tử (Laptop, Điện thoại...)' %}selected{% endif %}>Thiết bị điện tử (Laptop, Điện thoại...)</option>
-                            <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if category == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' %}selected{% endif %}>Trang phục / Phụ kiện (Áo khoác, Ví...)</option>
+                            <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if category == 'Thiết bị điện tử (Laptop, Điện thoại...)' %}selected{% endif %}>Thiết bị điện tử</option>
+                            <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if category == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' %}selected{% endif %}>Trang phục / Phụ kiện</option>
                             <option value="Giấy tờ / Thẻ học sinh" {% if category == 'Giấy tờ / Thẻ học sinh' %}selected{% endif %}>Giấy tờ / Thẻ học sinh</option>
                             <option value="Khác" {% if category == 'Khác' %}selected{% endif %}>Khác</option>
                         </select>
                     </div>
-
-                    <!-- Màu sắc -->
                     <div class="col-md-4">
-                        <label class="form-label fw-bold">Màu sắc</label>
-                        <input type="text" name="color" class="form-control" placeholder="Ví dụ: đen, xanh, đỏ..." value="{{ color }}">
+                        <label class="form-label fw-semibold text-secondary small">Màu sắc</label>
+                        <input type="text" name="color" class="form-control rounded-3" placeholder="Ví dụ: Vàng, Đen, Xanh..." value="{{ color }}">
                     </div>
-
-                    <!-- Nơi mất / Nơi nhặt đầy đủ 32 địa điểm -->
                     <div class="col-md-6">
-                        <label class="form-label fw-bold">Nơi mất / nơi nhặt</label>
-                        <select name="location" class="form-select">
-                            <option value="">Tất cả địa điểm</option>
-                            {% set locations = [
-                                "Sân trường", "Nhà xe", "Căn tin", "Thư viện", "Sân bóng",
-                                "Phòng STEM", "Phòng Tin học 1", "Phòng Tin học 2",
-                                "Phòng Văn", "Phòng Sử - Địa", "Phòng Hội trường",
-                                "Phòng Đoàn - Đội", "Khu Văn phòng", "Phòng Tâm lý",
-                                "6A1", "6A2", "6A3",
-                                "7A1", "7A2", "7A3",
-                                "8A1", "8A2", "8A3",
-                                "9A1", "9A2", "9A3",
-                                "10A1", "10A2", "10A3",
-                                "11A1", "11A2",
-                                "12A1", "12A2"
-                            ] %}
-                            {% for loc in locations %}
-                                <option value="{{ loc }}" {% if location == loc %}selected{% endif %}>{{ loc }}</option>
-                            {% endfor %}
-                        </select>
+                        <label class="form-label fw-semibold text-secondary small">Nơi mất / Nơi nhặt</label>
+                        <input type="text" name="location" class="form-control rounded-3" placeholder="Nhập khu vực, phòng học..." value="{{ location }}">
                     </div>
-
-                    <!-- Trạng thái -->
                     <div class="col-md-6">
-                        <label class="form-label fw-bold">Trạng thái</label>
-                        <select name="status" class="form-select">
-                            <option value="">Tất cả trạng thái</option>
-                            <option value="DANG_TIM" {% if status == 'DANG_TIM' %}selected{% endif %}>Đang tìm (Bài báo mất)</option>
-                            <option value="DA_TIM" {% if status == 'DA_TIM' %}selected{% endif %}>Đã tìm thấy (Bài báo mất)</option>
-                            <option value="DANG_LUU_GIU" {% if status == 'DANG_LUU_GIU' %}selected{% endif %}>Đang lưu giữ (Bài báo nhặt)</option>
-                            <option value="DA_TRA" {% if status == 'DA_TRA' %}selected{% endif %}>Đã hoàn trả (Bài báo nhặt)</option>
+                        <label class="form-label fw-semibold text-secondary small">Trạng thái xử lý</label>
+                        <select name="status" class="form-select rounded-3">
+                            <option value="">-- Tất cả trạng thái --</option>
+                            <option value="DANG_TIM" {% if status == 'DANG_TIM' %}selected{% endif %}>🔑 Đang tìm (Bài báo mất)</option>
+                            <option value="DA_TIM" {% if status == 'DA_TIM' %}selected{% endif %}>✅ Đã tìm thấy (Bài báo mất)</option>
+                            <option value="DANG_LUU_GIU" {% if status == 'DANG_LUU_GIU' %}selected{% endif %}>📦 Đang lưu giữ (Bài báo nhặt)</option>
+                            <option value="DA_TRA" {% if status == 'DA_TRA' %}selected{% endif %}>✅ Đã hoàn trả (Bài báo nhặt)</option>
                         </select>
                     </div>
                 </div>
-
-                <div class="mt-4">
-                    <button type="submit" class="btn btn-primary px-4 fw-bold">🔍 Tìm kiếm</button>
-                    <a href="/search" class="btn btn-outline-secondary px-3 ms-2">Làm mới</a>
+                <div class="d-flex justify-content-end gap-2 mt-4">
+                    <a href="{{ url_for('search') }}" class="btn btn-light px-4 rounded-3 border">🔄 Đặt lại</a>
+                    <button type="submit" class="btn btn-primary px-4 fw-bold rounded-3 shadow-sm">🔍 Tìm kiếm ngay</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- DANH SÁCH ĐỒ BỊ MẤT -->
-    <div class="card shadow-sm border-0 rounded-3 mb-4">
-        <div class="card-header bg-primary text-white py-3">
-            <h5 class="mb-0 fw-bold">📌 Đồ bị mất ({{ lost_items|length }} kết quả phù hợp)</h5>
+    <!-- KẾT QUẢ TÌM KIẾM BÁO MẤT -->
+    <div class="card border-0 shadow-sm rounded-4 mb-4">
+        <div class="card-header bg-primary text-white py-3 px-4 rounded-top-4 d-flex justify-content-between align-items-center">
+            <h5 class="fw-bold mb-0">🚨 Đồ báo mất ({{ lost_items|length }} kết quả)</h5>
         </div>
         <div class="card-body p-0">
+            {% if lost_items %}
             <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
+                <table class="table table-hover align-middle mb-0 text-center">
                     <thead class="table-light">
                         <tr>
-                            <th style="width: 80px;">Ảnh</th>
-                            <th>Tên đồ</th>
-                            <th>Loại</th>
-                            <th>Màu sắc</th>
-                            <th>Nơi mất</th>
-                            <th>Ngày mất</th>
-                            <th>Trạng thái</th>
+                            <th style="width: 10%;">Ảnh</th>
+                            <th style="width: 20%;">Tên đồ vật</th>
+                            <th style="width: 20%;">Loại đồ</th>
+                            <th style="width: 15%;">Màu sắc</th>
+                            <th style="width: 15%;">Nơi mất</th>
+                            <th style="width: 10%;">Ngày mất</th>
+                            <th style="width: 10%;">Trạng thái</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for item in lost_items %}
                         <tr>
-                            <td>
+                            <td class="py-2">
                                 {% if item.hinh_anh %}
-                                    <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" class="rounded shadow-sm" style="width: 50px; height: 50px; object-fit: cover;">
+                                    <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" 
+                                         class="rounded shadow-sm cursor-pointer border" 
+                                         style="max-height: 65px; width: 65px; object-fit: cover;" 
+                                         onclick="zoomImage('{{ url_for('uploaded_file', filename=item.hinh_anh) }}')"
+                                         title="Bấm để xem phóng to"
+                                         onerror="this.onerror=null; this.src='https://via.placeholder.com/65?text=Chưa+có+ảnh';">
                                 {% else %}
-                                    <span class="text-muted">Không có</span>
+                                    <span class="text-muted small">Không có ảnh</span>
                                 {% endif %}
                             </td>
-                            <td class="fw-bold">{{ item.ten_do }}</td>
-                            <td><span class="badge bg-secondary">{{ item.loai_do }}</span></td>
-                            <td>{{ item.mau_sac or 'Không rõ' }}</td>
+                            <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                            <td><span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span></td>
+                            <td><span class="badge bg-light text-dark border">{{ item.mau_sac if item.mau_sac else '—' }}</span></td>
                             <td>{{ item.noi_mat }}</td>
                             <td>{{ item.ngay_mat }}</td>
                             <td>
-                                {% if item.trang_thai == 'DA_TIM' or item.trang_thai == 'Đã tìm thấy' %}
-                                    <span class="badge bg-success">Đã tìm thấy</span>
+                                {% if item.trang_thai in ['DA_TIM', 'Đã tìm thấy'] %}
+                                    <span class="badge bg-success">✅ Đã tìm thấy</span>
                                 {% else %}
-                                    <span class="badge bg-warning text-dark">Đang tìm</span>
+                                    <span class="badge bg-warning text-dark">🔑 Đang tìm</span>
                                 {% endif %}
                             </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="7" class="text-center py-4 text-muted">Không tìm thấy đồ bị mất phù hợp.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
+            {% else %}
+            <div class="text-center text-muted py-4">Khổng tìm thấy kết quả đồ báo mất phù hợp.</div>
+            {% endif %}
         </div>
     </div>
 
-    <!-- DANH SÁCH ĐỒ NHẶT ĐƯỢC -->
-    <div class="card shadow-sm border-0 rounded-3">
-        <div class="card-header bg-success text-white py-3">
-            <h5 class="mb-0 fw-bold">🎁 Đồ nhặt được ({{ found_items|length }} kết quả phù hợp)</h5>
+    <!-- KẾT QUẢ TÌM KIẾM BÁO NHẶT -->
+    <div class="card border-0 shadow-sm rounded-4">
+        <div class="card-header bg-success text-white py-3 px-4 rounded-top-4 d-flex justify-content-between align-items-center">
+            <h5 class="fw-bold mb-0">📦 Đồ báo nhặt ({{ found_items|length }} kết quả)</h5>
         </div>
         <div class="card-body p-0">
+            {% if found_items %}
             <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0">
+                <table class="table table-hover align-middle mb-0 text-center">
                     <thead class="table-light">
                         <tr>
-                            <th style="width: 80px;">Ảnh</th>
-                            <th>Tên đồ</th>
-                            <th>Loại</th>
-                            <th>Màu sắc</th>
-                            <th>Nơi nhặt</th>
-                            <th>Ngày nhặt</th>
-                            <th>Trạng thái</th>
+                            <th style="width: 10%;">Ảnh</th>
+                            <th style="width: 20%;">Tên đồ vật</th>
+                            <th style="width: 20%;">Loại đồ</th>
+                            <th style="width: 15%;">Màu sắc</th>
+                            <th style="width: 15%;">Nơi nhặt</th>
+                            <th style="width: 10%;">Ngày nhặt</th>
+                            <th style="width: 10%;">Trạng thái</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for item in found_items %}
                         <tr>
-                            <td>
+                            <td class="py-2">
                                 {% if item.hinh_anh %}
-                                    <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" class="rounded shadow-sm" style="width: 50px; height: 50px; object-fit: cover;">
+                                    <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" 
+                                         class="rounded shadow-sm cursor-pointer border" 
+                                         style="max-height: 65px; width: 65px; object-fit: cover;" 
+                                         onclick="zoomImage('{{ url_for('uploaded_file', filename=item.hinh_anh) }}')"
+                                         title="Bấm để xem phóng to"
+                                         onerror="this.onerror=null; this.src='https://via.placeholder.com/65?text=Chưa+có+ảnh';">
                                 {% else %}
-                                    <span class="text-muted">Không có</span>
+                                    <span class="text-muted small">Không có ảnh</span>
                                 {% endif %}
                             </td>
-                            <td class="fw-bold">{{ item.ten_do }}</td>
-                            <td><span class="badge bg-secondary">{{ item.loai_do }}</span></td>
-                            <td>{{ item.mau_sac or 'Không rõ' }}</td>
+                            <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                            <td><span class="badge bg-info text-dark text-wrap">{{ item.loai_do }}</span></td>
+                            <td><span class="badge bg-light text-dark border">{{ item.mau_sac if item.mau_sac else '—' }}</span></td>
                             <td>{{ item.noi_nhat }}</td>
                             <td>{{ item.ngay_nhat }}</td>
                             <td>
-                                {% if item.trang_thai == 'DA_TRA' or item.trang_thai == 'Đã hoàn trả' %}
-                                    <span class="badge bg-success">Đã hoàn trả</span>
+                                {% if item.trang_thai in ['DA_TRA', 'Đã hoàn trả'] %}
+                                    <span class="badge bg-success">✅ Đã hoàn trả</span>
                                 {% else %}
-                                    <span class="badge bg-info text-dark">Đang lưu giữ</span>
+                                    <span class="badge bg-primary">📦 Đang lưu giữ</span>
                                 {% endif %}
                             </td>
-                        </tr>
-                        {% else %}
-                        <tr>
-                            <td colspan="7" class="text-center py-4 text-muted">Không tìm thấy đồ nhặt được phù hợp.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
                 </table>
             </div>
+            {% else %}
+            <div class="text-center text-muted py-4">Không tìm thấy kết quả đồ báo nhặt phù hợp.</div>
+            {% endif %}
         </div>
     </div>
 </div>
+
+<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT ĐỒNG BỘ -->
+<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
+            <div class="modal-header border-0 pb-0 pt-2 pe-3">
+                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
+                <img id="zoomModalImage" src="" 
+                     draggable="false"
+                     style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
+            </div>
+            <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let scale = 1;
+let pointX = 0;
+let pointY = 0;
+let startX = 0;
+let startY = 0;
+let isDragging = false;
+
+function zoomImage(src) {
+    const imgEl = document.getElementById('zoomModalImage');
+    
+    scale = 1;
+    pointX = 0;
+    pointY = 0;
+    isDragging = false;
+    updateTransform(imgEl);
+    
+    imgEl.src = src;
+
+    const modalEl = document.getElementById('imageZoomModal');
+    const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    bsModal.show();
+}
+
+function updateTransform(img) {
+    img.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
+}
+
+document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const imgEl = document.getElementById('zoomModalImage');
+    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    
+    scale = Math.min(Math.max(1, scale + delta), 6);
+    
+    if (scale === 1) {
+        pointX = 0;
+        pointY = 0;
+    }
+    updateTransform(imgEl);
+}, { passive: false });
+
+const imgEl = document.getElementById('zoomModalImage');
+
+imgEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    isDragging = true;
+    startX = e.clientX - pointX;
+    startY = e.clientY - pointY;
+    imgEl.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    pointX = e.clientX - startX;
+    pointY = e.clientY - startY;
+    updateTransform(imgEl);
+});
+
+window.addEventListener('mouseup', function() {
+    if (isDragging) {
+        isDragging = false;
+        imgEl.style.cursor = 'grab';
+    }
+});
+</script>
 {% endblock %}
