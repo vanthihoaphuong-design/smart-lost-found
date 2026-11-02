@@ -23,21 +23,21 @@ Bản đồ nhiệt khu vực thất lạc
         <div class="col-md-4">
             <div class="card border-0 shadow-sm rounded-4 p-3 bg-white h-100">
                 <small class="text-muted fw-semibold">Tổng lượt ghi nhận đồ mất</small>
-                <h2 class="fw-bold text-success my-1">{{ total_lost }}</h2>
+                <h2 class="fw-bold text-success my-1">{{ total_lost if total_lost is defined else (items|length if items is defined else 0) }}</h2>
                 <small class="text-muted style-desc">Tổng số bản ghi hiện có trong dữ liệu.</small>
             </div>
         </div>
         <div class="col-md-4">
             <div class="card border-0 shadow-sm rounded-4 p-3 bg-white h-100">
                 <small class="text-muted fw-semibold">Khu vực có ghi nhận</small>
-                <h2 class="fw-bold text-primary my-1">{{ active_locations_count }}</h2>
+                <h2 class="fw-bold text-primary my-1">{{ active_locations_count if active_locations_count is defined else (location_counts|length if location_counts is defined else 0) }}</h2>
                 <small class="text-muted style-desc">Số khu vực có ít nhất một bản ghi.</small>
             </div>
         </div>
         <div class="col-md-4">
             <div class="card border-0 shadow-sm rounded-4 p-3 bg-white h-100">
                 <small class="text-muted fw-semibold">Khu vực ghi nhận nhiều nhất</small>
-                <h2 class="fw-bold text-danger my-1 fs-4 text-truncate">{{ top_location }}</h2>
+                <h2 class="fw-bold text-danger my-1 fs-4 text-truncate">{{ top_location if top_location is defined else '—' }}</h2>
                 <small class="text-muted style-desc">Vị trí có mật độ rơi đồ cao nhất.</small>
             </div>
         </div>
@@ -50,17 +50,22 @@ Bản đồ nhiệt khu vực thất lạc
             <div class="card border-0 shadow-sm rounded-4 p-3 bg-white h-100">
                 <h6 class="fw-bold text-dark mb-3">📍 Số lượt theo từng khu vực</h6>
                 <div class="d-flex flex-column gap-2">
-                    {% for loc, count in location_counts.items() %}
-                    <div class="d-flex align-items-center justify-content-between small p-2 rounded-3 hover-bg">
-                        <span class="fw-semibold text-secondary">{{ loc }}</span>
-                        <div class="d-flex align-items-center gap-2">
-                            <div class="progress rounded-pill" style="width: 120px; height: 8px;">
-                                <div class="progress-bar bg-success" style="width: {{ (count / total_lost * 100)|round if total_lost > 0 else 0 }}%;"></div>
+                    {% if location_counts is defined and location_counts %}
+                        {% for loc, count in location_counts.items() %}
+                        <div class="d-flex align-items-center justify-content-between small p-2 rounded-3 hover-bg">
+                            <span class="fw-semibold text-secondary">{{ loc }}</span>
+                            <div class="d-flex align-items-center gap-2">
+                                <div class="progress rounded-pill" style="width: 120px; height: 8px;">
+                                    <div class="progress-bar bg-success" 
+                                         style="width: {% if total_lost is defined and total_lost > 0 %}{{ ((count / total_lost) * 100)|round }}{% else %}0{% endif %}%;"></div>
+                                </div>
+                                <span class="badge bg-light text-dark border">{{ count }}</span>
                             </div>
-                            <span class="badge bg-light text-dark border">{{ count }}</span>
                         </div>
-                    </div>
-                    {% endfor %}
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-muted small text-center py-3">Chưa có dữ liệu khu vực.</div>
+                    {% endif %}
                 </div>
             </div>
         </div>
@@ -70,14 +75,18 @@ Bản đồ nhiệt khu vực thất lạc
             <div class="card border-0 shadow-sm rounded-4 p-3 bg-white h-100">
                 <h6 class="fw-bold text-dark mb-3">🧱 Mức độ ghi nhận theo khu vực</h6>
                 <div class="row g-2">
-                    {% for loc, count in location_counts.items() %}
-                    <div class="col-4">
-                        <div class="p-2 rounded-3 text-center border {% if count > 2 %}bg-danger-subtle border-danger-subtle{% elif count > 0 %}bg-success-subtle border-success-subtle{% else %}bg-light{% endif %}">
-                            <small class="d-block text-truncate fw-semibold text-secondary" style="font-size: 0.75rem;">{{ loc }}</small>
-                            <span class="fw-bold fs-5">{{ count }}</span>
+                    {% if location_counts is defined and location_counts %}
+                        {% for loc, count in location_counts.items() %}
+                        <div class="col-4">
+                            <div class="p-2 rounded-3 text-center border {% if count > 2 %}bg-danger-subtle border-danger-subtle{% elif count > 0 %}bg-success-subtle border-success-subtle{% else %}bg-light{% endif %}">
+                                <small class="d-block text-truncate fw-semibold text-secondary" style="font-size: 0.75rem;">{{ loc }}</small>
+                                <span class="fw-bold fs-5">{{ count }}</span>
+                            </div>
                         </div>
-                    </div>
-                    {% endfor %}
+                        {% endfor %}
+                    {% else %}
+                        <div class="text-muted small text-center py-3">Chưa có dữ liệu khu vực.</div>
+                    {% endif %}
                 </div>
             </div>
         </div>
