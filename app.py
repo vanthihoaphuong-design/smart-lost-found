@@ -510,10 +510,10 @@ def date_score(date1, date2):
 
 def image_score(img1_filename, img2_filename):
     """
-    Thuật toán tính điểm hình ảnh nâng cấp:
-    Tăng tỉ trọng HSV Histogram (tối đa 30đ) và dHash phom dáng (tối đa 15đ).
+    Thuật toán tính điểm hình ảnh:
+    Nếu không có file ảnh thật -> Trả về 0 điểm ngay lập tức.
     """
-    if not img1_filename or not img2_filename:
+    if not img1_filename or not img2_filename or not str(img1_filename).strip() or not str(img2_filename).strip():
         return 0, 0.0
 
     if img1_filename == img2_filename:
@@ -608,7 +608,15 @@ def match_items():
 
     for lost in lost_items:
         for found in found_items:
-            anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+            # 1. Kiểm tra xem CẢ HAI bài đăng có file ảnh thực tế hay không
+            has_real_images = bool(lost.hinh_anh and found.hinh_anh and str(lost.hinh_anh).strip() != "" and str(found.hinh_anh).strip() != "")
+
+            if has_real_images:
+                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+            else:
+                # Nếu KHÔNG CÓ ẢNH -> Ép điểm hình ảnh về đúng 0/50
+                anh_score, image_ratio = 0, 0.0
+
             ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
             mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15) if (lost.mau_sac and found.mau_sac) else 0
 
@@ -622,25 +630,26 @@ def match_items():
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-            # LOGIC ĐIỂM SÀN BẢO HIỂM NÂNG CẤP:
-            # Khi Tên đồ và Màu sắc trùng khớp 100%, AI nâng điểm ảnh lên tối thiểu 35/50 điểm
-            if ten_score == 15 and mau_score == 15:
-                if anh_score < 35:
-                    anh_score = 35
-                    image_ratio = max(image_ratio, 0.70)
-            elif ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
-                if anh_score < 22:
-                    anh_score = 22
-                    image_ratio = max(image_ratio, 0.44)
+            # 2. LOGIC ĐIỂM SÀN BẢO HIỂM: CHỈ ÁP DỤNG KHI CÓ ẢNH THẬT
+            if has_real_images:
+                if ten_score == 15 and mau_score == 15:
+                    if anh_score < 35:
+                        anh_score = 35
+                        image_ratio = max(image_ratio, 0.70)
+                elif ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
+                    if anh_score < 22:
+                        anh_score = 22
+                        image_ratio = max(image_ratio, 0.44)
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
             image_confidence = int(min(100, image_ratio * 100))
 
             reasons = []
-            if anh_score >= 35:
-                reasons.append("Hình ảnh rất giống")
-            elif anh_score >= 15:
-                reasons.append("Hình ảnh có điểm tương đồng")
+            if has_real_images:
+                if anh_score >= 35:
+                    reasons.append("Hình ảnh rất giống")
+                elif anh_score >= 15:
+                    reasons.append("Hình ảnh có điểm tương đồng")
 
             if ten_score >= 10:
                 reasons.append("Tên đồ tương đồng")
@@ -701,7 +710,13 @@ def teacher_check(lost_id, found_id):
     lost = LostItem.query.get_or_404(lost_id)
     found = FoundItem.query.get_or_404(found_id)
 
-    anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+    has_real_images = bool(lost.hinh_anh and found.hinh_anh and str(lost.hinh_anh).strip() != "" and str(found.hinh_anh).strip() != "")
+
+    if has_real_images:
+        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+    else:
+        anh_score, image_ratio = 0, 0.0
+
     ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
 
     mau_score = 0
@@ -718,14 +733,15 @@ def teacher_check(lost_id, found_id):
 
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-    if ten_score == 15 and mau_score == 15:
-        if anh_score < 35:
-            anh_score = 35
-            image_ratio = max(image_ratio, 0.70)
-    elif ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
-        if anh_score < 22:
-            anh_score = 22
-            image_ratio = max(image_ratio, 0.44)
+    if has_real_images:
+        if ten_score == 15 and mau_score == 15:
+            if anh_score < 35:
+                anh_score = 35
+                image_ratio = max(image_ratio, 0.70)
+        elif ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
+            if anh_score < 22:
+                anh_score = 22
+                image_ratio = max(image_ratio, 0.44)
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
@@ -739,8 +755,10 @@ def teacher_check(lost_id, found_id):
         ket_luan = "🔴 Khả năng trùng khớp thấp"
 
     image_warning = None
-    if image_ratio < 0.20:
+    if has_real_images and image_ratio < 0.20:
         image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
+    elif not has_real_images:
+        image_warning = "⚠️ Bài đăng này không có hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
 
     return render_template(
         "teacher_check.html",
