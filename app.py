@@ -65,9 +65,6 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def calculate_image_features(img_path):
-    """
-    Trích xuất đặc trưng ảnh (Hỗ trợ cả đường dẫn local lẫn URL Cloudinary)
-    """
     cached = get_feature_cache(img_path)
     if cached is not None:
         return cached
