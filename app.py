@@ -56,7 +56,7 @@ def save_feature_cache(img_path, features):
 
 def calculate_image_features(img_path):
     """
-    Trích xuất đặc trưng hình ảnh: Cắt bỏ 15% viền ngoài (loại phông nền),
+    Trích xuất đặc trưng hình ảnh: Cắt bỏ 15% viền ngoài (loại phông nền nhiễu),
     kết hợp HSV Histogram, ORB Keypoints và dHash.
     """
     cached = get_feature_cache(img_path)
@@ -71,7 +71,7 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        # Cắt 15% viền ngoài để tập trung vào vật thể chính giữa, loại phông nền
+        # Cắt 15% viền ngoài để tập trung vào vật thể chính giữa
         h, w = img.shape[:2]
         crop_img = img[int(h*0.15):int(h*0.85), int(w*0.15):int(w*0.85)]
         if crop_img.shape[0] == 0 or crop_img.shape[1] == 0:
@@ -511,7 +511,7 @@ def date_score(date1, date2):
 def image_score(img1_filename, img2_filename):
     """
     Thuật toán tính điểm hình ảnh nâng cấp:
-    Tăng tỷ trọng HSV Histogram màu sắc và cấp điểm sàn bảo hiểm linh hoạt.
+    Tăng tỉ trọng HSV Histogram (tối đa 30đ) và dHash phom dáng (tối đa 15đ).
     """
     if not img1_filename or not img2_filename:
         return 0, 0.0
@@ -538,12 +538,12 @@ def image_score(img1_filename, img2_filename):
             correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
             correlation = max(0.0, float(correlation))
 
-            if correlation >= 0.80:
-                color_points = 25
-            elif correlation >= 0.60:
-                color_points = 18
-            elif correlation >= 0.40:
-                color_points = 12
+            if correlation >= 0.75:
+                color_points = 30
+            elif correlation >= 0.55:
+                color_points = 22
+            elif correlation >= 0.35:
+                color_points = 14
             else:
                 color_points = int(correlation * 20)
     except Exception:
@@ -560,11 +560,11 @@ def image_score(img1_filename, img2_filename):
             if hamming_distance <= 3 or hash_sim >= 0.95:
                 return 50, 1.0
 
-            if hash_sim >= 0.80:
+            if hash_sim >= 0.75:
                 hash_points = 15
-            elif hash_sim >= 0.65:
+            elif hash_sim >= 0.60:
                 hash_points = 10
-            elif hash_sim >= 0.50:
+            elif hash_sim >= 0.45:
                 hash_points = 5
     except Exception:
         hash_points = 0
@@ -622,9 +622,13 @@ def match_items():
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-            # LOGIC ĐIỂM SÀN BẢO HIỂM:
-            # Nếu Tên đồ khớp 100% HOẶC (Màu sắc khớp + Vị trí khớp), AI tự động đặt điểm sàn cho ảnh đạt tối thiểu 22/50
-            if ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
+            # LOGIC ĐIỂM SÀN BẢO HIỂM NÂNG CẤP:
+            # Khi Tên đồ và Màu sắc trùng khớp 100%, AI nâng điểm ảnh lên tối thiểu 35/50 điểm
+            if ten_score == 15 and mau_score == 15:
+                if anh_score < 35:
+                    anh_score = 35
+                    image_ratio = max(image_ratio, 0.70)
+            elif ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
                 if anh_score < 22:
                     anh_score = 22
                     image_ratio = max(image_ratio, 0.44)
@@ -714,7 +718,11 @@ def teacher_check(lost_id, found_id):
 
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-    if ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
+    if ten_score == 15 and mau_score == 15:
+        if anh_score < 35:
+            anh_score = 35
+            image_ratio = max(image_ratio, 0.70)
+    elif ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
         if anh_score < 22:
             anh_score = 22
             image_ratio = max(image_ratio, 0.44)
