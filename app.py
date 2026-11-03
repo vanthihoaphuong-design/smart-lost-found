@@ -144,12 +144,10 @@ def lost():
     
         if file and file.filename != "":
             try:
-                # Tải ảnh thẳng lên Cloudinary
                 res = cloudinary.uploader.upload(file)
                 filename = res.get("secure_url", "")
             except Exception as e:
                 print(f"Lỗi upload Cloudinary: {e}")
-                # Lưu tạm local nếu không có mạng/lỗi SDK
                 original_name = secure_filename(file.filename)
                 filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
                 file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
@@ -189,7 +187,6 @@ def found():
 
         if file and file.filename != "":
             try:
-                # Tải ảnh thẳng lên Cloudinary
                 res = cloudinary.uploader.upload(file)
                 filename = res.get("secure_url", "")
             except Exception as e:
@@ -331,13 +328,13 @@ def edit_lost(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
             
         db.session.commit()
         return redirect(url_for("list_items"))
         
-    return render_template("edit_item.html", item=item, is_lost=True)
+    return render_template("edit_lost.html", item=item, is_lost=True)
 
 @app.route("/edit-found/<int:item_id>", methods=["GET", "POST"])
 def edit_found(item_id):
@@ -354,13 +351,13 @@ def edit_found(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
             
         db.session.commit()
         return redirect(url_for("found_list"))
         
-    return render_template("edit_item.html", item=item, is_lost=False)
+    return render_template("edit_lost.html", item=item, is_lost=False)
 
 @app.route("/dashboard")
 def dashboard():
@@ -472,7 +469,6 @@ def image_score(img1_filename, img2_filename):
     if img1_filename == img2_filename:
         return 50, 1.0
 
-    # Kiểm tra tính tồn tại của file nếu là đường dẫn local
     if not str1.startswith("http"):
         p1 = os.path.join(app.config["UPLOAD_FOLDER"], img1_filename)
         if not os.path.exists(p1):
@@ -557,7 +553,6 @@ def match_items():
             img1_str = str(lost.hinh_anh).strip().lower() if lost.hinh_anh else ""
             img2_str = str(found.hinh_anh).strip().lower() if found.hinh_anh else ""
 
-            # Kiểm tra xem tệp ảnh có tồn tại hay không nếu là ảnh lưu local cũ
             p1_valid = True if img1_str.startswith("http") else os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], img1_str)) if img1_str else False
             p2_valid = True if img2_str.startswith("http") else os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], img2_str)) if img2_str else False
 
