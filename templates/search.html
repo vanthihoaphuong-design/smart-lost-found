@@ -31,7 +31,42 @@ Tìm kiếm đồ thất lạc
                 </div>
                 <div class="col-md-6">
                     <label class="form-label fw-bold">Nơi mất / Nơi nhặt</label>
-                    <input type="text" name="location" class="form-control" placeholder="Nhập khu vực, phòng học..." value="{{ location }}">
+                    <select name="location" class="form-select">
+                        <option value="">-- Tất cả khu vực / phòng học --</option>
+                        <option value="Sân trường" {% if location == 'Sân trường' %}selected{% endif %}>Sân trường</option>
+                        <option value="Nhà xe" {% if location == 'Nhà xe' %}selected{% endif %}>Nhà xe</option>
+                        <option value="Căn tin" {% if location == 'Căn tin' %}selected{% endif %}>Căn tin</option>
+                        <option value="Thư viện" {% if location == 'Thư viện' %}selected{% endif %}>Thư viện</option>
+                        <option value="Sân bóng" {% if location == 'Sân bóng' %}selected{% endif %}>Sân bóng</option>
+                        <option value="Phòng STEM" {% if location == 'Phòng STEM' %}selected{% endif %}>Phòng STEM</option>
+                        <option value="Phòng Tin học 1" {% if location == 'Phòng Tin học 1' %}selected{% endif %}>Phòng Tin học 1</option>
+                        <option value="Phòng Tin học 2" {% if location == 'Phòng Tin học 2' %}selected{% endif %}>Phòng Tin học 2</option>
+                        <option value="Phòng Văn" {% if location == 'Phòng Văn' %}selected{% endif %}>Phòng Văn</option>
+                        <option value="Phòng Sử - Địa" {% if location == 'Phòng Sử - Địa' %}selected{% endif %}>Phòng Sử - Địa</option>
+                        <option value="Phòng Hội trường" {% if location == 'Phòng Hội trường' %}selected{% endif %}>Phòng Hội trường</option>
+                        <option value="Phòng Đoàn - Đội" {% if location == 'Phòng Đoàn - Đội' %}selected{% endif %}>Phòng Đoàn - Đội</option>
+                        <option value="Khu Văn phòng" {% if location == 'Khu Văn phòng' %}selected{% endif %}>Khu Văn phòng</option>
+                        <option value="Phòng Tâm lý" {% if location == 'Phòng Tâm lý' %}selected{% endif %}>Phòng Tâm lý</option>
+                        <option value="6A1" {% if location == '6A1' %}selected{% endif %}>6A1</option>
+                        <option value="6A2" {% if location == '6A2' %}selected{% endif %}>6A2</option>
+                        <option value="6A3" {% if location == '6A3' %}selected{% endif %}>6A3</option>
+                        <option value="7A1" {% if location == '7A1' %}selected{% endif %}>7A1</option>
+                        <option value="7A2" {% if location == '7A2' %}selected{% endif %}>7A2</option>
+                        <option value="7A3" {% if location == '7A3' %}selected{% endif %}>7A3</option>
+                        <option value="8A1" {% if location == '8A1' %}selected{% endif %}>8A1</option>
+                        <option value="8A2" {% if location == '8A2' %}selected{% endif %}>8A2</option>
+                        <option value="8A3" {% if location == '8A3' %}selected{% endif %}>8A3</option>
+                        <option value="9A1" {% if location == '9A1' %}selected{% endif %}>9A1</option>
+                        <option value="9A2" {% if location == '9A2' %}selected{% endif %}>9A2</option>
+                        <option value="9A3" {% if location == '9A3' %}selected{% endif %}>9A3</option>
+                        <option value="10A1" {% if location == '10A1' %}selected{% endif %}>10A1</option>
+                        <option value="10A2" {% if location == '10A2' %}selected{% endif %}>10A2</option>
+                        <option value="10A3" {% if location == '10A3' %}selected{% endif %}>10A3</option>
+                        <option value="11A1" {% if location == '11A1' %}selected{% endif %}>11A1</option>
+                        <option value="11A2" {% if location == '11A2' %}selected{% endif %}>11A2</option>
+                        <option value="12A1" {% if location == '12A1' %}selected{% endif %}>12A1</option>
+                        <option value="12A2" {% if location == '12A2' %}selected{% endif %}>12A2</option>
+                    </select>
                 </div>
                 <div class="col-md-6">
                     <label class="form-label fw-bold">Trạng thái xử lý</label>
