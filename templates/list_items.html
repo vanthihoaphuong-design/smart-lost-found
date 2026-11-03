@@ -35,10 +35,11 @@ Danh sách đồ thất lạc
                 <td class="fw-bold">{{ item.id }}</td>
                 <td>
                     {% if item.hinh_anh %}
-                        <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" 
+                        {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
+                        <img src="{{ img_url }}" 
                              class="rounded shadow-sm cursor-pointer border" 
                              style="max-height: 70px; object-fit: cover;" 
-                             onclick="zoomImage('{{ url_for('uploaded_file', filename=item.hinh_anh) }}')"
+                             onclick="zoomImage('{{ img_url }}')"
                              title="Bấm để xem phóng to"
                              onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
                     {% else %}
