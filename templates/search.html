@@ -5,175 +5,176 @@ Tìm kiếm đồ thất lạc
 {% endblock %}
 
 {% block content %}
-<div class="container py-2">
-    <!-- KHUNG BỘ LỌC TÌM KIẾM HIỆN ĐẠI -->
-    <div class="card border-0 shadow-sm rounded-4 mb-4">
+<div class="container mt-4">
+    <div class="card shadow-sm border-0 mb-4">
         <div class="card-body p-4">
-            <h4 class="fw-bold text-primary mb-3 d-flex align-items-center gap-2">
-                🔍 Bộ lọc tìm kiếm thông minh
-            </h4>
-            <form method="GET" action="{{ url_for('search') }}">
-                <div class="row g-3">
-                    <div class="col-md-4">
-                        <label class="form-label fw-semibold text-secondary small">Tên đồ vật</label>
-                        <input type="text" name="keyword" class="form-control rounded-3" placeholder="Ví dụ: Ví tiền, Sách, Điện thoại..." value="{{ keyword }}">
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label fw-semibold text-secondary small">Loại đồ</label>
-                        <select name="category" class="form-select rounded-3">
-                            <option value="">-- Tất cả loại đồ --</option>
-                            <option value="Sách vở / Dụng cụ học tập" {% if category == 'Sách vở / Dụng cụ học tập' %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
-                            <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if category == 'Thiết bị điện tử (Laptop, Điện thoại...)' %}selected{% endif %}>Thiết bị điện tử</option>
-                            <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if category == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' %}selected{% endif %}>Trang phục / Phụ kiện</option>
-                            <option value="Giấy tờ / Thẻ học sinh" {% if category == 'Giấy tờ / Thẻ học sinh' %}selected{% endif %}>Giấy tờ / Thẻ học sinh</option>
-                            <option value="Khác" {% if category == 'Khác' %}selected{% endif %}>Khác</option>
-                        </select>
-                    </div>
-                    <div class="col-md-4">
-                        <label class="form-label fw-semibold text-secondary small">Màu sắc</label>
-                        <input type="text" name="color" class="form-control rounded-3" placeholder="Ví dụ: Vàng, Đen, Xanh..." value="{{ color }}">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label fw-semibold text-secondary small">Nơi mất / Nơi nhặt</label>
-                        <input type="text" name="location" class="form-control rounded-3" placeholder="Nhập khu vực, phòng học..." value="{{ location }}">
-                    </div>
-                    <div class="col-md-6">
-                        <label class="form-label fw-semibold text-secondary small">Trạng thái xử lý</label>
-                        <select name="status" class="form-select rounded-3">
-                            <option value="">-- Tất cả trạng thái --</option>
-                            <option value="DANG_TIM" {% if status == 'DANG_TIM' %}selected{% endif %}>🔑 Đang tìm (Bài báo mất)</option>
-                            <option value="DA_TIM" {% if status == 'DA_TIM' %}selected{% endif %}>✅ Đã tìm thấy (Bài báo mất)</option>
-                            <option value="DANG_LUU_GIU" {% if status == 'DANG_LUU_GIU' %}selected{% endif %}>📦 Đang lưu giữ (Bài báo nhặt)</option>
-                            <option value="DA_TRA" {% if status == 'DA_TRA' %}selected{% endif %}>✅ Đã hoàn trả (Bài báo nhặt)</option>
-                        </select>
-                    </div>
+            <h3 class="fw-bold text-primary mb-3">🔍 Tìm kiếm thông tin</h3>
+            <form action="{{ url_for('search') }}" method="GET" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Từ khóa (Tên đồ vật)</label>
+                    <input type="text" name="keyword" class="form-control" placeholder="Nhập tên đồ vật cần tìm..." value="{{ keyword }}">
                 </div>
-                <div class="d-flex justify-content-end gap-2 mt-4">
-                    <a href="{{ url_for('search') }}" class="btn btn-light px-4 rounded-3 border">🔄 Đặt lại</a>
-                    <button type="submit" class="btn btn-primary px-4 fw-bold rounded-3 shadow-sm">🔍 Tìm kiếm ngay</button>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Loại đồ</label>
+                    <select name="category" class="form-select">
+                        <option value="">-- Tất cả loại đồ --</option>
+                        <option value="Sách vở / Dụng cụ học tập" {% if category == 'Sách vở / Dụng cụ học tập' %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
+                        <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if category == 'Thiết bị điện tử (Laptop, Điện thoại...)' %}selected{% endif %}>Thiết bị điện tử (Laptop, Điện thoại...)</option>
+                        <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if category == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' %}selected{% endif %}>Trang phục / Phụ kiện (Áo khoác, Ví...)</option>
+                        <option value="Giấy tờ / Thẻ học sinh" {% if category == 'Giấy tờ / Thẻ học sinh' %}selected{% endif %}>Giấy tờ / Thẻ học sinh</option>
+                        <option value="Khác" {% if category == 'Khác' %}selected{% endif %}>Khác</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Màu sắc</label>
+                    <input type="text" name="color" class="form-control" placeholder="Nhập màu sắc..." value="{{ color }}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Nơi mất / Nơi nhặt</label>
+                    <input type="text" name="location" class="form-control" placeholder="Nhập khu vực, phòng học..." value="{{ location }}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Trạng thái xử lý</label>
+                    <select name="status" class="form-select">
+                        <option value="">-- Tất cả trạng thái --</option>
+                        <option value="DANG_TIM" {% if status == 'DANG_TIM' %}selected{% endif %}>🔑 Đang tìm (Đồ báo mất)</option>
+                        <option value="DA_TIM" {% if status == 'DA_TIM' %}selected{% endif %}>✅ Đã tìm thấy (Đồ báo mất)</option>
+                        <option value="DANG_LUU_GIU" {% if status == 'DANG_LUU_GIU' %}selected{% endif %}>📦 Đang lưu giữ (Đồ báo nhặt)</option>
+                        <option value="DA_TRA" {% if status == 'DA_TRA' %}selected{% endif %}>✅ Đã hoàn trả (Đồ báo nhặt)</option>
+                    </select>
+                </div>
+                <div class="col-12 text-end mt-3">
+                    <a href="{{ url_for('search') }}" class="btn btn-outline-secondary me-2">🔄 Đặt lại</a>
+                    <button type="submit" class="btn btn-primary px-4 fw-bold">🔍 Tìm kiếm ngay</button>
                 </div>
             </form>
         </div>
     </div>
 
-    <!-- KẾT QUẢ TÌM KIẾM BÁO MẤT -->
-    <div class="card border-0 shadow-sm rounded-4 mb-4">
-        <div class="card-header bg-primary text-white py-3 px-4 rounded-top-4 d-flex justify-content-between align-items-center">
-            <h5 class="fw-bold mb-0">🚨 Đồ báo mất ({{ lost_items|length }} kết quả)</h5>
+    <!-- KẾT QUẢ ĐỒ BÁO MẤT -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-primary text-white fw-bold">
+            🚨 Đồ báo mất ({% if lost_items %}{{ lost_items|length }}{% else %}0{% endif %} kết quả)
         </div>
         <div class="card-body p-0">
-            {% if lost_items %}
             <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0 text-center">
-                    <thead class="table-light">
+                <table class="table table-bordered table-hover align-middle mb-0 text-center">
+                    <thead class="table-light align-middle">
                         <tr>
-                            <th style="width: 10%;">Ảnh</th>
-                            <th style="width: 20%;">Tên đồ vật</th>
-                            <th style="width: 20%;">Loại đồ</th>
-                            <th style="width: 15%;">Màu sắc</th>
-                            <th style="width: 15%;">Nơi mất</th>
-                            <th style="width: 10%;">Ngày mất</th>
-                            <th style="width: 10%;">Trạng thái</th>
+                            <th>Ảnh</th>
+                            <th>Tên đồ vật</th>
+                            <th>Loại đồ</th>
+                            <th>Màu sắc</th>
+                            <th>Nơi mất</th>
+                            <th>Ngày mất</th>
+                            <th>Trạng thái</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for item in lost_items %}
-                        <tr>
-                            <td class="py-2">
-                                {% if item.hinh_anh %}
-                                    <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" 
-                                         class="rounded shadow-sm cursor-pointer border" 
-                                         style="max-height: 65px; width: 65px; object-fit: cover;" 
-                                         onclick="zoomImage('{{ url_for('uploaded_file', filename=item.hinh_anh) }}')"
-                                         title="Bấm để xem phóng to"
-                                         onerror="this.onerror=null; this.src='https://via.placeholder.com/65?text=Chưa+có+ảnh';">
-                                {% else %}
-                                    <span class="text-muted small">Không có ảnh</span>
-                                {% endif %}
-                            </td>
-                            <td class="fw-bold text-dark">{{ item.ten_do }}</td>
-                            <td><span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span></td>
-                            <td><span class="badge bg-light text-dark border">{{ item.mau_sac if item.mau_sac else '—' }}</span></td>
-                            <td>{{ item.noi_mat }}</td>
-                            <td>{{ item.ngay_mat }}</td>
-                            <td>
-                                {% if item.trang_thai in ['DA_TIM', 'Đã tìm thấy'] %}
-                                    <span class="badge bg-success">✅ Đã tìm thấy</span>
-                                {% else %}
-                                    <span class="badge bg-warning text-dark">🔑 Đang tìm</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
+                        {% if lost_items %}
+                            {% for item in lost_items %}
+                            <tr>
+                                <td style="width: 100px;">
+                                    {% if item.hinh_anh %}
+                                        {% set lost_img = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
+                                        <img src="{{ lost_img }}" 
+                                             class="rounded shadow-sm cursor-pointer border" 
+                                             style="max-height: 70px; object-fit: cover;" 
+                                             onclick="zoomImage('{{ lost_img }}')"
+                                             title="Bấm để xem phóng to"
+                                             onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                                    {% else %}
+                                        <span class="text-muted small">Không có ảnh</span>
+                                    {% endif %}
+                                </td>
+                                <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                                <td><span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span></td>
+                                <td><span class="badge bg-light text-dark border">{{ item.mau_sac }}</span></td>
+                                <td>{{ item.noi_mat }}</td>
+                                <td>{{ item.ngay_mat }}</td>
+                                <td>
+                                    {% if item.trang_thai in ['DA_TIM', 'Đã tìm thấy'] %}
+                                        <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã tìm thấy</span>
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark py-2 px-3 fw-bold">🔑 Đang tìm</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="7" class="text-muted py-3">Không tìm thấy dữ liệu đồ báo mất phù hợp.</td>
+                            </tr>
+                        {% endif %}
                     </tbody>
                 </table>
             </div>
-            {% else %}
-            <div class="text-center text-muted py-4">Khổng tìm thấy kết quả đồ báo mất phù hợp.</div>
-            {% endif %}
         </div>
     </div>
 
-    <!-- KẾT QUẢ TÌM KIẾM BÁO NHẶT -->
-    <div class="card border-0 shadow-sm rounded-4">
-        <div class="card-header bg-success text-white py-3 px-4 rounded-top-4 d-flex justify-content-between align-items-center">
-            <h5 class="fw-bold mb-0">📦 Đồ báo nhặt ({{ found_items|length }} kết quả)</h5>
+    <!-- KẾT QUẢ ĐỒ BÁO NHẶT -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-success text-white fw-bold">
+            📦 Đồ báo nhặt ({% if found_items %}{{ found_items|length }}{% else %}0{% endif %} kết quả)
         </div>
         <div class="card-body p-0">
-            {% if found_items %}
             <div class="table-responsive">
-                <table class="table table-hover align-middle mb-0 text-center">
-                    <thead class="table-light">
+                <table class="table table-bordered table-hover align-middle mb-0 text-center">
+                    <thead class="table-light align-middle">
                         <tr>
-                            <th style="width: 10%;">Ảnh</th>
-                            <th style="width: 20%;">Tên đồ vật</th>
-                            <th style="width: 20%;">Loại đồ</th>
-                            <th style="width: 15%;">Màu sắc</th>
-                            <th style="width: 15%;">Nơi nhặt</th>
-                            <th style="width: 10%;">Ngày nhặt</th>
-                            <th style="width: 10%;">Trạng thái</th>
+                            <th>Ảnh</th>
+                            <th>Tên đồ vật</th>
+                            <th>Loại đồ</th>
+                            <th>Màu sắc</th>
+                            <th>Nơi nhặt</th>
+                            <th>Ngày nhặt</th>
+                            <th>Trạng thái</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for item in found_items %}
-                        <tr>
-                            <td class="py-2">
-                                {% if item.hinh_anh %}
-                                    <img src="{{ url_for('uploaded_file', filename=item.hinh_anh) }}" 
-                                         class="rounded shadow-sm cursor-pointer border" 
-                                         style="max-height: 65px; width: 65px; object-fit: cover;" 
-                                         onclick="zoomImage('{{ url_for('uploaded_file', filename=item.hinh_anh) }}')"
-                                         title="Bấm để xem phóng to"
-                                         onerror="this.onerror=null; this.src='https://via.placeholder.com/65?text=Chưa+có+ảnh';">
-                                {% else %}
-                                    <span class="text-muted small">Không có ảnh</span>
-                                {% endif %}
-                            </td>
-                            <td class="fw-bold text-dark">{{ item.ten_do }}</td>
-                            <td><span class="badge bg-info text-dark text-wrap">{{ item.loai_do }}</span></td>
-                            <td><span class="badge bg-light text-dark border">{{ item.mau_sac if item.mau_sac else '—' }}</span></td>
-                            <td>{{ item.noi_nhat }}</td>
-                            <td>{{ item.ngay_nhat }}</td>
-                            <td>
-                                {% if item.trang_thai in ['DA_TRA', 'Đã hoàn trả'] %}
-                                    <span class="badge bg-success">✅ Đã hoàn trả</span>
-                                {% else %}
-                                    <span class="badge bg-primary">📦 Đang lưu giữ</span>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
+                        {% if found_items %}
+                            {% for item in found_items %}
+                            <tr>
+                                <td style="width: 100px;">
+                                    {% if item.hinh_anh %}
+                                        {% set found_img = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
+                                        <img src="{{ found_img }}" 
+                                             class="rounded shadow-sm cursor-pointer border" 
+                                             style="max-height: 70px; object-fit: cover;" 
+                                             onclick="zoomImage('{{ found_img }}')"
+                                             title="Bấm để xem phóng to"
+                                             onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                                    {% else %}
+                                        <span class="text-muted small">Không có ảnh</span>
+                                    {% endif %}
+                                </td>
+                                <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                                <td><span class="badge bg-info text-dark text-wrap">{{ item.loai_do }}</span></td>
+                                <td><span class="badge bg-light text-dark border">{{ item.mau_sac }}</span></td>
+                                <td>{{ item.noi_nhat }}</td>
+                                <td>{{ item.ngay_nhat }}</td>
+                                <td>
+                                    {% if item.trang_thai in ['DA_TRA', 'Đã hoàn trả'] %}
+                                        <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã hoàn trả</span>
+                                    {% else %}
+                                        <span class="badge bg-primary py-2 px-3 fw-bold">📦 Đang lưu giữ</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="7" class="text-muted py-3">Không tìm thấy dữ liệu đồ báo nhặt phù hợp.</td>
+                            </tr>
+                        {% endif %}
                     </tbody>
                 </table>
             </div>
-            {% else %}
-            <div class="text-center text-muted py-4">Không tìm thấy kết quả đồ báo nhặt phù hợp.</div>
-            {% endif %}
         </div>
     </div>
 </div>
 
-<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT ĐỒNG BỘ -->
+<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT CHUẨN 100% -->
 <div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
