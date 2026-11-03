@@ -55,6 +55,10 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def calculate_image_features(img_path):
+    """
+    Trích xuất đặc trưng hình ảnh: Cắt bỏ 15% viền ngoài (loại phông nền),
+    kết hợp HSV Histogram, ORB Keypoints và dHash.
+    """
     cached = get_feature_cache(img_path)
     if cached is not None:
         return cached
@@ -67,18 +71,24 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        max_size = 400
+        # Cắt 15% viền ngoài để tập trung vào vật thể chính giữa, loại phông nền
         h, w = img.shape[:2]
-        if max(h, w) > max_size:
-            scale = max_size / max(h, w)
-            new_w = max(1, int(w * scale))
-            new_h = max(1, int(h * scale))
-            img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        crop_img = img[int(h*0.15):int(h*0.85), int(w*0.15):int(w*0.85)]
+        if crop_img.shape[0] == 0 or crop_img.shape[1] == 0:
+            crop_img = img
+
+        max_size = 400
+        ch, cw = crop_img.shape[:2]
+        if max(ch, cw) > max_size:
+            scale = max_size / max(ch, cw)
+            new_w = max(1, int(cw * scale))
+            new_h = max(1, int(ch * scale))
+            crop_img = cv2.resize(crop_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
         features = {}
 
         try:
-            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
             gray = cv2.GaussianBlur(gray, (3, 3), 0)
             orb = cv2.ORB_create(nfeatures=500, scaleFactor=1.2, nlevels=8)
             keypoints, descriptors = orb.detectAndCompute(gray, None)
@@ -89,15 +99,15 @@ def calculate_image_features(img_path):
             features["orb_descriptors"] = None
 
         try:
-            gray_small = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            gray_small = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
             resized = cv2.resize(gray_small, (9, 8), interpolation=cv2.INTER_AREA)
             features["dhash"] = (resized[:, 1:] > resized[:, :-1]).flatten()
         except Exception:
             features["dhash"] = None
 
         try:
-            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            hist = cv2.calcHist([hsv], [0, 1], None, [18, 16], [0, 180, 0, 256])
+            hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
+            hist = cv2.calcHist([hsv], [0, 1], None, [30, 32], [0, 180, 0, 256])
             cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
             features["hsv_hist"] = hist
         except Exception:
@@ -499,6 +509,10 @@ def date_score(date1, date2):
         return 0
 
 def image_score(img1_filename, img2_filename):
+    """
+    Thuật toán tính điểm hình ảnh nâng cấp:
+    Tăng tỷ trọng HSV Histogram màu sắc và cấp điểm sàn bảo hiểm linh hoạt.
+    """
     if not img1_filename or not img2_filename:
         return 0, 0.0
 
@@ -517,6 +531,24 @@ def image_score(img1_filename, img2_filename):
     if features1 is None or features2 is None:
         return 0, 0.0
 
+    color_points = 0
+    try:
+        hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
+        if hist1 is not None and hist2 is not None:
+            correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+            correlation = max(0.0, float(correlation))
+
+            if correlation >= 0.80:
+                color_points = 25
+            elif correlation >= 0.60:
+                color_points = 18
+            elif correlation >= 0.40:
+                color_points = 12
+            else:
+                color_points = int(correlation * 20)
+    except Exception:
+        color_points = 0
+
     hash_points = 0
     hash_sim = 0.0
     try:
@@ -528,12 +560,12 @@ def image_score(img1_filename, img2_filename):
             if hamming_distance <= 3 or hash_sim >= 0.95:
                 return 50, 1.0
 
-            if hash_sim >= 0.85:
+            if hash_sim >= 0.80:
                 hash_points = 15
-            elif hash_sim >= 0.70:
-                hash_points = 9
+            elif hash_sim >= 0.65:
+                hash_points = 10
             elif hash_sim >= 0.50:
-                hash_points = 3
+                hash_points = 5
     except Exception:
         hash_points = 0
 
@@ -551,50 +583,16 @@ def image_score(img1_filename, img2_filename):
                 if len(pair) < 2:
                     continue
                 m, n = pair
-                if m.distance < 0.72 * n.distance:
+                if m.distance < 0.75 * n.distance:
                     good_matches.append(m)
 
             good_count = len(good_matches)
-            inliers = 0
-            inlier_ratio = 0.0
-
-            if good_count >= 5:
-                src_pts = np.float32([kp1[m.queryIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-                dst_pts = np.float32([kp2[m.trainIdx].pt for m in good_matches]).reshape(-1, 1, 2)
-
-                try:
-                    H, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-                    if mask is not None:
-                        inliers = int(np.sum(mask.ravel()))
-                        inlier_ratio = inliers / good_count if good_count > 0 else 0.0
-                except Exception:
-                    pass
-
-            good_score = 10 if good_count >= 30 else (7 if good_count >= 15 else (3 if good_count >= 8 else 0))
-            inlier_score = 10 if inliers >= 20 else (7 if inliers >= 10 else (3 if inliers >= 5 else 0))
-            ratio_score = 5 if inlier_ratio >= 0.60 else (3 if inlier_ratio >= 0.35 else 0)
-
-            orb_points = good_score + inlier_score + ratio_score
+            good_score = 10 if good_count >= 20 else (7 if good_count >= 10 else (3 if good_count >= 5 else 0))
+            orb_points = good_score
     except Exception:
         orb_points = 0
 
-    color_points = 0
-    try:
-        hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
-        if hist1 is not None and hist2 is not None:
-            correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
-            correlation = max(0.0, min(1.0, (correlation + 1) / 2))
-
-            if correlation >= 0.85:
-                color_points = 10
-            elif correlation >= 0.70:
-                color_points = 6
-            elif correlation >= 0.50:
-                color_points = 2
-    except Exception:
-        color_points = 0
-
-    total_points = min(50, orb_points + hash_points + color_points)
+    total_points = min(50, color_points + hash_points + orb_points)
     image_ratio = total_points / 50.0
 
     return int(total_points), float(image_ratio)
@@ -623,6 +621,13 @@ def match_items():
                     vi_tri_score = 5
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+            # LOGIC ĐIỂM SÀN BẢO HIỂM:
+            # Nếu Tên đồ khớp 100% HOẶC (Màu sắc khớp + Vị trí khớp), AI tự động đặt điểm sàn cho ảnh đạt tối thiểu 22/50
+            if ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
+                if anh_score < 22:
+                    anh_score = 22
+                    image_ratio = max(image_ratio, 0.44)
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
             image_confidence = int(min(100, image_ratio * 100))
@@ -708,6 +713,11 @@ def teacher_check(lost_id, found_id):
             vi_tri_score = 5
 
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+    if ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
+        if anh_score < 22:
+            anh_score = 22
+            image_ratio = max(image_ratio, 0.44)
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
