@@ -9,3 +9,4 @@ gunicorn
 requests
 psycopg2-binary
 SQLAlchemy
+cloudinary
