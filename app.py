@@ -12,6 +12,10 @@ from difflib import SequenceMatcher
 
 import cloudinary
 import cloudinary.uploader
+from datetime import datetime, timezone, timedelta
+
+# Định nghĩa múi giờ Việt Nam (GMT+7)
+VN_TZ = timezone(timedelta(hours=7))
 
 try:
     import cv2
@@ -413,7 +417,7 @@ def heatmap():
 def found_return(id):
     item = FoundItem.query.get_or_404(id)
     item.trang_thai = "DA_TRA"
-    item.thoi_diem_tra = datetime.now()
+    item.thoi_diem_tra = datetime.now(VN_TZ)
     db.session.commit()
     return redirect(url_for("found_list"))
 
@@ -773,7 +777,7 @@ def confirm_return(lost_id, found_id):
     found.trang_thai = "DA_TRA"
     lost.trang_thai = "DA_TIM"
     
-    thoi_diem = datetime.now()
+    thoi_diem = datetime.now(VN_TZ)
     found.thoi_diem_tra = thoi_diem
     lost.thoi_diem_tra = thoi_diem
 
