@@ -10,11 +10,22 @@ from werkzeug.utils import secure_filename
 from sqlalchemy import func
 from difflib import SequenceMatcher
 
+import cloudinary
+import cloudinary.uploader
+
 try:
     import cv2
     import numpy as np
 except Exception as e:
     print(f"Lỗi OpenCV: {e}")
+
+# --- CẤU HÌNH CLOUDINARY LẤY TỪ ENVIRONMENT VARIABLES TRÊN RENDER ---
+cloudinary.config(
+    cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", ""),
+    api_key = os.environ.get("CLOUDINARY_API_KEY", ""),
+    api_secret = os.environ.get("CLOUDINARY_API_SECRET", ""),
+    secure = True
+)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "smart_lost_found_secret_key_123")
@@ -32,7 +43,6 @@ elif db_url and db_url.startswith("postgresql://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# Import duy nhất 1 db từ database.py và kích hoạt theo chuẩn Flask
 from database import db
 db.init_app(app)
 
@@ -56,22 +66,26 @@ def save_feature_cache(img_path, features):
 
 def calculate_image_features(img_path):
     """
-    Trích xuất đặc trưng hình ảnh: Cắt bỏ 15% viền ngoài (loại phông nền nhiễu),
-    kết hợp HSV Histogram, ORB Keypoints và dHash.
+    Trích xuất đặc trưng ảnh (Hỗ trợ cả đường dẫn local lẫn URL Cloudinary)
     """
     cached = get_feature_cache(img_path)
     if cached is not None:
         return cached
 
-    if not os.path.exists(img_path):
-        return None
-
     try:
-        img = cv2.imread(img_path)
+        if img_path.startswith("http://") or img_path.startswith("https://"):
+            import urllib.request
+            req = urllib.request.urlopen(img_path)
+            arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
+            img = cv2.imdecode(arr, -1)
+        else:
+            if not os.path.exists(img_path):
+                return None
+            img = cv2.imread(img_path)
+
         if img is None:
             return None
 
-        # Cắt 15% viền ngoài để tập trung vào vật thể chính giữa
         h, w = img.shape[:2]
         crop_img = img[int(h*0.15):int(h*0.85), int(w*0.15):int(w*0.85)]
         if crop_img.shape[0] == 0 or crop_img.shape[1] == 0:
@@ -129,21 +143,20 @@ def lost():
         file = request.files.get("hinh_anh")
     
         if file and file.filename != "":
-            original_name = secure_filename(file.filename)
-            filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
-            file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-        
             try:
-                img = Image.open(file)
-                img.thumbnail((800, 800))
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                img.save(file_path, "JPEG", quality=75)
-            except Exception:
+                # Tải ảnh thẳng lên Cloudinary
+                res = cloudinary.uploader.upload(file)
+                filename = res.get("secure_url", "")
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
+                # Lưu tạm local nếu không có mạng/lỗi SDK
+                original_name = secure_filename(file.filename)
+                filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
+                file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
                 file.save(file_path)
 
             try:
-                calculate_image_features(file_path)
+                calculate_image_features(filename)
             except Exception:
                 pass
 
@@ -175,21 +188,19 @@ def found():
         file = request.files.get("hinh_anh")
 
         if file and file.filename != "":
-            original_name = secure_filename(file.filename)
-            filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
-            file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-
             try:
-                img = Image.open(file)
-                img.thumbnail((800, 800))
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                img.save(file_path, "JPEG", quality=75)
-            except Exception:
+                # Tải ảnh thẳng lên Cloudinary
+                res = cloudinary.uploader.upload(file)
+                filename = res.get("secure_url", "")
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
+                original_name = secure_filename(file.filename)
+                filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
+                file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
                 file.save(file_path)
 
             try:
-                calculate_image_features(file_path)
+                calculate_image_features(filename)
             except Exception:
                 pass
 
@@ -216,6 +227,8 @@ def found():
 
 @app.route("/uploads/<filename>")
 def uploaded_file(filename):
+    if filename.startswith("http://") or filename.startswith("https://"):
+        return redirect(filename)
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 @app.route("/lost-list")
@@ -224,7 +237,6 @@ def list_items():
         items = LostItem.query.order_by(LostItem.id.desc()).all()
     except Exception as e:
         items = []
-        print(f"Lỗi truy vấn danh sách mất: {e}")
     return render_template("list_items.html", items=items)
 
 @app.route("/found-list")
@@ -233,7 +245,6 @@ def found_list():
         items = FoundItem.query.order_by(FoundItem.id.desc()).all()
     except Exception as e:
         items = []
-        print(f"Lỗi truy vấn danh sách nhặt: {e}")
     return render_template("found_list.html", items=items)
 
 @app.route("/search")
@@ -317,21 +328,9 @@ def edit_lost(item_id):
         
         file = request.files.get("hinh_anh")
         if file and file.filename != "":
-            original_name = secure_filename(file.filename)
-            filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
             try:
-                img = Image.open(file)
-                img.thumbnail((800, 800))
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                img.save(filepath, "JPEG", quality=75)
-            except Exception:
-                file.save(filepath)
-
-            item.hinh_anh = filename
-            try:
-                calculate_image_features(filepath)
+                res = cloudinary.uploader.upload(file)
+                item.hinh_anh = res.get("secure_url", "")
             except Exception:
                 pass
             
@@ -352,21 +351,9 @@ def edit_found(item_id):
         
         file = request.files.get("hinh_anh")
         if file and file.filename != "":
-            original_name = secure_filename(file.filename)
-            filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
-            filepath = os.path.join(app.config["UPLOAD_FOLDER"], filename)
             try:
-                img = Image.open(file)
-                img.thumbnail((800, 800))
-                if img.mode in ("RGBA", "P"):
-                    img = img.convert("RGB")
-                img.save(filepath, "JPEG", quality=75)
-            except Exception:
-                file.save(filepath)
-
-            item.hinh_anh = filename
-            try:
-                calculate_image_features(filepath)
+                res = cloudinary.uploader.upload(file)
+                item.hinh_anh = res.get("secure_url", "")
             except Exception:
                 pass
             
@@ -385,24 +372,11 @@ def dashboard():
         all_items = []
 
     CATEGORIES_MAP = {
-        "Sách vở / Dụng cụ học tập": [
-            "Sách vở / Dụng cụ học tập", "Sách vở", "Sách", "Vở", "Tập", 
-            "Bút", "Thước", "Bóp viết", "Sách Tin học", "Sách tin 11", "Dụng cụ học tập"
-        ],
-        "Thiết bị điện tử (Laptop, Điện thoại...)": [
-            "Thiết bị điện tử (Laptop, Điện thoại...)", "Thiết bị điện tử", 
-            "Laptop", "Điện thoại", "Máy tính Casio", "Casio", "mouse", "máy tính", "Chuột"
-        ],
-        "Trang phục / Phụ kiện (Áo khoác, Ví...)": [
-            "Trang phục / Phụ kiện (Áo khoác, Ví...)", "Trang phục / Phụ kiện", 
-            "Áo khoác", "Balo", "Mũ", "Ví", "Vali", "Cặp", "Nón"
-        ],
-        "Giấy tờ / Thẻ học sinh": [
-            "Giấy tờ / Thẻ học sinh", "Giấy tờ", "Thẻ học sinh", "Thẻ HS", "Căn cước", "Thẻ"
-        ],
-        "Khác": [
-            "Khác", "Bình nước", "Không xác định", "vase", "Khu vực khác"
-        ]
+        "Sách vở / Dụng cụ học tập": ["Sách vở / Dụng cụ học tập", "Sách vở", "Sách", "Vở", "Tập", "Bút", "Thước", "Bóp viết", "Sách Tin học", "Sách tin 11", "Dụng cụ học tập"],
+        "Thiết bị điện tử (Laptop, Điện thoại...)": ["Thiết bị điện tử (Laptop, Điện thoại...)", "Thiết bị điện tử", "Laptop", "Điện thoại", "Máy tính Casio", "Casio", "mouse", "máy tính", "Chuột"],
+        "Trang phục / Phụ kiện (Áo khoác, Ví...)": ["Trang phục / Phụ kiện (Áo khoác, Ví...)", "Trang phục / Phụ kiện", "Áo khoác", "Balo", "Mũ", "Ví", "Vali", "Cặp", "Nón"],
+        "Giấy tờ / Thẻ học sinh": ["Giấy tờ / Thẻ học sinh", "Giấy tờ", "Thẻ học sinh", "Thẻ HS", "Căn cước", "Thẻ"],
+        "Khác": ["Khác", "Bình nước", "Không xác định", "vase", "Khu vực khác"]
     }
 
     category_counts = {cat: 0 for cat in CATEGORIES_MAP.keys()}
@@ -410,23 +384,16 @@ def dashboard():
     for item in all_items:
         raw_cat = str(item.loai_do).strip() if item.loai_do else "Khác"
         mapped = False
-        
         for new_cat, old_list in CATEGORIES_MAP.items():
             if any(old.lower() in raw_cat.lower() or raw_cat.lower() in old.lower() for old in old_list):
                 category_counts[new_cat] += 1
                 mapped = True
                 break
-                
         if not mapped:
             category_counts["Khác"] += 1
 
     thong_ke = [(cat, count) for cat, count in category_counts.items()]
-
-    return render_template(
-        "dashboard.html",
-        tong_so=tong_so,
-        thong_ke=thong_ke
-    )
+    return render_template("dashboard.html", tong_so=tong_so, thong_ke=thong_ke)
 
 @app.route("/heatmap")
 def heatmap():
@@ -435,26 +402,17 @@ def heatmap():
         "Phòng STEM", "Phòng Tin học 1", "Phòng Tin học 2",
         "Phòng Văn", "Phòng Sử - Địa", "Phòng Hội trường",
         "Phòng Đoàn - Đội", "Khu Văn phòng", "Phòng Tâm lý",
-        "6A1", "6A2", "6A3",
-        "7A1", "7A2", "7A3",
-        "8A1", "8A2", "8A3",
-        "9A1", "9A2", "9A3",
-        "10A1", "10A2", "10A3",
-        "11A1", "11A2",
-        "12A1", "12A2"
+        "6A1", "6A2", "6A3", "7A1", "7A2", "7A3",
+        "8A1", "8A2", "8A3", "9A1", "9A2", "9A3",
+        "10A1", "10A2", "10A3", "11A1", "11A2", "12A1", "12A2"
     ]
-
     try:
-        db_data = db.session.query(
-            LostItem.noi_mat,
-            func.count(LostItem.id)
-        ).group_by(LostItem.noi_mat).all()
+        db_data = db.session.query(LostItem.noi_mat, func.count(LostItem.id)).group_by(LostItem.noi_mat).all()
         count_dict = dict(db_data)
     except Exception:
         count_dict = {}
 
     data = [(area, count_dict.get(area, 0)) for area in areas]
-
     return render_template("heatmap.html", data=data)
 
 @app.route("/found-return/<int:id>")
@@ -470,10 +428,8 @@ def similarity(text1, text2):
         return 0.0
     t1 = str(text1).lower().strip()
     t2 = str(text2).lower().strip()
-
     if t1 in t2 or t2 in t1:
         return 1.0
-
     return SequenceMatcher(None, t1, t2).ratio()
 
 def parse_date_flexible(date_str):
@@ -491,12 +447,9 @@ def parse_date_flexible(date_str):
 def date_score(date1, date2):
     d1 = parse_date_flexible(date1)
     d2 = parse_date_flexible(date2)
-    
     if not d1 or not d2:
         return 0
-
     diff = abs((d1 - d2).days)
-
     if diff == 0:
         return 10
     elif diff == 1:
@@ -509,24 +462,28 @@ def date_score(date1, date2):
         return 0
 
 def image_score(img1_filename, img2_filename):
-    """
-    Thuật toán tính điểm hình ảnh:
-    Nếu không có file ảnh thật -> Trả về 0 điểm ngay lập tức.
-    """
-    if not img1_filename or not img2_filename or not str(img1_filename).strip() or not str(img2_filename).strip():
+    invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
+    str1 = str(img1_filename).strip().lower() if img1_filename else ""
+    str2 = str(img2_filename).strip().lower() if img2_filename else ""
+
+    if not str1 or not str2 or str1 in invalid_imgs or str2 in invalid_imgs:
         return 0, 0.0
 
     if img1_filename == img2_filename:
         return 50, 1.0
 
-    img1_path = os.path.join(app.config["UPLOAD_FOLDER"], img1_filename)
-    img2_path = os.path.join(app.config["UPLOAD_FOLDER"], img2_filename)
+    # Kiểm tra tính tồn tại của file nếu là đường dẫn local
+    if not str1.startswith("http"):
+        p1 = os.path.join(app.config["UPLOAD_FOLDER"], img1_filename)
+        if not os.path.exists(p1):
+            return 0, 0.0
+    if not str2.startswith("http"):
+        p2 = os.path.join(app.config["UPLOAD_FOLDER"], img2_filename)
+        if not os.path.exists(p2):
+            return 0, 0.0
 
-    if not os.path.exists(img1_path) or not os.path.exists(img2_path):
-        return 0, 0.0
-
-    features1 = calculate_image_features(img1_path)
-    features2 = calculate_image_features(img2_path)
+    features1 = calculate_image_features(img1_filename)
+    features2 = calculate_image_features(img2_filename)
 
     if features1 is None or features2 is None:
         return 0, 0.0
@@ -537,7 +494,6 @@ def image_score(img1_filename, img2_filename):
         if hist1 is not None and hist2 is not None:
             correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
             correlation = max(0.0, float(correlation))
-
             if correlation >= 0.75:
                 color_points = 30
             elif correlation >= 0.55:
@@ -556,10 +512,8 @@ def image_score(img1_filename, img2_filename):
         if hash1 is not None and hash2 is not None:
             hamming_distance = np.count_nonzero(hash1 != hash2)
             hash_sim = 1.0 - (hamming_distance / 64.0)
-
             if hamming_distance <= 3 or hash_sim >= 0.95:
                 return 50, 1.0
-
             if hash_sim >= 0.75:
                 hash_points = 15
             elif hash_sim >= 0.60:
@@ -573,19 +527,10 @@ def image_score(img1_filename, img2_filename):
     try:
         kp1, des1 = features1.get("orb_keypoints", []), features1.get("orb_descriptors")
         kp2, des2 = features2.get("orb_keypoints", []), features2.get("orb_descriptors")
-
         if des1 is not None and des2 is not None and len(kp1) >= 5 and len(kp2) >= 5:
             bf = cv2.BFMatcher(cv2.NORM_HAMMING)
             matches = bf.knnMatch(des1, des2, k=2)
-
-            good_matches = []
-            for pair in matches:
-                if len(pair) < 2:
-                    continue
-                m, n = pair
-                if m.distance < 0.75 * n.distance:
-                    good_matches.append(m)
-
+            good_matches = [m for pair in matches if len(pair) >= 2 for m, n in [pair] if m.distance < 0.75 * n.distance]
             good_count = len(good_matches)
             good_score = 10 if good_count >= 20 else (7 if good_count >= 10 else (3 if good_count >= 5 else 0))
             orb_points = good_score
@@ -594,7 +539,6 @@ def image_score(img1_filename, img2_filename):
 
     total_points = min(50, color_points + hash_points + orb_points)
     image_ratio = total_points / 50.0
-
     return int(total_points), float(image_ratio)
 
 @app.route("/match")
@@ -606,25 +550,27 @@ def match_items():
     except Exception:
         lost_items, found_items = [], []
 
-    # Danh sách các chuỗi ảnh mặc định không hợp lệ
     invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
 
     for lost in lost_items:
         for found in found_items:
-            # 1. BẮT BUỘC: Kiểm tra xem CẢ HAI bài đăng có ảnh thực tế hay không
             img1_str = str(lost.hinh_anh).strip().lower() if lost.hinh_anh else ""
             img2_str = str(found.hinh_anh).strip().lower() if found.hinh_anh else ""
+
+            # Kiểm tra xem tệp ảnh có tồn tại hay không nếu là ảnh lưu local cũ
+            p1_valid = True if img1_str.startswith("http") else os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], img1_str)) if img1_str else False
+            p2_valid = True if img2_str.startswith("http") else os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], img2_str)) if img2_str else False
 
             has_real_images = bool(
                 img1_str and img2_str 
                 and img1_str not in invalid_imgs 
                 and img2_str not in invalid_imgs
+                and p1_valid and p2_valid
             )
 
             if has_real_images:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
-                # Nếu KHÔNG CÓ ẢNH THỰC TẾ -> Ép điểm hình ảnh về đúng 0/50
                 anh_score, image_ratio = 0, 0.0
 
             ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
@@ -640,7 +586,6 @@ def match_items():
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-            # 2. LOGIC ĐIỂM SÀN BẢO HIỂM: CHỈ KÍCH HOẠT KHI CÓ ẢNH THẬT
             if has_real_images:
                 if ten_score == 15 and mau_score == 15:
                     if anh_score < 35:
@@ -721,14 +666,17 @@ def teacher_check(lost_id, found_id):
     found = FoundItem.query.get_or_404(found_id)
 
     invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
-    
     img1_str = str(lost.hinh_anh).strip().lower() if lost.hinh_anh else ""
     img2_str = str(found.hinh_anh).strip().lower() if found.hinh_anh else ""
+
+    p1_valid = True if img1_str.startswith("http") else os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], img1_str)) if img1_str else False
+    p2_valid = True if img2_str.startswith("http") else os.path.exists(os.path.join(app.config["UPLOAD_FOLDER"], img2_str)) if img2_str else False
 
     has_real_images = bool(
         img1_str and img2_str 
         and img1_str not in invalid_imgs 
         and img2_str not in invalid_imgs
+        and p1_valid and p2_valid
     )
 
     if has_real_images:
