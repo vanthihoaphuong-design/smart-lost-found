@@ -781,7 +781,7 @@ def confirm_return(lost_id, found_id):
     found.trang_thai = "DA_TRA"
     lost.trang_thai = "DA_TIM"
     
-    thoi_diem = datetime.now(VN_TZ)
+    thoi_diem = datetime.now(VN_TZ).replace(tzinfo=None)
     found.thoi_diem_tra = thoi_diem
     lost.thoi_diem_tra = thoi_diem
 
@@ -789,7 +789,7 @@ def confirm_return(lost_id, found_id):
 
     return """
     <script>
-        alert("Xac nhan hoan tra thanh cong! Bai bao mat da chuyen sang trang thai 'Da tim thay'.");
+        alert("Xác nhận đã trả thành công! Bài báo mất đã chuyển sang trạng thái 'Đã tìm thấy'.");
         window.location.href = "/lost-list";
     </script>
     """
