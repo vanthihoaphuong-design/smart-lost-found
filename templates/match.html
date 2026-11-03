@@ -26,14 +26,17 @@
                 <!-- Đồ bị mất -->
                 <td class="text-center p-3">
                     {% if m.lost.hinh_anh %}
+                        {% set lost_img = m.lost.hinh_anh if m.lost.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.lost.hinh_anh) %}
                         <div class="d-flex justify-content-center mb-2">
-                            <img src="{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}" 
+                            <img src="{{ lost_img }}" 
                                  class="rounded shadow-sm cursor-pointer border" 
                                  style="max-height: 110px; object-fit: cover;" 
-                                 onclick="zoomImage('{{ url_for('uploaded_file', filename=m.lost.hinh_anh) }}')"
+                                 onclick="zoomImage('{{ lost_img }}')"
                                  title="Bấm để xem phóng to"
                                  onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
                         </div>
+                    {% else %}
+                        <div class="p-3 bg-light rounded text-muted mb-2 small">Chưa có ảnh</div>
                     {% endif %}
                     <h5 class="fw-bold mb-1">{{ m.lost.ten_do }}</h5>
                     <span class="badge bg-danger mb-1">{{ m.lost.loai_do }}</span><br>
@@ -46,14 +49,17 @@
                 <!-- Đồ nhặt được -->
                 <td class="text-center p-3">
                     {% if m.found.hinh_anh %}
+                        {% set found_img = m.found.hinh_anh if m.found.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.found.hinh_anh) %}
                         <div class="d-flex justify-content-center mb-2">
-                            <img src="{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}" 
+                            <img src="{{ found_img }}" 
                                  class="rounded shadow-sm cursor-pointer border" 
                                  style="max-height: 110px; object-fit: cover;" 
-                                 onclick="zoomImage('{{ url_for('uploaded_file', filename=m.found.hinh_anh) }}')"
+                                 onclick="zoomImage('{{ found_img }}')"
                                  title="Bấm để xem phóng to"
                                  onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
                         </div>
+                    {% else %}
+                        <div class="p-3 bg-light rounded text-muted mb-2 small">Chưa có ảnh</div>
                     {% endif %}
                     <h5 class="fw-bold mb-1">{{ m.found.ten_do }}</h5>
                     <span class="badge bg-success mb-1">{{ m.found.loai_do }}</span><br>
