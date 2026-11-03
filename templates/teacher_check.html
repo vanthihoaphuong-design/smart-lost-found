@@ -36,13 +36,14 @@ Giáo viên kiểm tra
                 <div class="card-body">
 
                     {% if lost.hinh_anh %}
-
+                    {% set lost_img = lost.hinh_anh if lost.hinh_anh.startswith('http') else url_for('uploaded_file', filename=lost.hinh_anh) %}
                     <div class="text-center mb-3">
 
                         <img
-                            src="{{ url_for('uploaded_file', filename=lost.hinh_anh) }}"
-                            class="img-fluid rounded"
-                            style="max-height:250px;"
+                            src="{{ lost_img }}"
+                            class="img-fluid rounded border"
+                            style="max-height:250px; object-fit: cover;"
+                            onerror="this.onerror=null; this.src='https://via.placeholder.com/250?text=Chưa+có+ảnh';"
                         >
 
                     </div>
@@ -97,13 +98,14 @@ Giáo viên kiểm tra
                 <div class="card-body">
 
                     {% if found.hinh_anh %}
-
+                    {% set found_img = found.hinh_anh if found.hinh_anh.startswith('http') else url_for('uploaded_file', filename=found.hinh_anh) %}
                     <div class="text-center mb-3">
 
                         <img
-                            src="{{ url_for('uploaded_file', filename=found.hinh_anh) }}"
-                            class="img-fluid rounded"
-                            style="max-height:250px;"
+                            src="{{ found_img }}"
+                            class="img-fluid rounded border"
+                            style="max-height:250px; object-fit: cover;"
+                            onerror="this.onerror=null; this.src='https://via.placeholder.com/250?text=Chưa+có+ảnh';"
                         >
 
                     </div>
