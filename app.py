@@ -606,15 +606,25 @@ def match_items():
     except Exception:
         lost_items, found_items = [], []
 
+    # Danh sách các chuỗi ảnh mặc định không hợp lệ
+    invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
+
     for lost in lost_items:
         for found in found_items:
-            # 1. Kiểm tra xem CẢ HAI bài đăng có file ảnh thực tế hay không
-            has_real_images = bool(lost.hinh_anh and found.hinh_anh and str(lost.hinh_anh).strip() != "" and str(found.hinh_anh).strip() != "")
+            # 1. BẮT BUỘC: Kiểm tra xem CẢ HAI bài đăng có ảnh thực tế hay không
+            img1_str = str(lost.hinh_anh).strip().lower() if lost.hinh_anh else ""
+            img2_str = str(found.hinh_anh).strip().lower() if found.hinh_anh else ""
+
+            has_real_images = bool(
+                img1_str and img2_str 
+                and img1_str not in invalid_imgs 
+                and img2_str not in invalid_imgs
+            )
 
             if has_real_images:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
-                # Nếu KHÔNG CÓ ẢNH -> Ép điểm hình ảnh về đúng 0/50
+                # Nếu KHÔNG CÓ ẢNH THỰC TẾ -> Ép điểm hình ảnh về đúng 0/50
                 anh_score, image_ratio = 0, 0.0
 
             ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
@@ -630,7 +640,7 @@ def match_items():
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-            # 2. LOGIC ĐIỂM SÀN BẢO HIỂM: CHỈ ÁP DỤNG KHI CÓ ẢNH THẬT
+            # 2. LOGIC ĐIỂM SÀN BẢO HIỂM: CHỈ KÍCH HOẠT KHI CÓ ẢNH THẬT
             if has_real_images:
                 if ten_score == 15 and mau_score == 15:
                     if anh_score < 35:
@@ -710,7 +720,16 @@ def teacher_check(lost_id, found_id):
     lost = LostItem.query.get_or_404(lost_id)
     found = FoundItem.query.get_or_404(found_id)
 
-    has_real_images = bool(lost.hinh_anh and found.hinh_anh and str(lost.hinh_anh).strip() != "" and str(found.hinh_anh).strip() != "")
+    invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
+    
+    img1_str = str(lost.hinh_anh).strip().lower() if lost.hinh_anh else ""
+    img2_str = str(found.hinh_anh).strip().lower() if found.hinh_anh else ""
+
+    has_real_images = bool(
+        img1_str and img2_str 
+        and img1_str not in invalid_imgs 
+        and img2_str not in invalid_imgs
+    )
 
     if has_real_images:
         anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
