@@ -417,10 +417,14 @@ def heatmap():
 def found_return(id):
     item = FoundItem.query.get_or_404(id)
     item.trang_thai = "DA_TRA"
-    item.thoi_diem_tra = datetime.now(VN_TZ)
+      # Lấy giờ Việt Nam hiện tại và bỏ thông tin tzinfo để lưu tương thích với PostgreSQL/SQLAlchemy
+    now_vn = datetime.now(VN_TZ).replace(tzinfo=None)
+    item.thoi_diem_tra = now_vn
+    
     db.session.commit()
     return redirect(url_for("found_list"))
-
+   
+   
 def similarity(text1, text2):
     if not text1 or not text2:
         return 0.0
