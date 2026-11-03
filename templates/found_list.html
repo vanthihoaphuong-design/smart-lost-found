@@ -21,6 +21,7 @@
                             <th>Ngày nhặt</th>
                             <th>Trạng thái</th>
                             <th>Thời điểm trả</th>
+                            <th>Hành động</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -61,10 +62,15 @@
                                     <span class="text-muted">—</span>
                                 {% endif %}
                             </td>
+                            <td>
+                                <a href="{{ url_for('edit_found', item_id=item.id) }}" class="btn btn-sm btn-outline-warning fw-bold">
+                                    ✏️ Sửa
+                                </a>
+                            </td>
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="8" class="text-muted py-4">Chưa có dữ liệu đồ nhặt được.</td>
+                            <td colspan="9" class="text-muted py-4">Chưa có dữ liệu đồ nhặt được.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
