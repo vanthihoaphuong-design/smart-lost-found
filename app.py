@@ -484,11 +484,8 @@ def image_score(img1_filename, img2_filename, loai_do1="", loai_do2=""):
     if not str1 or not str2 or str1 in invalid_imgs or str2 in invalid_imgs:
         return 0, 0.0
 
-    # TẦNG 3: BỘ LỌC CHẶN CỨNG - Khác loại đồ vật -> Điểm hình ảnh = 0/50
-    if loai_do1 and loai_do2 and str(loai_do1).strip().lower() != str(loai_do2).strip().lower():
-        return 0, 0.0
-
-    if img1_filename == img2_filename:
+    # QUY TẮC 1: Nếu cùng URL / cùng file ảnh -> Đạt 50/50 điểm tuyệt đối ngay
+    if str1 == str2:
         return 50, 1.0
 
     if not str1.startswith("http"):
@@ -506,54 +503,57 @@ def image_score(img1_filename, img2_filename, loai_do1="", loai_do2=""):
     if features1 is None or features2 is None:
         return 0, 0.0
 
+    # 1. So màu sắc HSV (Tối đa 25đ)
     color_points = 0
     try:
         hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
         if hist1 is not None and hist2 is not None:
             correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
             correlation = max(0.0, float(correlation))
-            if correlation >= 0.75:
-                color_points = 25
-            elif correlation >= 0.55:
-                color_points = 18
-            elif correlation >= 0.35:
-                color_points = 10
-            else:
-                color_points = int(correlation * 15)
+            color_points = int(correlation * 25)
     except Exception:
         color_points = 0
 
-    hash_points = 0
-    hash_sim = 0.0
-    try:
-        hash1, hash2 = features1.get("dhash"), features2.get("dhash")
-        if hash1 is not None and hash2 is not None:
-            hamming_distance = np.count_nonzero(hash1 != hash2)
-            hash_sim = 1.0 - (hamming_distance / 64.0)
-            if hamming_distance <= 3 or hash_sim >= 0.95:
-                hash_points = 15
-            elif hash_sim >= 0.75:
-                hash_points = 10
-            elif hash_sim >= 0.60:
-                hash_points = 5
-    except Exception:
-        hash_points = 0
-
+    # 2. So điểm đặc trưng góc cạnh ORB (Tối đa 15đ)
     orb_points = 0
     try:
         kp1, des1 = features1.get("orb_keypoints", []), features1.get("orb_descriptors")
         kp2, des2 = features2.get("orb_keypoints", []), features2.get("orb_descriptors")
         if des1 is not None and des2 is not None and len(kp1) >= 5 and len(kp2) >= 5:
-            bf = cv2.BFMatcher(cv2.NORM_HAMMING)
-            matches = bf.knnMatch(des1, des2, k=2)
-            good_matches = [m for pair in matches if len(pair) >= 2 for m, n in [pair] if m.distance < 0.75 * n.distance]
+            bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            matches = bf.match(des1, des2)
+            good_matches = [m for m in matches if m.distance < 50]
             good_count = len(good_matches)
-            good_score = 10 if good_count >= 20 else (7 if good_count >= 10 else (3 if good_count >= 5 else 0))
-            orb_points = good_score
+            if good_count >= 20:
+                orb_points = 15
+            elif good_count >= 10:
+                orb_points = 10
+            elif good_count >= 3:
+                orb_points = 5
     except Exception:
         orb_points = 0
 
-    total_points = min(50, color_points + hash_points + orb_points)
+    # 3. So cấu trúc dHash (Tối đa 10đ)
+    hash_points = 0
+    try:
+        hash1, hash2 = features1.get("dhash"), features2.get("dhash")
+        if hash1 is not None and hash2 is not None:
+            hamming_distance = np.count_nonzero(hash1 != hash2)
+            hash_sim = 1.0 - (hamming_distance / 64.0)
+            if hash_sim >= 0.85:
+                hash_points = 10
+            elif hash_sim >= 0.70:
+                hash_points = 5
+    except Exception:
+        hash_points = 0
+
+    total_points = color_points + orb_points + hash_points
+
+    # Nếu cả 3 chỉ số cộng lại rất cao (trên 40đ) -> Cho tròn 50/50 điểm
+    if total_points >= 40:
+        total_points = 50
+
+    total_points = min(50, total_points)
     image_ratio = total_points / 50.0
     return int(total_points), float(image_ratio)
 
