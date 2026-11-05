@@ -69,7 +69,7 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def crop_object_from_background(img):
-    """ TẦNG 1: Tự động tách vật thể khỏi nền trơn """
+    """ TẦNG 1: Tự động tách vật thể khỏi nền trơn (Loại bỏ nền trắng trơn / mặt bàn) """
     try:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -104,6 +104,7 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
+        # Tách vùng vật thể chính
         crop_img = crop_object_from_background(img)
 
         max_size = 400
@@ -483,7 +484,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
     if not str1 or not str2 or str1 in invalid_imgs or str2 in invalid_imgs:
         return 0, 0.0
 
-    # TỰ ĐỘNG NHẬN DIỆN ẢNH TRÙNG NHAU (KỂ CẢ CLOUDINARY URL HOẶC TÊN FILE)
+    # 1. Cùng link/file ảnh -> 50/50đ tuyệt đối
     name1 = str1.split("/")[-1].split("?")[0]
     name2 = str2.split("/")[-1].split("?")[0]
     if str1 == str2 or name1 == name2:
@@ -504,18 +505,18 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
     if features1 is None or features2 is None:
         return 0, 0.0
 
-    # 1. So màu sắc HSV (Tối đa 25đ)
+    # Màu sắc HSV (Tối đa 15đ)
     color_points = 0
     try:
         hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
         if hist1 is not None and hist2 is not None:
             correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
             correlation = max(0.0, float(correlation))
-            color_points = int(correlation * 25)
+            color_points = int(correlation * 15)
     except Exception:
         color_points = 0
 
-    # 2. So điểm đặc trưng góc cạnh ORB (Tối đa 15đ)
+    # Chi tiết góc cạnh ORB (Tối đa 25đ)
     orb_points = 0
     try:
         kp1, des1 = features1.get("orb_keypoints", []), features1.get("orb_descriptors")
@@ -523,39 +524,46 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
         if des1 is not None and des2 is not None and len(kp1) >= 5 and len(kp2) >= 5:
             bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
             matches = bf.match(des1, des2)
-            good_matches = [m for m in matches if m.distance < 50]
+            good_matches = [m for m in matches if m.distance < 45]
             good_count = len(good_matches)
-            if good_count >= 20:
-                orb_points = 15
-            elif good_count >= 10:
+            if good_count >= 30:
+                orb_points = 25
+            elif good_count >= 18:
+                orb_points = 18
+            elif good_count >= 8:
                 orb_points = 10
             elif good_count >= 3:
                 orb_points = 5
     except Exception:
         orb_points = 0
 
-    # 3. So cấu trúc dHash (Tối đa 10đ)
+    # Băm dHash (Tối đa 10đ)
     hash_points = 0
     try:
         hash1, hash2 = features1.get("dhash"), features2.get("dhash")
         if hash1 is not None and hash2 is not None:
             hamming_distance = np.count_nonzero(hash1 != hash2)
             hash_sim = 1.0 - (hamming_distance / 64.0)
-            if hash_sim >= 0.85:
+            if hash_sim >= 0.88:
                 hash_points = 10
-            elif hash_sim >= 0.70:
+            elif hash_sim >= 0.75:
                 hash_points = 5
     except Exception:
         hash_points = 0
 
     total_points = color_points + orb_points + hash_points
 
-    # CHẶN LỖI ẢNH NỀN TRẮNG: Nếu Tên đồ khác hẳn nhau (Bút bi vs Dây chuyền), điểm ảnh tối đa chỉ 10đ
     name_sim = similarity(ten_do1, ten_do2)
+    # Khác tên đồ vật hoàn toàn -> Giới hạn điểm ảnh tối đa 10đ
     if name_sim < 0.2:
         total_points = min(total_points, 10)
-    elif name_sim >= 0.8 and total_points >= 30:
-        total_points = 50
+    # Cùng tên đồ vật + ảnh có điểm tương đồng cơ bản -> Nâng điểm ảnh 38-50đ
+    elif name_sim >= 0.8:
+        if total_points >= 20:
+            total_points = max(total_points, 38)
+    else:
+        # 2 ảnh khác tệp (mẫu khác nhau) -> Giới hạn tối đa 35đ
+        total_points = min(35, total_points)
 
     total_points = min(50, total_points)
     image_ratio = total_points / 50.0
@@ -594,6 +602,10 @@ def match_items():
 
             ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
             mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15) if (lost.mau_sac and found.mau_sac) else 0
+
+            # THƯỞNG ĐIỂM MÀU SẮC NẾU ẢNH GIỐNG HỆT NHAU (50/50đ)
+            if anh_score == 50 and mau_score < 15:
+                mau_score = 15
 
             vi_tri_score = 0
             if lost.noi_mat and found.noi_nhat:
@@ -698,6 +710,9 @@ def teacher_check(lost_id, found_id):
     mau_score = 0
     if lost.mau_sac and found.mau_sac:
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+
+    if anh_score == 50 and mau_score < 15:
+        mau_score = 15
 
     vi_tri_score = 0
     if lost.noi_mat and found.noi_nhat:
