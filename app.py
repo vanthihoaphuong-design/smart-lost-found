@@ -69,7 +69,7 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def crop_object_from_background(img):
-    """ TẦNG 1: Tự động tách vật thể khỏi nền trơn (Bỏ qua nhiễu nền trắng/mặt bàn) """
+    """ TẦNG 1: Tự động tách vật thể khỏi nền trơn """
     try:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -104,7 +104,6 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        # Cắt lấy vùng vật thể chính (Tầng 1)
         crop_img = crop_object_from_background(img)
 
         max_size = 400
@@ -476,7 +475,7 @@ def date_score(date1, date2):
     else:
         return 0
 
-def image_score(img1_filename, img2_filename, loai_do1="", loai_do2=""):
+def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
     invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
     str1 = str(img1_filename).strip().lower() if img1_filename else ""
     str2 = str(img2_filename).strip().lower() if img2_filename else ""
@@ -484,8 +483,10 @@ def image_score(img1_filename, img2_filename, loai_do1="", loai_do2=""):
     if not str1 or not str2 or str1 in invalid_imgs or str2 in invalid_imgs:
         return 0, 0.0
 
-    # QUY TẮC 1: Nếu cùng URL / cùng file ảnh -> Đạt 50/50 điểm tuyệt đối ngay
-    if str1 == str2:
+    # TỰ ĐỘNG NHẬN DIỆN ẢNH TRÙNG NHAU (KỂ CẢ CLOUDINARY URL HOẶC TÊN FILE)
+    name1 = str1.split("/")[-1].split("?")[0]
+    name2 = str2.split("/")[-1].split("?")[0]
+    if str1 == str2 or name1 == name2:
         return 50, 1.0
 
     if not str1.startswith("http"):
@@ -549,8 +550,11 @@ def image_score(img1_filename, img2_filename, loai_do1="", loai_do2=""):
 
     total_points = color_points + orb_points + hash_points
 
-    # Nếu cả 3 chỉ số cộng lại rất cao (trên 40đ) -> Cho tròn 50/50 điểm
-    if total_points >= 40:
+    # CHẶN LỖI ẢNH NỀN TRẮNG: Nếu Tên đồ khác hẳn nhau (Bút bi vs Dây chuyền), điểm ảnh tối đa chỉ 10đ
+    name_sim = similarity(ten_do1, ten_do2)
+    if name_sim < 0.2:
+        total_points = min(total_points, 10)
+    elif name_sim >= 0.8 and total_points >= 30:
         total_points = 50
 
     total_points = min(50, total_points)
@@ -584,7 +588,7 @@ def match_items():
             )
 
             if has_real_images:
-                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.loai_do, found.loai_do)
+                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do)
             else:
                 anh_score, image_ratio = 0, 0.0
 
@@ -600,17 +604,6 @@ def match_items():
                     vi_tri_score = 5
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-            # Ràng buộc điều chỉnh điểm ảnh nếu tên đồ/màu sắc tương đồng
-            if has_real_images and lost.loai_do == found.loai_do:
-                if ten_score == 15 and mau_score == 15:
-                    if anh_score < 35:
-                        anh_score = 35
-                        image_ratio = max(image_ratio, 0.70)
-                elif ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
-                    if anh_score < 22:
-                        anh_score = 22
-                        image_ratio = max(image_ratio, 0.44)
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
             image_confidence = int(min(100, image_ratio * 100))
@@ -696,7 +689,7 @@ def teacher_check(lost_id, found_id):
     )
 
     if has_real_images:
-        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.loai_do, found.loai_do)
+        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do)
     else:
         anh_score, image_ratio = 0, 0.0
 
@@ -715,16 +708,6 @@ def teacher_check(lost_id, found_id):
             vi_tri_score = 5
 
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-    if has_real_images and lost.loai_do == found.loai_do:
-        if ten_score == 15 and mau_score == 15:
-            if anh_score < 35:
-                anh_score = 35
-                image_ratio = max(image_ratio, 0.70)
-        elif ten_score == 15 or (mau_score == 15 and vi_tri_score == 10):
-            if anh_score < 22:
-                anh_score = 22
-                image_ratio = max(image_ratio, 0.44)
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
