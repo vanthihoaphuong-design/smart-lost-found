@@ -23,7 +23,6 @@ try:
 except Exception as e:
     print(f"Lỗi OpenCV: {e}")
 
-# --- CẤU HÌNH CLOUDINARY LẤY TỪ ENVIRONMENT VARIABLES TRÊN RENDER ---
 cloudinary.config(
     cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", ""),
     api_key = os.environ.get("CLOUDINARY_API_KEY", ""),
@@ -69,7 +68,6 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def crop_object_from_background(img):
-    """ TẦNG 1: Tự động tách vật thể khỏi nền trơn (Loại bỏ nền trắng trơn / mặt bàn) """
     try:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -104,7 +102,6 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        # Tách vùng vật thể chính
         crop_img = crop_object_from_background(img)
 
         max_size = 400
@@ -443,8 +440,20 @@ def similarity(text1, text2):
         return 0.0
     t1 = str(text1).lower().strip()
     t2 = str(text2).lower().strip()
-    if t1 in t2 or t2 in t1:
+    if t1 == t2:
         return 1.0
+    
+    # Loại bỏ các từ chung phổ biến để tránh nhận nhầm "Sách Văn" vs "Sách Toán"
+    stopwords = ["sách", "bài tập", "bút", "cái", "chiếc", "vở", "tập"]
+    w1 = [w for w in t1.split() if w not in stopwords]
+    w2 = [w for w in t2.split() if w not in stopwords]
+    
+    # Nếu cả 2 đều có từ phân biệt và khác nhau (Văn vs Toán) -> Trả về 0.0đ
+    if w1 and w2 and set(w1).isdisjoint(set(w2)):
+        return 0.2
+        
+    if t1 in t2 or t2 in t1:
+        return 0.8
     return SequenceMatcher(None, t1, t2).ratio()
 
 def parse_date_flexible(date_str):
@@ -524,16 +533,16 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
         if des1 is not None and des2 is not None and len(kp1) >= 5 and len(kp2) >= 5:
             bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
             matches = bf.match(des1, des2)
-            good_matches = [m for m in matches if m.distance < 50]
+            good_matches = [m for m in matches if m.distance < 40]
             good_count = len(good_matches)
-            if good_count >= 25:
+            if good_count >= 30:
                 orb_points = 25
-            elif good_count >= 15:
+            elif good_count >= 18:
                 orb_points = 18
-            elif good_count >= 6:
-                orb_points = 12
-            elif good_count >= 2:
-                orb_points = 6
+            elif good_count >= 8:
+                orb_points = 10
+            elif good_count >= 3:
+                orb_points = 5
     except Exception:
         orb_points = 0
 
@@ -544,27 +553,19 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
         if hash1 is not None and hash2 is not None:
             hamming_distance = np.count_nonzero(hash1 != hash2)
             hash_sim = 1.0 - (hamming_distance / 64.0)
-            if hash_sim >= 0.85:
+            if hash_sim >= 0.88:
                 hash_points = 10
-            elif hash_sim >= 0.70:
+            elif hash_sim >= 0.75:
                 hash_points = 5
     except Exception:
         hash_points = 0
 
+    # TÍNH ĐIỂM HÌNH ẢNH NGUYÊN BẢN (Không tự động nâng điểm ảo)
     total_points = color_points + orb_points + hash_points
-
-    name_sim = similarity(ten_do1, ten_do2)
     
-    # --- ĐIỀU CHỈNH ĐIỂM THÔNG MINH ---
-    if name_sim < 0.2:
-        # Khác tên đồ vật hoàn toàn (vd: Bút vs Dây chuyền) -> Ép điểm ảnh <= 10đ để tránh nhiễu phông nền
-        total_points = min(total_points, 10)
-    elif name_sim >= 0.6:
-        # Cùng hoặc gần tên đồ vật (Bút bi - Bút, Đèn - Đèn học để bàn) -> Hỗ trợ đẩy điểm ảnh lên 32-45đ
-        if total_points < 32:
-            total_points = 35 + int(name_sim * 7)
+    # 2 Ảnh chụp khác nhau tự động bị giới hạn tối đa 35/50đ
+    total_points = min(35, total_points)
 
-    total_points = min(50, total_points)
     image_ratio = total_points / 50.0
     return int(total_points), float(image_ratio)
 
@@ -602,7 +603,6 @@ def match_items():
             ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
             mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15) if (lost.mau_sac and found.mau_sac) else 0
 
-            # THƯỞNG ĐIỂM MÀU SẮC NẾU ẢNH GIỐNG HỆT NHAU (50/50đ)
             if anh_score == 50 and mau_score < 15:
                 mau_score = 15
 
