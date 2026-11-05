@@ -505,7 +505,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
     if features1 is None or features2 is None:
         return 0, 0.0
 
-    # Màu sắc HSV (Tối đa 15đ)
+    # 1. Màu sắc HSV (Tối đa 15đ)
     color_points = 0
     try:
         hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
@@ -516,7 +516,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
     except Exception:
         color_points = 0
 
-    # Chi tiết góc cạnh ORB (Tối đa 25đ)
+    # 2. Chi tiết góc cạnh ORB (Tối đa 25đ)
     orb_points = 0
     try:
         kp1, des1 = features1.get("orb_keypoints", []), features1.get("orb_descriptors")
@@ -524,29 +524,29 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
         if des1 is not None and des2 is not None and len(kp1) >= 5 and len(kp2) >= 5:
             bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
             matches = bf.match(des1, des2)
-            good_matches = [m for m in matches if m.distance < 45]
+            good_matches = [m for m in matches if m.distance < 50]
             good_count = len(good_matches)
-            if good_count >= 30:
+            if good_count >= 25:
                 orb_points = 25
-            elif good_count >= 18:
+            elif good_count >= 15:
                 orb_points = 18
-            elif good_count >= 8:
-                orb_points = 10
-            elif good_count >= 3:
-                orb_points = 5
+            elif good_count >= 6:
+                orb_points = 12
+            elif good_count >= 2:
+                orb_points = 6
     except Exception:
         orb_points = 0
 
-    # Băm dHash (Tối đa 10đ)
+    # 3. Băm dHash (Tối đa 10đ)
     hash_points = 0
     try:
         hash1, hash2 = features1.get("dhash"), features2.get("dhash")
         if hash1 is not None and hash2 is not None:
             hamming_distance = np.count_nonzero(hash1 != hash2)
             hash_sim = 1.0 - (hamming_distance / 64.0)
-            if hash_sim >= 0.88:
+            if hash_sim >= 0.85:
                 hash_points = 10
-            elif hash_sim >= 0.75:
+            elif hash_sim >= 0.70:
                 hash_points = 5
     except Exception:
         hash_points = 0
@@ -554,16 +554,15 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
     total_points = color_points + orb_points + hash_points
 
     name_sim = similarity(ten_do1, ten_do2)
-    # Khác tên đồ vật hoàn toàn -> Giới hạn điểm ảnh tối đa 10đ
+    
+    # --- ĐIỀU CHỈNH ĐIỂM THÔNG MINH ---
     if name_sim < 0.2:
+        # Khác tên đồ vật hoàn toàn (vd: Bút vs Dây chuyền) -> Ép điểm ảnh <= 10đ để tránh nhiễu phông nền
         total_points = min(total_points, 10)
-    # Cùng tên đồ vật + ảnh có điểm tương đồng cơ bản -> Nâng điểm ảnh 38-50đ
-    elif name_sim >= 0.8:
-        if total_points >= 20:
-            total_points = max(total_points, 38)
-    else:
-        # 2 ảnh khác tệp (mẫu khác nhau) -> Giới hạn tối đa 35đ
-        total_points = min(35, total_points)
+    elif name_sim >= 0.6:
+        # Cùng hoặc gần tên đồ vật (Bút bi - Bút, Đèn - Đèn học để bàn) -> Hỗ trợ đẩy điểm ảnh lên 32-45đ
+        if total_points < 32:
+            total_points = 35 + int(name_sim * 7)
 
     total_points = min(50, total_points)
     image_ratio = total_points / 50.0
