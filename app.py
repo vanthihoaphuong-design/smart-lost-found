@@ -68,6 +68,23 @@ def save_feature_cache(img_path, features):
     if img_path:
         FEATURE_CACHE[img_path] = features
 
+def crop_object_from_background(img):
+    """ TẦNG 1: Tự động tách vật thể khỏi nền trơn (Bỏ qua nhiễu nền trắng/mặt bàn) """
+    try:
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        _, thresh = cv2.threshold(blurred, 240, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if contours:
+            c = max(contours, key=cv2.contourArea)
+            x, y, w, h = cv2.boundingRect(c)
+            img_area = img.shape[0] * img.shape[1]
+            if (w * h) > (img_area * 0.05):
+                return img[y:y+h, x:x+w]
+        return img
+    except Exception:
+        return img
+
 def calculate_image_features(img_path):
     cached = get_feature_cache(img_path)
     if cached is not None:
@@ -87,10 +104,8 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        h, w = img.shape[:2]
-        crop_img = img[int(h*0.15):int(h*0.85), int(w*0.15):int(w*0.85)]
-        if crop_img.shape[0] == 0 or crop_img.shape[1] == 0:
-            crop_img = img
+        # Cắt lấy vùng vật thể chính (Tầng 1)
+        crop_img = crop_object_from_background(img)
 
         max_size = 400
         ch, cw = crop_img.shape[:2]
@@ -417,13 +432,11 @@ def heatmap():
 def found_return(id):
     item = FoundItem.query.get_or_404(id)
     item.trang_thai = "DA_TRA"
-      # Lấy giờ Việt Nam hiện tại và bỏ thông tin tzinfo để lưu tương thích với PostgreSQL/SQLAlchemy
     now_vn = datetime.now(VN_TZ).replace(tzinfo=None)
     item.thoi_diem_tra = now_vn
     
     db.session.commit()
     return redirect(url_for("found_list"))
-   
    
 def similarity(text1, text2):
     if not text1 or not text2:
@@ -463,12 +476,16 @@ def date_score(date1, date2):
     else:
         return 0
 
-def image_score(img1_filename, img2_filename):
+def image_score(img1_filename, img2_filename, loai_do1="", loai_do2=""):
     invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
     str1 = str(img1_filename).strip().lower() if img1_filename else ""
     str2 = str(img2_filename).strip().lower() if img2_filename else ""
 
     if not str1 or not str2 or str1 in invalid_imgs or str2 in invalid_imgs:
+        return 0, 0.0
+
+    # TẦNG 3: BỘ LỌC CHẶN CỨNG - Khác loại đồ vật -> Điểm hình ảnh = 0/50
+    if loai_do1 and loai_do2 and str(loai_do1).strip().lower() != str(loai_do2).strip().lower():
         return 0, 0.0
 
     if img1_filename == img2_filename:
@@ -496,13 +513,13 @@ def image_score(img1_filename, img2_filename):
             correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
             correlation = max(0.0, float(correlation))
             if correlation >= 0.75:
-                color_points = 30
+                color_points = 25
             elif correlation >= 0.55:
-                color_points = 22
+                color_points = 18
             elif correlation >= 0.35:
-                color_points = 14
+                color_points = 10
             else:
-                color_points = int(correlation * 20)
+                color_points = int(correlation * 15)
     except Exception:
         color_points = 0
 
@@ -514,12 +531,10 @@ def image_score(img1_filename, img2_filename):
             hamming_distance = np.count_nonzero(hash1 != hash2)
             hash_sim = 1.0 - (hamming_distance / 64.0)
             if hamming_distance <= 3 or hash_sim >= 0.95:
-                return 50, 1.0
-            if hash_sim >= 0.75:
                 hash_points = 15
-            elif hash_sim >= 0.60:
+            elif hash_sim >= 0.75:
                 hash_points = 10
-            elif hash_sim >= 0.45:
+            elif hash_sim >= 0.60:
                 hash_points = 5
     except Exception:
         hash_points = 0
@@ -569,7 +584,7 @@ def match_items():
             )
 
             if has_real_images:
-                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.loai_do, found.loai_do)
             else:
                 anh_score, image_ratio = 0, 0.0
 
@@ -586,7 +601,8 @@ def match_items():
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-            if has_real_images:
+            # Ràng buộc điều chỉnh điểm ảnh nếu tên đồ/màu sắc tương đồng
+            if has_real_images and lost.loai_do == found.loai_do:
                 if ten_score == 15 and mau_score == 15:
                     if anh_score < 35:
                         anh_score = 35
@@ -680,7 +696,7 @@ def teacher_check(lost_id, found_id):
     )
 
     if has_real_images:
-        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.loai_do, found.loai_do)
     else:
         anh_score, image_ratio = 0, 0.0
 
@@ -700,7 +716,7 @@ def teacher_check(lost_id, found_id):
 
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-    if has_real_images:
+    if has_real_images and lost.loai_do == found.loai_do:
         if ten_score == 15 and mau_score == 15:
             if anh_score < 35:
                 anh_score = 35
