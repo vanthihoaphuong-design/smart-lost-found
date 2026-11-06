@@ -23,7 +23,6 @@ try:
 except Exception as e:
     print(f"Lỗi OpenCV: {e}")
 
-# --- CẤU HÌNH CLOUDINARY LẤY TỪ ENVIRONMENT VARIABLES TRÊN RENDER ---
 cloudinary.config(
     cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", ""),
     api_key = os.environ.get("CLOUDINARY_API_KEY", ""),
@@ -69,7 +68,6 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def crop_object_from_background(img):
-    """ Tự động crop vật thể chính loại bỏ phông nền trơn """
     try:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -106,13 +104,8 @@ def calculate_image_features(img_path):
 
         crop_img = crop_object_from_background(img)
 
-        max_size = 300
-        ch, cw = crop_img.shape[:2]
-        if max(ch, cw) > max_size:
-            scale = max_size / max(ch, cw)
-            new_w = max(1, int(cw * scale))
-            new_h = max(1, int(ch * scale))
-            crop_img = cv2.resize(crop_img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        # Căn chỉnh kích thước chuẩn 300x300
+        crop_img = cv2.resize(crop_img, (300, 300), interpolation=cv2.INTER_AREA)
 
         features = {}
 
@@ -436,7 +429,7 @@ def found_return(id):
     
     db.session.commit()
     return redirect(url_for("found_list"))
-   
+
 def similarity(text1, text2):
     if not text1 or not text2:
         return 0.0
@@ -485,7 +478,7 @@ def date_score(date1, date2):
     else:
         return 0
 
-def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
+def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", noi2=""):
     invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
     str1 = str(img1_filename).strip().lower() if img1_filename else ""
     str2 = str(img2_filename).strip().lower() if img2_filename else ""
@@ -493,7 +486,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
     if not str1 or not str2 or str1 in invalid_imgs or str2 in invalid_imgs:
         return 0, 0.0
 
-    # TẦNG 1: CÙNG MỘT TỆP/URL VẬT THỂ -> 50/50 ĐIỂM TUYỆT ĐỐI
+    # 1. CÙNG MỘT TỆP/URL VẬT THỂ -> 50/50 ĐIỂM TUYỆT ĐỐI
     name1 = str1.split("/")[-1].split("?")[0]
     name2 = str2.split("/")[-1].split("?")[0]
     if str1 == str2 or name1 == name2:
@@ -514,7 +507,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
     if features1 is None or features2 is None:
         return 0, 0.0
 
-    # TẦNG 2: TÍNH ĐIỂM THỊ GIÁC (HSV + ORB + dHash)
+    # TÍNH ĐIỂM THỊ GIÁC HÌNH ẢNH
     color_points = 0
     try:
         hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
@@ -531,13 +524,13 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
         if des1 is not None and des2 is not None and len(kp1) >= 5 and len(kp2) >= 5:
             bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
             matches = bf.match(des1, des2)
-            good_matches = [m for m in matches if m.distance < 42]
+            good_matches = [m for m in matches if m.distance < 45]
             good_count = len(good_matches)
-            if good_count >= 28:
+            if good_count >= 25:
                 orb_points = 25
-            elif good_count >= 16:
+            elif good_count >= 15:
                 orb_points = 18
-            elif good_count >= 7:
+            elif good_count >= 6:
                 orb_points = 10
             elif good_count >= 2:
                 orb_points = 5
@@ -559,20 +552,17 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2=""):
 
     raw_points = color_points + orb_points + hash_points
 
-    # TẦNG 3: ĐIỀU CHỈNH ĐIỂM THEO NGỮ CẢNH
     name_sim = similarity(ten_do1, ten_do2)
+    loc_sim = similarity(noi1, noi2)
 
-    if name_sim >= 0.8:
-        # Cùng tên đồ vật (vd: Bút bi & bút) -> Nếu ảnh có điểm tương đồng cơ bản thì nâng lên 38-45đ
-        if raw_points >= 8:
-            total_points = max(raw_points, 38)
-        else:
-            total_points = raw_points
+    # ĐIỀU CHỈNH ĐIỂM HÌNH ẢNH THEO NGỮ CẢNH
+    if name_sim >= 0.6 and (loc_sim >= 0.6 or raw_points >= 5):
+        # Cùng tên đồ vật + cùng vị trí (ví dụ: chiếc Đèn học ở Phòng Hội trường) -> Đẩy điểm ảnh lên 30-40đ
+        total_points = max(raw_points, 32)
     elif name_sim <= 0.2:
-        # Khác tên đồ vật hoàn toàn -> Ép tối đa 10đ để tránh ăn điểm nền trắng
+        # Khác tên đồ vật hoàn toàn -> Giới hạn tối đa 10đ
         total_points = min(raw_points, 10)
     else:
-        # 2 ảnh chụp khác nhau (mẫu khác nhau) -> Khống chế tối đa 20đ (tránh trường hợp dây chuyền ăn 35đ)
         total_points = min(20, raw_points)
 
     total_points = min(50, total_points)
@@ -606,14 +596,17 @@ def match_items():
             )
 
             if has_real_images:
-                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do)
+                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
             else:
                 anh_score, image_ratio = 0, 0.0
 
             ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
-            mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15) if (lost.mau_sac and found.mau_sac) else 0
 
-            # THƯỞNG ĐIỂM MÀU SẮC KHI TRÙNG TỆP ẢNH TỰ ĐỘNG
+            # TÍNH ĐIỂM MÀU SẮC CHUẨN (Khóa điểm ảo khi bài đăng không nhập màu sắc hoặc không có ảnh)
+            mau_score = 0
+            if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "" and found.mau_sac.strip() != "":
+                mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+
             if anh_score == 50 and mau_score < 15:
                 mau_score = 15
 
@@ -711,14 +704,14 @@ def teacher_check(lost_id, found_id):
     )
 
     if has_real_images:
-        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do)
+        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
     else:
         anh_score, image_ratio = 0, 0.0
 
     ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
 
     mau_score = 0
-    if lost.mau_sac and found.mau_sac:
+    if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "" and found.mau_sac.strip() != "":
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
 
     if anh_score == 50 and mau_score < 15:
