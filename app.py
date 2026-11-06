@@ -23,6 +23,7 @@ try:
 except Exception as e:
     print(f"Lỗi OpenCV: {e}")
 
+# --- CẤU HÌNH CLOUDINARY LẤY TỪ ENVIRONMENT VARIABLES TRÊN RENDER ---
 cloudinary.config(
     cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", ""),
     api_key = os.environ.get("CLOUDINARY_API_KEY", ""),
@@ -68,6 +69,7 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def crop_object_from_background(img):
+    """ Tự động tách vật thể khỏi phông nền trơn """
     try:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
@@ -103,8 +105,6 @@ def calculate_image_features(img_path):
             return None
 
         crop_img = crop_object_from_background(img)
-
-        # Căn chỉnh kích thước chuẩn 300x300
         crop_img = cv2.resize(crop_img, (300, 300), interpolation=cv2.INTER_AREA)
 
         features = {}
@@ -557,8 +557,8 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
 
     # ĐIỀU CHỈNH ĐIỂM HÌNH ẢNH THEO NGỮ CẢNH
     if name_sim >= 0.6 and (loc_sim >= 0.6 or raw_points >= 5):
-        # Cùng tên đồ vật + cùng vị trí (ví dụ: chiếc Đèn học ở Phòng Hội trường) -> Đẩy điểm ảnh lên 30-40đ
-        total_points = max(raw_points, 32)
+        # Cùng tên đồ vật + cùng vị trí -> Nâng điểm ảnh lên 32-40đ
+        total_points = max(raw_points, 38)
     elif name_sim <= 0.2:
         # Khác tên đồ vật hoàn toàn -> Giới hạn tối đa 10đ
         total_points = min(raw_points, 10)
@@ -619,6 +619,12 @@ def match_items():
                     vi_tri_score = 5
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+            # BÙ ĐIỂM MÀU SẮC / THỊ GIÁC: Nếu cùng Tên đồ + Cùng Vị trí (như chiếc Đèn ở Phòng Hội trường)
+            if ten_score >= 10 and vi_tri_score >= 8:
+                mau_score = max(mau_score, 10)
+                if anh_score >= 15:
+                    anh_score = max(anh_score, 38)
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
             image_confidence = int(min(100, image_ratio * 100))
@@ -726,6 +732,11 @@ def teacher_check(lost_id, found_id):
             vi_tri_score = 5
 
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+    if ten_score >= 10 and vi_tri_score >= 8:
+        mau_score = max(mau_score, 10)
+        if anh_score >= 15:
+            anh_score = max(anh_score, 38)
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
