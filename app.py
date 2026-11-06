@@ -104,29 +104,35 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
+        # 1. Tách nền trơn & Chuẩn hóa kích thước 300x300
         crop_img = crop_object_from_background(img)
         crop_img = cv2.resize(crop_img, (300, 300), interpolation=cv2.INTER_AREA)
 
+        # 2. Cân bằng ánh sáng bằng CLAHE
+        gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+        gray_equalized = clahe.apply(gray)
+
         features = {}
 
+        # 3. Trích xuất ORB với 800 đặc trưng
         try:
-            gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
-            gray = cv2.GaussianBlur(gray, (3, 3), 0)
-            orb = cv2.ORB_create(nfeatures=500, scaleFactor=1.2, nlevels=8)
-            keypoints, descriptors = orb.detectAndCompute(gray, None)
+            orb = cv2.ORB_create(nfeatures=800, scaleFactor=1.2, nlevels=8)
+            keypoints, descriptors = orb.detectAndCompute(gray_equalized, None)
             features["orb_keypoints"] = keypoints
             features["orb_descriptors"] = descriptors
         except Exception:
             features["orb_keypoints"] = []
             features["orb_descriptors"] = None
 
+        # 4. dHash (Băm hình ảnh)
         try:
-            gray_small = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
-            resized = cv2.resize(gray_small, (9, 8), interpolation=cv2.INTER_AREA)
+            resized = cv2.resize(gray_equalized, (9, 8), interpolation=cv2.INTER_AREA)
             features["dhash"] = (resized[:, 1:] > resized[:, :-1]).flatten()
         except Exception:
             features["dhash"] = None
 
+        # 5. HSV Histogram (Phân tích dải màu)
         try:
             hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
             hist = cv2.calcHist([hsv], [0, 1], None, [30, 32], [0, 180, 0, 256])
@@ -507,16 +513,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
     if features1 is None or features2 is None:
         return 0, 0.0
 
-    # TÍNH ĐIỂM THỊ GIÁC HÌNH ẢNH
-    color_points = 0
-    try:
-        hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
-        if hist1 is not None and hist2 is not None:
-            correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
-            color_points = int(max(0.0, float(correlation)) * 15)
-    except Exception:
-        color_points = 0
-
+    # 1. Điểm Chi tiết góc cạnh ORB (Tối đa 30 điểm)
     orb_points = 0
     try:
         kp1, des1 = features1.get("orb_keypoints", []), features1.get("orb_descriptors")
@@ -524,46 +521,56 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
         if des1 is not None and des2 is not None and len(kp1) >= 5 and len(kp2) >= 5:
             bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
             matches = bf.match(des1, des2)
-            good_matches = [m for m in matches if m.distance < 45]
+            good_matches = [m for m in matches if m.distance < 50]
             good_count = len(good_matches)
-            if good_count >= 25:
-                orb_points = 25
-            elif good_count >= 15:
-                orb_points = 18
+            
+            if good_count >= 20:
+                orb_points = 30
+            elif good_count >= 12:
+                orb_points = 24
             elif good_count >= 6:
-                orb_points = 10
+                orb_points = 16
             elif good_count >= 2:
-                orb_points = 5
+                orb_points = 8
     except Exception:
         orb_points = 0
 
+    # 2. Điểm Bố cục dHash (Tối đa 10 điểm)
     hash_points = 0
     try:
         hash1, hash2 = features1.get("dhash"), features2.get("dhash")
         if hash1 is not None and hash2 is not None:
             hamming_distance = np.count_nonzero(hash1 != hash2)
             hash_sim = 1.0 - (hamming_distance / 64.0)
-            if hash_sim >= 0.88:
+            if hash_sim >= 0.82:
                 hash_points = 10
-            elif hash_sim >= 0.75:
-                hash_points = 5
+            elif hash_sim >= 0.70:
+                hash_points = 6
     except Exception:
         hash_points = 0
 
-    raw_points = color_points + orb_points + hash_points
+    # 3. Điểm Màu sắc HSV (Tối đa 10 điểm)
+    color_points = 0
+    try:
+        hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
+        if hist1 is not None and hist2 is not None:
+            correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
+            color_points = int(max(0.0, float(correlation)) * 10)
+    except Exception:
+        color_points = 0
+
+    raw_points = orb_points + hash_points + color_points
 
     name_sim = similarity(ten_do1, ten_do2)
     loc_sim = similarity(noi1, noi2)
 
     # ĐIỀU CHỈNH ĐIỂM HÌNH ẢNH THEO NGỮ CẢNH
     if name_sim >= 0.6 and (loc_sim >= 0.6 or raw_points >= 5):
-        # Cùng tên đồ vật + cùng vị trí -> Nâng điểm ảnh lên 32-40đ
-        total_points = max(raw_points, 38)
+        total_points = max(raw_points, 35)
     elif name_sim <= 0.2:
-        # Khác tên đồ vật hoàn toàn -> Giới hạn tối đa 10đ
         total_points = min(raw_points, 10)
     else:
-        total_points = min(20, raw_points)
+        total_points = min(25, raw_points)
 
     total_points = min(50, total_points)
     image_ratio = total_points / 50.0
@@ -620,11 +627,11 @@ def match_items():
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-            # BÙ ĐIỂM MÀU SẮC / THỊ GIÁC: Nếu cùng Tên đồ + Cùng Vị trí (như chiếc Đèn ở Phòng Hội trường)
-            if ten_score >= 10 and vi_tri_score >= 8:
+            # BÙ ĐIỂM CHO VẬT THỂ CÙNG NGỮ CẢNH (Cùng Vị trí + Cùng loại/tên + Ngày sát nhau)
+            if vi_tri_score >= 8 and ngay_score >= 7 and (ten_score >= 5 or lost.loai_do == found.loai_do):
                 mau_score = max(mau_score, 10)
-                if anh_score >= 15:
-                    anh_score = max(anh_score, 38)
+                if anh_score >= 12:
+                    anh_score = max(anh_score, 35)
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
             image_confidence = int(min(100, image_ratio * 100))
@@ -733,10 +740,10 @@ def teacher_check(lost_id, found_id):
 
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-    if ten_score >= 10 and vi_tri_score >= 8:
+    if vi_tri_score >= 8 and ngay_score >= 7 and (ten_score >= 5 or lost.loai_do == found.loai_do):
         mau_score = max(mau_score, 10)
-        if anh_score >= 15:
-            anh_score = max(anh_score, 38)
+        if anh_score >= 12:
+            anh_score = max(anh_score, 35)
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
