@@ -164,7 +164,6 @@ def calculate_image_features(img_path):
 
 def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", noi2=""):
     try:
-        # BẮT BỘC KIỂM TRA ẢNH HỢP LỆ TRƯỚC
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
 
@@ -584,7 +583,6 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # CHỈ TÍNH ĐIỂM HÌNH ẢNH KHI CẢ 2 BÀI ĐỀU CÓ ẢNH THỰC TẾ
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
             else:
@@ -593,7 +591,6 @@ def match_items():
             ten_sim = similarity(lost.ten_do, found.ten_do)
             ten_score = int(ten_sim * 15)
 
-            # NẾU CẢ 2 ĐỀU CÓ ẢNH THỰC TẾ + TÊN GIỐNG NHAU -> BÙ ĐIỂM HÌNH ẢNH NẾU OpenCV SO KHÓ
             if has1 and has2 and ten_sim >= 0.70 and anh_score < 25:
                 anh_score = 30
                 image_ratio = 0.60
@@ -606,4 +603,289 @@ def match_items():
                 mau_score = 15
 
             vi_tri_score = 0
-            if lost.noi_mat and found.
+            if lost.noi_mat and found.noi_nhat:
+                vi_tri = similarity(lost.noi_mat, found.noi_nhat)
+                if vi_tri > 0.8:
+                    vi_tri_score = 10
+                elif vi_tri > 0.5:
+                    vi_tri_score = 5
+
+            ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+            score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+
+            if ten_sim < 0.25 and anh_score < 25:
+                score = min(score, 32)
+
+            image_confidence = int(min(100, image_ratio * 100))
+
+            reasons = []
+            if has1 and has2:
+                if anh_score >= 35:
+                    reasons.append("Hình ảnh rất giống")
+                elif anh_score >= 15:
+                    reasons.append("Hình ảnh có điểm tương đồng")
+
+            if ten_score >= 10:
+                reasons.append("Tên đồ tương đồng")
+            if mau_score >= 10:
+                reasons.append("Màu sắc tương đồng")
+            if vi_tri_score == 10:
+                reasons.append("Vị trí liên quan")
+            if ngay_score >= 7:
+                reasons.append("Thời gian khớp/gần nhau")
+
+            if score >= 75:
+                ket_luan = "🟢 Khả năng trùng khớp cao"
+            elif score >= 55:
+                ket_luan = "🟡 Có khả năng trùng khớp"
+            elif score >= 38:
+                ket_luan = "🟠 Có một số điểm tương đồng"
+            else:
+                ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+            details = {
+                "hinh_anh": anh_score,
+                "ten_do": ten_score,
+                "mau_sac": mau_score,
+                "vi_tri": vi_tri_score,
+                "ngay": ngay_score,
+                "score_image": anh_score,
+                "score_name": ten_score,
+                "score_color": mau_score,
+                "score_location": vi_tri_score,
+                "score_date": ngay_score,
+                "image_confidence": image_confidence
+            }
+
+            matches.append({
+                "lost": lost,
+                "found": found,
+                "score": score,
+                "ket_luan": ket_luan,
+                "reason": reasons,
+                "details": details,
+                "score_image": anh_score,
+                "score_name": ten_score,
+                "score_color": mau_score,
+                "score_location": vi_tri_score,
+                "score_date": ngay_score,
+                "hinh_anh": anh_score,
+                "ten_do": ten_score,
+                "mau_sac": mau_score,
+                "vi_tri": vi_tri_score,
+                "ngay": ngay_score
+            })
+
+    matches.sort(key=lambda x: x["score"], reverse=True)
+    return render_template("match.html", matches=matches)
+
+@app.route("/teacher-check/<int:lost_id>/<int:found_id>")
+def teacher_check(lost_id, found_id):
+    lost = LostItem.query.get_or_404(lost_id)
+    found = FoundItem.query.get_or_404(found_id)
+
+    has1 = check_real_image(lost.hinh_anh)
+    has2 = check_real_image(found.hinh_anh)
+
+    if has1 and has2:
+        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
+    else:
+        anh_score, image_ratio = 0, 0.0
+
+    ten_sim = similarity(lost.ten_do, found.ten_do)
+    ten_score = int(ten_sim * 15)
+
+    if has1 and has2 and ten_sim >= 0.70 and anh_score < 25:
+        anh_score = 30
+        image_ratio = 0.60
+
+    mau_score = 0
+    if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "" and found.mau_sac.strip() != "":
+        mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+
+    if has1 and has2 and anh_score >= 35 and mau_score < 15:
+        mau_score = 15
+
+    vi_tri_score = 0
+    if lost.noi_mat and found.noi_nhat:
+        vi_tri = similarity(lost.noi_mat, found.noi_nhat)
+        if vi_tri > 0.8:
+            vi_tri_score = 10
+        elif vi_tri > 0.5:
+            vi_tri_score = 5
+
+    ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+    score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+
+    if ten_sim < 0.25 and anh_score < 25:
+        score = min(score, 32)
+
+    if score >= 75:
+        ket_luan = "🟢 Khả năng trùng khớp cao"
+    elif score >= 55:
+        ket_luan = "🟡 Có khả năng trùng khớp"
+    elif score >= 38:
+        ket_luan = "🟠 Có một số điểm tương đồng"
+    else:
+        ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+    image_warning = None
+    if has1 and has2 and image_ratio < 0.20:
+        image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
+    elif not (has1 and has2):
+        image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
+
+    return render_template(
+        "teacher_check.html",
+        lost=lost,
+        found=found,
+        score=score,
+        ket_luan=ket_luan,
+        image_warning=image_warning
+    )
+
+@app.route("/confirm-return/<int:lost_id>/<int:found_id>", methods=["GET", "POST"])
+def confirm_return(lost_id, found_id):
+    pin_code = request.form.get("pin_code", "").strip() if request.method == "POST" else request.args.get("pin_code", "").strip()
+    current_pin = get_current_pin()
+
+    if pin_code != current_pin:
+        return """
+        <script>
+            alert("Ma PIN Giao vien khong chinh xac! Vui long thu lai.");
+            window.history.back();
+        </script>
+        """
+
+    try:
+        lost = LostItem.query.get_or_404(lost_id)
+        found = FoundItem.query.get_or_404(found_id)
+
+        found.trang_thai = "DA_TRA"
+        lost.trang_thai = "DA_TIM"
+        
+        thoi_diem = datetime.now(VN_TZ).replace(tzinfo=None)
+        found.thoi_diem_tra = thoi_diem
+        lost.thoi_diem_tra = thoi_diem
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    return """
+    <script>
+        alert("Xác nhận đã trả thành công! Bài báo mất đã chuyển sang trạng thái 'Đã tìm thấy'.");
+        window.location.href = "/lost-list";
+    </script>
+    """
+
+@app.route("/export-excel", methods=["GET"])
+def export_excel():
+    try:
+        status = request.args.get("status", "all")
+        month = request.args.get("month", "")
+        year = request.args.get("year", "")
+
+        lost_query = LostItem.query
+        found_query = FoundItem.query
+
+        status_label = "Tat_Ca"
+        if status == "completed":
+            lost_query = lost_query.filter(LostItem.trang_thai.in_(["DA_TIM", "Đã tìm thấy"]))
+            found_query = found_query.filter(FoundItem.trang_thai.in_(["DA_TRA", "Đã hoàn trả"]))
+            status_label = "Da_Hoan_Tra"
+        elif status == "pending":
+            lost_query = lost_query.filter(LostItem.trang_thai.in_(["DANG_TIM", "Đang tìm"]))
+            found_query = found_query.filter(FoundItem.trang_thai.in_(["DANG_LUU_GIU", "Đang lưu giữ"]))
+            status_label = "Dang_Luu_Giu"
+
+        time_label = "Toan_Thoi_Gian"
+        if year:
+            lost_query = lost_query.filter(LostItem.ngay_mat.like(f"{year}-%"))
+            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"{year}-%"))
+            time_label = f"Nam_{year}"
+
+        if month:
+            m_str = f"{int(month):02d}"
+            lost_query = lost_query.filter(LostItem.ngay_mat.like(f"%-{m_str}-%"))
+            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"%-{m_str}-%"))
+            time_label = f"Thang_{m_str}_{year if year else ''}".strip("_")
+
+        lost_items = lost_query.all()
+        found_items = found_query.all()
+
+        lost_data = [{
+            "STT": i + 1,
+            "Tên đồ vật": item.ten_do,
+            "Loại đồ": item.loai_do,
+            "Màu sắc": item.mau_sac,
+            "Nơi mất": item.noi_mat,
+            "Ngày mất": item.ngay_mat,
+            "Trạng thái": "Đã tìm thấy" if item.trang_thai in ["DA_TIM", "Đã tìm thấy"] else "Đang tìm"
+        } for i, item in enumerate(lost_items)]
+
+        found_data = [{
+            "STT": i + 1,
+            "Tên đồ vật": item.ten_do,
+            "Loại đồ": item.loai_do,
+            "Màu sắc": item.mau_sac,
+            "Nơi nhặt": item.noi_nhat,
+            "Ngày nhặt": item.ngay_nhat,
+            "Trạng thái": "Đã hoàn trả" if item.trang_thai in ["DA_TRA", "Đã hoàn trả"] else "Đang lưu giữ"
+        } for i, item in enumerate(found_items)]
+
+        df_lost = pd.DataFrame(lost_data)
+        df_found = pd.DataFrame(found_data)
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_lost.to_excel(writer, sheet_name="Đồ báo mất", index=False)
+            df_found.to_excel(writer, sheet_name="Đồ báo nhặt", index=False)
+        
+        output.seek(0)
+
+        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"BaoCao_DoThatLac_{status_label}_{time_label}_{now_str}.xlsx"
+
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        print("Lỗi xuất Excel:", e)
+        return "Lỗi xuất Excel", 500
+
+@app.route("/get-pin")
+def get_pin():
+    return jsonify({"pin": get_current_pin()})
+
+@app.route("/change-pin", methods=["GET", "POST"])
+def change_pin():
+    if request.method == "POST":
+        old_pin = request.form.get("old_pin", "").strip()
+        new_pin = request.form.get("new_pin", "").strip()
+        confirm_pin = request.form.get("confirm_pin", "").strip()
+
+        current_pin = get_current_pin()
+
+        if old_pin != current_pin:
+            return render_template("change_pin.html", error="Mã PIN cũ không chính xác!")
+
+        if new_pin != confirm_pin:
+            return render_template("change_pin.html", error="Mã PIN mới và Xác nhận PIN không trùng khớp!")
+
+        if len(new_pin) < 4:
+            return render_template("change_pin.html", error="Mã PIN mới phải có ít nhất 4 ký tự!")
+
+        if save_new_pin(new_pin):
+            return render_template("change_pin.html", success=f"Đổi Mã PIN thành công! Mã PIN mới là: {new_pin}")
+        else:
+            return render_template("change_pin.html", error="Lỗi không thể lưu mã PIN mới. Vui lòng thử lại!")
+
+    return render_template("change_pin.html")
+
+if
