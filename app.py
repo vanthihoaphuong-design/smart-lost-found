@@ -46,17 +46,23 @@ elif db_url and db_url.startswith("postgresql://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-from database import db
-db.init_app(app)
+try:
+    from database import db
+    db.init_app(app)
+except Exception as e:
+    print(f"Lỗi Init DB: {e}")
 
-from models.lost_item import LostItem
-from models.found_item import FoundItem
+try:
+    from models.lost_item import LostItem
+    from models.found_item import FoundItem
+except Exception as e:
+    print(f"Lỗi Import Models: {e}")
 
 with app.app_context():
     try:
         db.create_all()
     except Exception as e:
-        print(f"Lỗi DB: {e}")
+        print(f"Lỗi Create DB All: {e}")
 
 FEATURE_CACHE = {}
 
@@ -311,20 +317,23 @@ def lost():
                 filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
                 file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
         
-        item = LostItem(
-            ten_do=request.form.get("ten_do", ""),
-            loai_do=request.form.get("loai_do", ""),
-            mau_sac=request.form.get("mau_sac", ""),
-            noi_mat=request.form.get("noi_mat", ""),
-            ngay_mat=request.form.get("ngay_mat", ""),
-            hinh_anh=filename,
-            trang_thai="DANG_TIM"
-        )
         try:
+            item = LostItem(
+                ten_do=request.form.get("ten_do", ""),
+                loai_do=request.form.get("loai_do", ""),
+                mau_sac=request.form.get("mau_sac", ""),
+                noi_mat=request.form.get("noi_mat", ""),
+                ngay_mat=request.form.get("ngay_mat", ""),
+                hinh_anh=filename,
+                trang_thai="DANG_TIM"
+            )
             db.session.add(item)
             db.session.commit()
         except Exception as e:
-            db.session.rollback()
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
         return redirect(url_for("list_items"))
     return render_template("lost_form.html")
 
@@ -341,20 +350,23 @@ def found():
                 filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
                 file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
 
-        item = FoundItem(
-            ten_do=request.form.get("ten_do", ""),
-            loai_do=request.form.get("loai_do", ""),
-            mau_sac=request.form.get("mau_sac", ""),
-            noi_nhat=request.form.get("noi_nhat", ""),
-            ngay_nhat=request.form.get("ngay_nhat", ""),
-            hinh_anh=filename,
-            trang_thai="DANG_LUU_GIU"
-        )
         try:
+            item = FoundItem(
+                ten_do=request.form.get("ten_do", ""),
+                loai_do=request.form.get("loai_do", ""),
+                mau_sac=request.form.get("mau_sac", ""),
+                noi_nhat=request.form.get("noi_nhat", ""),
+                ngay_nhat=request.form.get("ngay_nhat", ""),
+                hinh_anh=filename,
+                trang_thai="DANG_LUU_GIU"
+            )
             db.session.add(item)
             db.session.commit()
         except Exception as e:
-            db.session.rollback()
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
         return redirect(url_for("found_list"))
     return render_template("found_form.html")
 
@@ -388,42 +400,42 @@ def search():
     color = request.args.get("color", "").strip()
     status = request.args.get("status", "").strip()
 
-    lost_query = LostItem.query
-    if keyword:
-        lost_query = lost_query.filter(LostItem.ten_do.ilike(f"%{keyword}%"))
-    if category:
-        lost_query = lost_query.filter(LostItem.loai_do == category)
-    if location:
-        lost_query = lost_query.filter(LostItem.noi_mat == location)
-    if color:
-        lost_query = lost_query.filter(LostItem.mau_sac.ilike(f"%{color}%"))
-
-    if status in ("DANG_TIM", "DA_TIM"):
-        lost_query = lost_query.filter(LostItem.trang_thai == status)
-    elif status in ("DANG_LUU_GIU", "DA_TRA"):
-        lost_query = lost_query.filter(LostItem.id == -1)
-
     try:
+        lost_query = LostItem.query
+        if keyword:
+            lost_query = lost_query.filter(LostItem.ten_do.ilike(f"%{keyword}%"))
+        if category:
+            lost_query = lost_query.filter(LostItem.loai_do == category)
+        if location:
+            lost_query = lost_query.filter(LostItem.noi_mat == location)
+        if color:
+            lost_query = lost_query.filter(LostItem.mau_sac.ilike(f"%{color}%"))
+
+        if status in ("DANG_TIM", "DA_TIM"):
+            lost_query = lost_query.filter(LostItem.trang_thai == status)
+        elif status in ("DANG_LUU_GIU", "DA_TRA"):
+            lost_query = lost_query.filter(LostItem.id == -1)
+
         lost_items = lost_query.order_by(LostItem.id.desc()).all()
     except Exception:
         lost_items = []
 
-    found_query = FoundItem.query
-    if keyword:
-        found_query = found_query.filter(FoundItem.ten_do.ilike(f"%{keyword}%"))
-    if category:
-        found_query = found_query.filter(FoundItem.loai_do == category)
-    if location:
-        found_query = found_query.filter(FoundItem.noi_nhat == location)
-    if color:
-        found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
-
-    if status in ("DANG_LUU_GIU", "DA_TRA"):
-        found_query = found_query.filter(FoundItem.trang_thai == status)
-    elif status in ("DANG_TIM", "DA_TIM"):
-        found_query = found_query.filter(FoundItem.id == -1)
-
     try:
+        found_query = FoundItem.query
+        if keyword:
+            found_query = found_query.filter(FoundItem.ten_do.ilike(f"%{keyword}%"))
+        if category:
+            found_query = found_query.filter(FoundItem.loai_do == category)
+        if location:
+            found_query = found_query.filter(FoundItem.noi_nhat == location)
+        if color:
+            found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
+
+        if status in ("DANG_LUU_GIU", "DA_TRA"):
+            found_query = found_query.filter(FoundItem.trang_thai == status)
+        elif status in ("DANG_TIM", "DA_TIM"):
+            found_query = found_query.filter(FoundItem.id == -1)
+
         found_items = found_query.order_by(FoundItem.id.desc()).all()
     except Exception:
         found_items = []
@@ -448,13 +460,20 @@ def delete_item(item_id):
         db.session.delete(item)
         db.session.commit()
     except Exception:
-        db.session.rollback()
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
     return redirect(url_for("list_items"))
 
 @app.route("/edit-lost/<int:item_id>", methods=["GET", "POST"])
 @app.route("/edit/<int:item_id>", methods=["GET", "POST"])
 def edit_lost(item_id):
-    item = LostItem.query.get_or_404(item_id)
+    try:
+        item = LostItem.query.get_or_404(item_id)
+    except Exception:
+        return redirect(url_for("list_items"))
+
     if request.method == "POST":
         item.ten_do = request.form.get("ten_do")
         item.loai_do = request.form.get("loai_do")
@@ -480,7 +499,11 @@ def edit_lost(item_id):
 
 @app.route("/edit-found/<int:item_id>", methods=["GET", "POST"])
 def edit_found(item_id):
-    item = FoundItem.query.get_or_404(item_id)
+    try:
+        item = FoundItem.query.get_or_404(item_id)
+    except Exception:
+        return redirect(url_for("found_list"))
+
     if request.method == "POST":
         item.ten_do = request.form.get("ten_do")
         item.loai_do = request.form.get("loai_do")
@@ -566,7 +589,10 @@ def found_return(id):
         item.thoi_diem_tra = now_vn
         db.session.commit()
     except Exception:
-        db.session.rollback()
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
     return redirect(url_for("found_list"))
 
 @app.route("/match")
@@ -682,8 +708,11 @@ def match_items():
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
 def teacher_check(lost_id, found_id):
-    lost = LostItem.query.get_or_404(lost_id)
-    found = FoundItem.query.get_or_404(found_id)
+    try:
+        lost = LostItem.query.get_or_404(lost_id)
+        found = FoundItem.query.get_or_404(found_id)
+    except Exception:
+        return redirect(url_for("match_items"))
 
     has1 = check_real_image(lost.hinh_anh)
     has2 = check_real_image(found.hinh_anh)
@@ -772,7 +801,10 @@ def confirm_return(lost_id, found_id):
 
         db.session.commit()
     except Exception:
-        db.session.rollback()
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
 
     return """
     <script>
@@ -888,4 +920,5 @@ def change_pin():
 
     return render_template("change_pin.html")
 
-if
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
