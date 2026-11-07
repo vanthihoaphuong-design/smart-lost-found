@@ -25,7 +25,7 @@
             <tr>
                 <!-- Đồ bị mất -->
                 <td class="text-center p-3">
-                    {% if m.lost.hinh_anh %}
+                    {% if m.lost.hinh_anh and m.lost.hinh_anh not in ['', 'None', 'null', 'Chưa có ảnh', 'chua co anh'] %}
                         {% set lost_img = m.lost.hinh_anh if m.lost.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.lost.hinh_anh) %}
                         <div class="d-flex justify-content-center mb-2">
                             <img src="{{ lost_img }}" 
@@ -36,7 +36,7 @@
                                  onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
                         </div>
                     {% else %}
-                        <div class="p-3 bg-light rounded text-muted mb-2 small">Chưa có ảnh</div>
+                        <div class="p-3 bg-light rounded text-muted mb-2 small border d-flex align-items-center justify-content-center" style="height: 110px;">Chưa có ảnh</div>
                     {% endif %}
                     <h5 class="fw-bold mb-1">{{ m.lost.ten_do }}</h5>
                     <span class="badge bg-danger mb-1">{{ m.lost.loai_do }}</span><br>
@@ -48,7 +48,7 @@
 
                 <!-- Đồ nhặt được -->
                 <td class="text-center p-3">
-                    {% if m.found.hinh_anh %}
+                    {% if m.found.hinh_anh and m.found.hinh_anh not in ['', 'None', 'null', 'Chưa có ảnh', 'chua co anh'] %}
                         {% set found_img = m.found.hinh_anh if m.found.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.found.hinh_anh) %}
                         <div class="d-flex justify-content-center mb-2">
                             <img src="{{ found_img }}" 
@@ -59,7 +59,7 @@
                                  onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
                         </div>
                     {% else %}
-                        <div class="p-3 bg-light rounded text-muted mb-2 small">Chưa có ảnh</div>
+                        <div class="p-3 bg-light rounded text-muted mb-2 small border d-flex align-items-center justify-content-center" style="height: 110px;">Chưa có ảnh</div>
                     {% endif %}
                     <h5 class="fw-bold mb-1">{{ m.found.ten_do }}</h5>
                     <span class="badge bg-success mb-1">{{ m.found.loai_do }}</span><br>
@@ -76,19 +76,19 @@
 
                     <div class="bg-light p-2 rounded text-start d-inline-block w-100 mb-2 border" style="max-width: 240px;">
                         <div class="d-flex justify-content-between small mb-1">
-                            <span>🖼️ Hình ảnh</span><strong>{{ m.details.hinh_anh }}/50</strong>
+                            <span>🖼️ Hình ảnh</span><strong>{{ m.score_image }}/50</strong>
                         </div>
                         <div class="d-flex justify-content-between small mb-1">
-                            <span>📝 Tên đồ</span><strong>{{ m.details.ten_do }}/15</strong>
+                            <span>📝 Tên đồ</span><strong>{{ m.score_name }}/15</strong>
                         </div>
                         <div class="d-flex justify-content-between small mb-1">
-                            <span>🎨 Màu sắc</span><strong>{{ m.details.mau_sac }}/15</strong>
+                            <span>🎨 Màu sắc</span><strong>{{ m.score_color }}/15</strong>
                         </div>
                         <div class="d-flex justify-content-between small mb-1">
-                            <span>📍 Vị trí</span><strong>{{ m.details.vi_tri }}/10</strong>
+                            <span>📍 Vị trí</span><strong>{{ m.score_location }}/10</strong>
                         </div>
                         <div class="d-flex justify-content-between small">
-                            <span>📅 Ngày</span><strong>{{ m.details.ngay }}/10</strong>
+                            <span>📅 Ngày</span><strong>{{ m.score_date }}/10</strong>
                         </div>
                     </div>
 
@@ -115,7 +115,7 @@
 </div>
 {% endif %}
 
-<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT CHUẨN 100% -->
+<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT -->
 <div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
