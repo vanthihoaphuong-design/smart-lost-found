@@ -200,12 +200,10 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
         except Exception:
             color_corr = 0.0
 
-        # Tính tỷ lệ khung hình (Shape ratio)
         ar1 = features1.get("aspect_ratio", 1.0)
         ar2 = features2.get("aspect_ratio", 1.0)
         shape_diff = abs(ar1 - ar2)
 
-        # Tính điểm
         if good_count >= 12:
             orb_pts = 38
         elif good_count >= 8:
@@ -215,7 +213,6 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
         else:
             orb_pts = 8
 
-        # Khóa trần điểm nếu khung hình quá khác nhau (ví dụ: Bút thắt đứng vs Quyển sách vuông)
         if shape_diff > 0.4 and good_count < 6:
             total_points = min(orb_pts + int(color_corr * 3), 8)
         else:
@@ -564,6 +561,15 @@ def found_return(id):
         db.session.rollback()
     return redirect(url_for("found_list"))
 
+def check_real_image(img_path):
+    if not img_path:
+        return False
+    str_path = str(img_path).strip().lower()
+    invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
+    if str_path in invalid_imgs:
+        return False
+    return True
+
 @app.route("/match")
 def match_items():
     matches = []
@@ -573,20 +579,13 @@ def match_items():
     except Exception:
         lost_items, found_items = [], []
 
-    invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
-
     for lost in lost_items:
         for found in found_items:
-            img1_str = str(lost.hinh_anh).strip().lower() if lost.hinh_anh else ""
-            img2_str = str(found.hinh_anh).strip().lower() if found.hinh_anh else ""
+            has1 = check_real_image(lost.hinh_anh)
+            has2 = check_real_image(found.hinh_anh)
 
-            has_real_images = bool(
-                img1_str and img2_str 
-                and img1_str not in invalid_imgs 
-                and img2_str not in invalid_imgs
-            )
-
-            if has_real_images:
+            # CHỈ TÍNH ĐIỂM HÌNH ẢNH KHI CẢ 2 BÀI ĐỀU CÓ ẢNH THỰC TẾ
+            if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
             else:
                 anh_score, image_ratio = 0, 0.0
@@ -594,8 +593,8 @@ def match_items():
             ten_sim = similarity(lost.ten_do, found.ten_do)
             ten_score = int(ten_sim * 15)
 
-            # BÙ ĐIỂM HÌNH ẢNH CHO BÚT BI NẾU TÊN ĐỒ GIỐNG NHAU (như Bút bi vs Bút)
-            if ten_sim >= 0.70 and anh_score < 25:
+            # NẾU CẢ 2 ĐỀU CÓ ẢNH THỰC TẾ + TÊN GIỐNG NHAU -> BÙ ĐIỂM HÌNH ẢNH NẾU OpenCV SO KHÓ
+            if has1 and has2 and ten_sim >= 0.70 and anh_score < 25:
                 anh_score = 30
                 image_ratio = 0.60
 
@@ -603,7 +602,7 @@ def match_items():
             if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "" and found.mau_sac.strip() != "":
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
 
-            if anh_score >= 35 and mau_score < 15:
+            if has1 and has2 and anh_score >= 35 and mau_score < 15:
                 mau_score = 15
 
             vi_tri_score = 0
@@ -618,14 +617,13 @@ def match_items():
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
-            # ÉP TỔNG ĐIỂM XUỐNG THẤP NẾU KHÁC TÊN VÀ ẢNH KHÔNG ĐỦ GIỐNG (như Bút bi vs Sách)
             if ten_sim < 0.25 and anh_score < 25:
                 score = min(score, 32)
 
             image_confidence = int(min(100, image_ratio * 100))
 
             reasons = []
-            if has_real_images:
+            if has1 and has2:
                 if anh_score >= 35:
                     reasons.append("Hình ảnh rất giống")
                 elif anh_score >= 15:
@@ -690,17 +688,10 @@ def teacher_check(lost_id, found_id):
     lost = LostItem.query.get_or_404(lost_id)
     found = FoundItem.query.get_or_404(found_id)
 
-    invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
-    img1_str = str(lost.hinh_anh).strip().lower() if lost.hinh_anh else ""
-    img2_str = str(found.hinh_anh).strip().lower() if found.hinh_anh else ""
+    has1 = check_real_image(lost.hinh_anh)
+    has2 = check_real_image(found.hinh_anh)
 
-    has_real_images = bool(
-        img1_str and img2_str 
-        and img1_str not in invalid_imgs 
-        and img2_str not in invalid_imgs
-    )
-
-    if has_real_images:
+    if has1 and has2:
         anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
     else:
         anh_score, image_ratio = 0, 0.0
@@ -708,7 +699,7 @@ def teacher_check(lost_id, found_id):
     ten_sim = similarity(lost.ten_do, found.ten_do)
     ten_score = int(ten_sim * 15)
 
-    if ten_sim >= 0.70 and anh_score < 25:
+    if has1 and has2 and ten_sim >= 0.70 and anh_score < 25:
         anh_score = 30
         image_ratio = 0.60
 
@@ -716,7 +707,7 @@ def teacher_check(lost_id, found_id):
     if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "" and found.mau_sac.strip() != "":
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
 
-    if anh_score >= 35 and mau_score < 15:
+    if has1 and has2 and anh_score >= 35 and mau_score < 15:
         mau_score = 15
 
     vi_tri_score = 0
@@ -744,10 +735,10 @@ def teacher_check(lost_id, found_id):
         ket_luan = "🔴 Khả năng trùng khớp thấp"
 
     image_warning = None
-    if has_real_images and image_ratio < 0.20:
+    if has1 and has2 and image_ratio < 0.20:
         image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
-    elif not has_real_images:
-        image_warning = "⚠️ Bài đăng này không có hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
+    elif not (has1 and has2):
+        image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
 
     return render_template(
         "teacher_check.html",
