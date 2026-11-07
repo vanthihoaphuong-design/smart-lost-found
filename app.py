@@ -68,22 +68,27 @@ def save_feature_cache(img_path, features):
     if img_path:
         FEATURE_CACHE[img_path] = features
 
-def crop_object_from_background(img):
-    """ Tự động tách vật thể khỏi phông nền trơn """
+def extract_foreground_and_mask(img):
+    """ Tách vật thể khỏi nền và trả về (vùng_ảnh_cắt, mask_vật_thể) """
     try:
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, thresh = cv2.threshold(blurred, 240, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        
+        # Otsu thresholding để phát hiện phông nền trắng/trơn
+        _, thresh = cv2.threshold(blurred, 235, 255, cv2.THRESH_BINARY_INV)
+        
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if contours:
             c = max(contours, key=cv2.contourArea)
             x, y, w, h = cv2.boundingRect(c)
             img_area = img.shape[0] * img.shape[1]
-            if (w * h) > (img_area * 0.05):
-                return img[y:y+h, x:x+w]
-        return img
+            if (w * h) > (img_area * 0.03):
+                cropped_img = img[y:y+h, x:x+w]
+                cropped_thresh = thresh[y:y+h, x:x+w]
+                return cropped_img, cropped_thresh
+        return img, thresh
     except Exception:
-        return img
+        return img, None
 
 def calculate_image_features(img_path):
     cached = get_feature_cache(img_path)
@@ -104,40 +109,41 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        # 1. Tách vật thể & Tạo Mask loại bỏ phông nền trơn / nền trắng sáng
-        crop_img = crop_object_from_background(img)
+        # 1. Tách nền chuẩn & resize về 300x300
+        crop_img, object_mask = extract_foreground_and_mask(img)
         crop_img = cv2.resize(crop_img, (300, 300), interpolation=cv2.INTER_AREA)
+        if object_mask is not None:
+            object_mask = cv2.resize(object_mask, (300, 300), interpolation=cv2.INTER_NEAREST)
 
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         
-        # Tạo Mask loại bỏ phông nền sáng/nền trắng trơn
-        _, mask = cv2.threshold(gray, 240, 255, cv2.THRESH_BINARY_INV)
-        if cv2.countNonZero(mask) < (300 * 300 * 0.05): # Nếu mask trống thì lấy toàn bộ
-            mask = None
-
         features = {}
 
-        # 2. ORB trích xuất CHỈ TRÊN VẬT THỂ (áp dụng mask)
+        # 2. ORB Feature Extraction (Giảm nhiễu điểm đặc trưng)
         try:
-            orb = cv2.ORB_create(nfeatures=800, scaleFactor=1.2, nlevels=8)
-            keypoints, descriptors = orb.detectAndCompute(gray, mask=mask)
+            orb = cv2.ORB_create(nfeatures=600, scaleFactor=1.2, nlevels=8)
+            keypoints, descriptors = orb.detectAndCompute(gray, mask=object_mask)
             features["orb_keypoints"] = keypoints
             features["orb_descriptors"] = descriptors
         except Exception:
             features["orb_keypoints"] = []
             features["orb_descriptors"] = None
 
-        # 3. dHash (Băm hình ảnh)
+        # 3. dHash (Chỉ tính trên vùng vật thể đã che phông nền)
         try:
-            resized = cv2.resize(gray, (9, 8), interpolation=cv2.INTER_AREA)
+            if object_mask is not None:
+                masked_gray = cv2.bitwise_and(gray, gray, mask=object_mask)
+            else:
+                masked_gray = gray
+            resized = cv2.resize(masked_gray, (9, 8), interpolation=cv2.INTER_AREA)
             features["dhash"] = (resized[:, 1:] > resized[:, :-1]).flatten()
         except Exception:
             features["dhash"] = None
 
-        # 4. HSV Histogram CHỈ TÍNH VÙNG VẬT THỂ (áp dụng mask)
+        # 4. HSV Color Histogram (Chỉ tính dải màu thuộc vật thể thực sự)
         try:
             hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
-            hist = cv2.calcHist([hsv], [0, 1], mask, [30, 32], [0, 180, 0, 256])
+            hist = cv2.calcHist([hsv], [0, 1], object_mask, [30, 32], [0, 180, 0, 256])
             if hist is not None:
                 cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
             features["hsv_hist"] = hist
@@ -148,344 +154,6 @@ def calculate_image_features(img_path):
         return features
     except Exception:
         return None
-
-@app.route("/")
-def home():
-    return render_template("index.html")
-
-@app.route("/lost", methods=["GET", "POST"])
-def lost():
-    if request.method == "POST":
-        filename = ""
-        file = request.files.get("hinh_anh")
-    
-        if file and file.filename != "":
-            try:
-                res = cloudinary.uploader.upload(file)
-                filename = res.get("secure_url", "")
-            except Exception as e:
-                print(f"Lỗi upload Cloudinary: {e}")
-                original_name = secure_filename(file.filename)
-                filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
-                file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-                file.save(file_path)
-
-            try:
-                calculate_image_features(filename)
-            except Exception:
-                pass
-
-        item = LostItem(
-            ten_do=request.form.get("ten_do", ""),
-            loai_do=request.form.get("loai_do", ""),
-            mau_sac=request.form.get("mau_sac", ""),
-            noi_mat=request.form.get("noi_mat", ""),
-            ngay_mat=request.form.get("ngay_mat", ""),
-            hinh_anh=filename,
-            trang_thai="DANG_TIM"
-        )
-
-        try:
-            db.session.add(item)
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            print(f"Lỗi commit lost: {e}")
-
-        return redirect(url_for("list_items"))
-
-    return render_template("lost_form.html")
-
-@app.route("/found", methods=["GET", "POST"])
-def found():
-    if request.method == "POST":
-        filename = ""
-        file = request.files.get("hinh_anh")
-
-        if file and file.filename != "":
-            try:
-                res = cloudinary.uploader.upload(file)
-                filename = res.get("secure_url", "")
-            except Exception as e:
-                print(f"Lỗi upload Cloudinary: {e}")
-                original_name = secure_filename(file.filename)
-                filename = f"{uuid.uuid4().hex[:8]}_{original_name}"
-                file_path = os.path.join(app.config["UPLOAD_FOLDER"], filename)
-                file.save(file_path)
-
-            try:
-                calculate_image_features(filename)
-            except Exception:
-                pass
-
-        item = FoundItem(
-            ten_do=request.form.get("ten_do", ""),
-            loai_do=request.form.get("loai_do", ""),
-            mau_sac=request.form.get("mau_sac", ""),
-            noi_nhat=request.form.get("noi_nhat", ""),
-            ngay_nhat=request.form.get("ngay_nhat", ""),
-            hinh_anh=filename,
-            trang_thai="DANG_LUU_GIU"
-        )
-
-        try:
-            db.session.add(item)
-            db.session.commit()
-        except Exception as e:
-            db.session.rollback()
-            print(f"Lỗi commit found: {e}")
-
-        return redirect(url_for("found_list"))
-
-    return render_template("found_form.html")
-
-@app.route("/uploads/<filename>")
-def uploaded_file(filename):
-    if filename.startswith("http://") or filename.startswith("https://"):
-        return redirect(filename)
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
-
-@app.route("/lost-list")
-def list_items():
-    try:
-        items = LostItem.query.order_by(LostItem.id.desc()).all()
-    except Exception as e:
-        items = []
-    return render_template("list_items.html", items=items)
-
-@app.route("/found-list")
-def found_list():
-    try:
-        items = FoundItem.query.order_by(FoundItem.id.desc()).all()
-    except Exception as e:
-        items = []
-    return render_template("found_list.html", items=items)
-
-@app.route("/search")
-def search():
-    keyword = request.args.get("keyword", "").strip()
-    category = request.args.get("category", "").strip()
-    location = request.args.get("location", "").strip()
-    color = request.args.get("color", "").strip()
-    status = request.args.get("status", "").strip()
-
-    lost_query = LostItem.query
-    if keyword:
-        lost_query = lost_query.filter(LostItem.ten_do.ilike(f"%{keyword}%"))
-    if category:
-        lost_query = lost_query.filter(LostItem.loai_do == category)
-    if location:
-        lost_query = lost_query.filter(LostItem.noi_mat == location)
-    if color:
-        lost_query = lost_query.filter(LostItem.mau_sac.ilike(f"%{color}%"))
-
-    if status in ("DANG_TIM", "DA_TIM"):
-        lost_query = lost_query.filter(LostItem.trang_thai == status)
-    elif status in ("DANG_LUU_GIU", "DA_TRA"):
-        lost_query = lost_query.filter(LostItem.id == -1)
-
-    try:
-        lost_items = lost_query.order_by(LostItem.id.desc()).all()
-    except Exception:
-        lost_items = []
-
-    found_query = FoundItem.query
-    if keyword:
-        found_query = found_query.filter(FoundItem.ten_do.ilike(f"%{keyword}%"))
-    if category:
-        found_query = found_query.filter(FoundItem.loai_do == category)
-    if location:
-        found_query = found_query.filter(FoundItem.noi_nhat == location)
-    if color:
-        found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
-
-    if status in ("DANG_LUU_GIU", "DA_TRA"):
-        found_query = found_query.filter(FoundItem.trang_thai == status)
-    elif status in ("DANG_TIM", "DA_TIM"):
-        found_query = found_query.filter(FoundItem.id == -1)
-
-    try:
-        found_items = found_query.order_by(FoundItem.id.desc()).all()
-    except Exception:
-        found_items = []
-
-    return render_template(
-        "search.html",
-        items=lost_items,
-        lost_items=lost_items,
-        found_items=found_items,
-        keyword=keyword,
-        category=category,
-        location=location,
-        color=color,
-        status=status
-    )
-
-@app.route("/delete-lost/<int:item_id>")
-@app.route("/delete/<int:item_id>")
-def delete_item(item_id):
-    item = LostItem.query.get_or_404(item_id)
-    db.session.delete(item)
-    db.session.commit()
-    return redirect(url_for("list_items"))
-
-@app.route("/edit-lost/<int:item_id>", methods=["GET", "POST"])
-@app.route("/edit/<int:item_id>", methods=["GET", "POST"])
-def edit_lost(item_id):
-    item = LostItem.query.get_or_404(item_id)
-    if request.method == "POST":
-        item.ten_do = request.form.get("ten_do")
-        item.loai_do = request.form.get("loai_do")
-        item.mau_sac = request.form.get("mau_sac")
-        item.noi_mat = request.form.get("noi_mat")
-        item.ngay_mat = request.form.get("ngay_mat")
-        
-        file = request.files.get("hinh_anh")
-        if file and file.filename != "":
-            try:
-                res = cloudinary.uploader.upload(file)
-                item.hinh_anh = res.get("secure_url", "")
-            except Exception as e:
-                print(f"Lỗi upload Cloudinary: {e}")
-            
-        db.session.commit()
-        return redirect(url_for("list_items"))
-        
-    return render_template("edit_lost.html", item=item, is_lost=True)
-
-@app.route("/edit-found/<int:item_id>", methods=["GET", "POST"])
-def edit_found(item_id):
-    item = FoundItem.query.get_or_404(item_id)
-    if request.method == "POST":
-        item.ten_do = request.form.get("ten_do")
-        item.loai_do = request.form.get("loai_do")
-        item.mau_sac = request.form.get("mau_sac")
-        item.noi_nhat = request.form.get("noi_nhat")
-        item.ngay_nhat = request.form.get("ngay_nhat")
-        
-        file = request.files.get("hinh_anh")
-        if file and file.filename != "":
-            try:
-                res = cloudinary.uploader.upload(file)
-                item.hinh_anh = res.get("secure_url", "")
-            except Exception as e:
-                print(f"Lỗi upload Cloudinary: {e}")
-            
-        db.session.commit()
-        return redirect(url_for("found_list"))
-        
-    return render_template("edit_lost.html", item=item, is_lost=False)
-
-@app.route("/dashboard")
-def dashboard():
-    try:
-        tong_so = LostItem.query.count()
-        all_items = LostItem.query.all()
-    except Exception:
-        tong_so = 0
-        all_items = []
-
-    CATEGORIES_MAP = {
-        "Sách vở / Dụng cụ học tập": ["Sách vở / Dụng cụ học tập", "Sách vở", "Sách", "Vở", "Tập", "Bút", "Thước", "Bóp viết", "Sách Tin học", "Sách tin 11", "Dụng cụ học tập"],
-        "Thiết bị điện tử (Laptop, Điện thoại...)": ["Thiết bị điện tử (Laptop, Điện thoại...)", "Thiết bị điện tử", "Laptop", "Điện thoại", "Máy tính Casio", "Casio", "mouse", "máy tính", "Chuột"],
-        "Trang phục / Phụ kiện (Áo khoác, Ví...)": ["Trang phục / Phụ kiện (Áo khoác, Ví...)", "Trang phục / Phụ kiện", "Áo khoác", "Balo", "Mũ", "Ví", "Vali", "Cặp", "Nón"],
-        "Giấy tờ / Thẻ học sinh": ["Giấy tờ / Thẻ học sinh", "Giấy tờ", "Thẻ học sinh", "Thẻ HS", "Căn cước", "Thẻ"],
-        "Khác": ["Khác", "Bình nước", "Không xác định", "vase", "Khu vực khác"]
-    }
-
-    category_counts = {cat: 0 for cat in CATEGORIES_MAP.keys()}
-
-    for item in all_items:
-        raw_cat = str(item.loai_do).strip() if item.loai_do else "Khác"
-        mapped = False
-        for new_cat, old_list in CATEGORIES_MAP.items():
-            if any(old.lower() in raw_cat.lower() or raw_cat.lower() in old.lower() for old in old_list):
-                category_counts[new_cat] += 1
-                mapped = True
-                break
-        if not mapped:
-            category_counts["Khác"] += 1
-
-    thong_ke = [(cat, count) for cat, count in category_counts.items()]
-    return render_template("dashboard.html", tong_so=tong_so, thong_ke=thong_ke)
-
-@app.route("/heatmap")
-def heatmap():
-    areas = [
-        "Sân trường", "Nhà xe", "Căn tin", "Thư viện", "Sân bóng",
-        "Phòng STEM", "Phòng Tin học 1", "Phòng Tin học 2",
-        "Phòng Văn", "Phòng Sử - Địa", "Phòng Hội trường",
-        "Phòng Đoàn - Đội", "Khu Văn phòng", "Phòng Tâm lý",
-        "6A1", "6A2", "6A3", "7A1", "7A2", "7A3",
-        "8A1", "8A2", "8A3", "9A1", "9A2", "9A3",
-        "10A1", "10A2", "10A3", "11A1", "11A2", "12A1", "12A2"
-    ]
-    try:
-        db_data = db.session.query(LostItem.noi_mat, func.count(LostItem.id)).group_by(LostItem.noi_mat).all()
-        count_dict = dict(db_data)
-    except Exception:
-        count_dict = {}
-
-    data = [(area, count_dict.get(area, 0)) for area in areas]
-    return render_template("heatmap.html", data=data)
-
-@app.route("/found-return/<int:id>")
-def found_return(id):
-    item = FoundItem.query.get_or_404(id)
-    item.trang_thai = "DA_TRA"
-    now_vn = datetime.now(VN_TZ).replace(tzinfo=None)
-    item.thoi_diem_tra = now_vn
-    
-    db.session.commit()
-    return redirect(url_for("found_list"))
-
-def similarity(text1, text2):
-    if not text1 or not text2:
-        return 0.0
-    t1 = str(text1).lower().strip()
-    t2 = str(text2).lower().strip()
-    if t1 == t2:
-        return 1.0
-    
-    stopwords = ["sách", "bài tập", "bút", "cái", "chiếc", "vở", "tập"]
-    w1 = [w for w in t1.split() if w not in stopwords]
-    w2 = [w for w in t2.split() if w not in stopwords]
-    
-    if w1 and w2 and set(w1).isdisjoint(set(w2)):
-        return 0.1
-        
-    if t1 in t2 or t2 in t1:
-        return 0.85
-    return SequenceMatcher(None, t1, t2).ratio()
-
-def parse_date_flexible(date_str):
-    if not date_str:
-        return None
-    d_str = str(date_str).strip()
-    formats = ["%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"]
-    for fmt in formats:
-        try:
-            return datetime.strptime(d_str, fmt)
-        except Exception:
-            pass
-    return None
-
-def date_score(date1, date2):
-    d1 = parse_date_flexible(date1)
-    d2 = parse_date_flexible(date2)
-    if not d1 or not d2:
-        return 0
-    diff = abs((d1 - d2).days)
-    if diff == 0:
-        return 10
-    elif diff == 1:
-        return 8
-    elif diff == 2:
-        return 5
-    elif diff == 3:
-        return 3
-    else:
-        return 0
 
 def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", noi2=""):
     invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
@@ -516,8 +184,8 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
     if features1 is None or features2 is None:
         return 0, 0.0
 
-    # 1. ORB Feature Matching với Lowe's Ratio Test (Nhận diện chính xác dù chụp lệch góc)
-    orb_points = 0
+    # 1. ORB Feature Matching với Lowe's Ratio Test nghiêm ngặt
+    good_count = 0
     try:
         kp1, des1 = features1.get("orb_keypoints", []), features1.get("orb_descriptors")
         kp2, des2 = features2.get("orb_keypoints", []), features2.get("orb_descriptors")
@@ -526,62 +194,62 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
             bf = cv2.BFMatcher(cv2.NORM_HAMMING)
             matches = bf.knnMatch(des1, des2, k=2)
             
-            # Áp dụng Lowe's Ratio Test lọc điểm khớp chuẩn bất chấp góc chụp
+            # Lọc điểm khớp với tỉ lệ Lowe 0.70 (siết chặt loại bỏ nhiễu phông)
             good_matches = []
             for match_pair in matches:
                 if len(match_pair) == 2:
                     m, n = match_pair
-                    if m.distance < 0.75 * n.distance:
+                    if m.distance < 0.70 * n.distance:
                         good_matches.append(m)
-            
             good_count = len(good_matches)
-            
-            if good_count >= 15:
-                orb_points = 40  # Cùng vật thể chụp lệch góc -> Điểm ảnh vọt lên 40đ
-            elif good_count >= 10:
-                orb_points = 32
-            elif good_count >= 6:
-                orb_points = 24
-            elif good_count >= 3:
-                orb_points = 14
-            else:
-                orb_points = 0
     except Exception:
-        orb_points = 0
+        good_count = 0
 
-    # 2. dHash Points (Tối đa 10đ)
-    hash_points = 0
+    # 2. dHash Structural Matching
+    hash_sim = 0.0
     try:
         hash1, hash2 = features1.get("dhash"), features2.get("dhash")
         if hash1 is not None and hash2 is not None:
             hamming_distance = np.count_nonzero(hash1 != hash2)
             hash_sim = 1.0 - (hamming_distance / 64.0)
-            if hash_sim >= 0.80:
-                hash_points = 10
-            elif hash_sim >= 0.70:
-                hash_points = 5
     except Exception:
-        hash_points = 0
+        hash_sim = 0.0
 
-    # 3. HSV Color Points (Tối đa 10đ)
-    color_points = 0
+    # 3. HSV Color Similarity
+    color_corr = 0.0
     try:
         hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
         if hist1 is not None and hist2 is not None:
-            correlation = cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)
-            if orb_points == 0:
-                color_points = int(max(0.0, float(correlation)) * 3)
-            else:
-                color_points = int(max(0.0, float(correlation)) * 10)
+            color_corr = max(0.0, float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)))
     except Exception:
-        color_points = 0
+        color_corr = 0.0
 
-    if orb_points >= 32:
-        total_points = max(orb_points + hash_points, orb_points + color_points)
-    else:
+    # ==================== NGUYÊN LÝ CHẤM ĐIỂM THUẦN XỬ LÝ ẢNH ====================
+    # Nếu số điểm ORB quá ít (< 5 điểm), khẳng định 2 vật thể KHÔNG CÙNG HÌNH DẠNG/MẪU MÃ.
+    # Lúc này màu phông nền hay màu sắc tự nhiên không được phép kéo điểm ảnh lên.
+    if good_count < 5:
+        # Vật thể khác nhau hoàn toàn (ví dụ: Bút bi vs Dây chuyền, Sách vs Laptop)
+        orb_points = 0
+        hash_points = 5 if hash_sim >= 0.85 else 0
+        color_points = int(color_corr * 4)  # Giới hạn màu sắc tối đa 4đ
         total_points = orb_points + hash_points + color_points
+        total_points = min(total_points, 8) # KHÓA TRẦN ĐIỂM ẢNH Ở MỨC TỐI ĐA 8/50Đ
+    else:
+        # Cùng một loại đồ vật (khớp chi tiết ORB thực tế)
+        if good_count >= 18:
+            orb_points = 38
+        elif good_count >= 12:
+            orb_points = 30
+        elif good_count >= 8:
+            orb_points = 22
+        else:
+            orb_points = 14
 
-    total_points = min(50, total_points)
+        hash_points = 7 if hash_sim >= 0.75 else 0
+        color_points = int(color_corr * 5)
+        total_points = orb_points + hash_points + color_points
+        total_points = min(50, total_points)
+
     image_ratio = total_points / 50.0
     return int(total_points), float(image_ratio)
 
