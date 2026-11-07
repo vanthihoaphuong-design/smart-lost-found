@@ -197,7 +197,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
         except Exception:
             color_corr = 0.0
 
-        # NẾU ĐIỂM ORB KHỚP KHÔNG ĐỦ 5 ĐIỂM -> KHÓA ĐIỂM ẢNH TỐI ĐA 8/50Đ (LOẠI BỎ PHÔNG NỀN)
+        # Nếu không đủ 5 điểm ORB khớp thực tế -> Khóa trần điểm hình ảnh tối đa 8/50đ
         if good_count < 5:
             total_points = min(int(color_corr * 4) + (5 if hash_sim >= 0.85 else 0), 8)
         else:
@@ -590,6 +590,11 @@ def match_items():
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+            
+            # SIẾT CHẶT ĐIỂM: Nếu ảnh không khớp (<10đ) và Tên không khớp (<10đ), ép tối đa 35đ
+            if anh_score < 10 and ten_score < 10:
+                score = min(score, 35)
+
             image_confidence = int(min(100, image_ratio * 100))
 
             reasons = []
@@ -693,6 +698,9 @@ def teacher_check(lost_id, found_id):
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+
+    if anh_score < 10 and ten_score < 10:
+        score = min(score, 35)
 
     if score >= 80:
         ket_luan = "🟢 Khả năng trùng khớp cao"
