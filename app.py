@@ -70,8 +70,8 @@ def check_real_image(img_path):
     if not img_path:
         return False
     str_path = str(img_path).strip().lower()
-    invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
-    if str_path in invalid_imgs:
+    invalid_keywords = ["chua co anh", "chưa có ảnh", "no_image", "default", "none", "null"]
+    if any(k in str_path for k in invalid_keywords):
         return False
     return True
 
@@ -609,7 +609,7 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # BẮT BỘC 0 ĐIỂM HÌNH ẢNH NẾU CÓ BÀI THIẾU ẢNH
+            # CHỈ TÍNH ĐIỂM HÌNH ẢNH KHI CẢ 2 BÀI ĐỀU CÓ ẢNH THỰC TẾ HỢP LỆ
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
             else:
@@ -618,7 +618,7 @@ def match_items():
             ten_sim = similarity(lost.ten_do, found.ten_do)
             ten_score = int(ten_sim * 15)
 
-            # CHỈ BÙ ĐIỂM KHI CẢ 2 ĐỀU CÓ ẢNH THỰC TẾ
+            # CHỈ BÙ ĐIỂM NẾU CẢ 2 BÀI ĐỀU CÓ ẢNH THỰC TẾ VÀ TÊN GIỐNG NHAU
             if has1 and has2 and ten_sim >= 0.70 and anh_score < 25:
                 anh_score = 30
                 image_ratio = 0.60
