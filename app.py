@@ -2,7 +2,7 @@ import os
 import io
 import uuid
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from PIL import Image
 import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
@@ -12,9 +12,7 @@ from difflib import SequenceMatcher
 
 import cloudinary
 import cloudinary.uploader
-from datetime import datetime, timezone, timedelta
 
-# Múi giờ Việt Nam
 VN_TZ = timezone(timedelta(hours=7))
 
 try:
@@ -98,13 +96,13 @@ def calculate_image_features(img_path):
 
     try:
         img = None
-        if img_path.startswith("http://") or img_path.startswith("https://"):
+        if str(img_path).startswith("http://") or str(img_path).startswith("https://"):
             import urllib.request
-            req = urllib.request.urlopen(img_path, timeout=5)
+            req = urllib.request.urlopen(str(img_path), timeout=4)
             arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
             img = cv2.imdecode(arr, -1)
         else:
-            p = os.path.join(app.config["UPLOAD_FOLDER"], img_path) if not os.path.isabs(img_path) else img_path
+            p = os.path.join(app.config["UPLOAD_FOLDER"], str(img_path)) if not os.path.isabs(str(img_path)) else str(img_path)
             if os.path.exists(p):
                 img = cv2.imread(p)
 
@@ -112,15 +110,15 @@ def calculate_image_features(img_path):
             return None
 
         crop_img, object_mask = extract_foreground_and_mask(img)
-        crop_img = cv2.resize(crop_img, (250, 250), interpolation=cv2.INTER_AREA)
+        crop_img = cv2.resize(crop_img, (200, 200), interpolation=cv2.INTER_AREA)
         if object_mask is not None:
-            object_mask = cv2.resize(object_mask, (250, 250), interpolation=cv2.INTER_NEAREST)
+            object_mask = cv2.resize(object_mask, (200, 200), interpolation=cv2.INTER_NEAREST)
 
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         features = {}
 
         try:
-            orb = cv2.ORB_create(nfeatures=500)
+            orb = cv2.ORB_create(nfeatures=400)
             kp, des = orb.detectAndCompute(gray, mask=object_mask)
             features["orb_keypoints"] = kp
             features["orb_descriptors"] = des
@@ -199,6 +197,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
         except Exception:
             color_corr = 0.0
 
+        # NẾU ĐIỂM ORB KHỚP KHÔNG ĐỦ 5 ĐIỂM -> KHÓA ĐIỂM ẢNH TỐI ĐA 8/50Đ (LOẠI BỎ PHÔNG NỀN)
         if good_count < 5:
             total_points = min(int(color_corr * 4) + (5 if hash_sim >= 0.85 else 0), 8)
         else:
@@ -243,6 +242,32 @@ def date_score(date1, date2):
     diff = abs((d1 - d2).days)
     return 10 if diff == 0 else (8 if diff == 1 else (5 if diff == 2 else (3 if diff == 3 else 0)))
 
+def get_current_pin():
+    try:
+        with open("config.json", "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return str(data.get("admin_pin", "123456"))
+    except Exception:
+        return "123456"
+
+def save_new_pin(new_pin):
+    try:
+        config_data = {}
+        try:
+            with open("config.json", "r", encoding="utf-8") as f:
+                config_data = json.load(f)
+        except Exception:
+            config_data = {}
+
+        config_data["admin_pin"] = str(new_pin)
+
+        with open("config.json", "w", encoding="utf-8") as f:
+            json.dump(config_data, f, ensure_ascii=False, indent=4)
+        return True
+    except Exception as e:
+        print("Lỗi lưu PIN:", e)
+        return False
+
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -269,8 +294,11 @@ def lost():
             hinh_anh=filename,
             trang_thai="DANG_TIM"
         )
-        db.session.add(item)
-        db.session.commit()
+        try:
+            db.session.add(item)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
         return redirect(url_for("list_items"))
     return render_template("lost_form.html")
 
@@ -296,10 +324,224 @@ def found():
             hinh_anh=filename,
             trang_thai="DANG_LUU_GIU"
         )
-        db.session.add(item)
-        db.session.commit()
+        try:
+            db.session.add(item)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
         return redirect(url_for("found_list"))
     return render_template("found_form.html")
+
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+    if filename.startswith("http://") or filename.startswith("https://"):
+        return redirect(filename)
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+@app.route("/lost-list")
+def list_items():
+    try:
+        items = LostItem.query.order_by(LostItem.id.desc()).all()
+    except Exception:
+        items = []
+    return render_template("list_items.html", items=items)
+
+@app.route("/found-list")
+def found_list():
+    try:
+        items = FoundItem.query.order_by(FoundItem.id.desc()).all()
+    except Exception:
+        items = []
+    return render_template("found_list.html", items=items)
+
+@app.route("/search")
+def search():
+    keyword = request.args.get("keyword", "").strip()
+    category = request.args.get("category", "").strip()
+    location = request.args.get("location", "").strip()
+    color = request.args.get("color", "").strip()
+    status = request.args.get("status", "").strip()
+
+    lost_query = LostItem.query
+    if keyword:
+        lost_query = lost_query.filter(LostItem.ten_do.ilike(f"%{keyword}%"))
+    if category:
+        lost_query = lost_query.filter(LostItem.loai_do == category)
+    if location:
+        lost_query = lost_query.filter(LostItem.noi_mat == location)
+    if color:
+        lost_query = lost_query.filter(LostItem.mau_sac.ilike(f"%{color}%"))
+
+    if status in ("DANG_TIM", "DA_TIM"):
+        lost_query = lost_query.filter(LostItem.trang_thai == status)
+    elif status in ("DANG_LUU_GIU", "DA_TRA"):
+        lost_query = lost_query.filter(LostItem.id == -1)
+
+    try:
+        lost_items = lost_query.order_by(LostItem.id.desc()).all()
+    except Exception:
+        lost_items = []
+
+    found_query = FoundItem.query
+    if keyword:
+        found_query = found_query.filter(FoundItem.ten_do.ilike(f"%{keyword}%"))
+    if category:
+        found_query = found_query.filter(FoundItem.loai_do == category)
+    if location:
+        found_query = found_query.filter(FoundItem.noi_nhat == location)
+    if color:
+        found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
+
+    if status in ("DANG_LUU_GIU", "DA_TRA"):
+        found_query = found_query.filter(FoundItem.trang_thai == status)
+    elif status in ("DANG_TIM", "DA_TIM"):
+        found_query = found_query.filter(FoundItem.id == -1)
+
+    try:
+        found_items = found_query.order_by(FoundItem.id.desc()).all()
+    except Exception:
+        found_items = []
+
+    return render_template(
+        "search.html",
+        items=lost_items,
+        lost_items=lost_items,
+        found_items=found_items,
+        keyword=keyword,
+        category=category,
+        location=location,
+        color=color,
+        status=status
+    )
+
+@app.route("/delete-lost/<int:item_id>")
+@app.route("/delete/<int:item_id>")
+def delete_item(item_id):
+    try:
+        item = LostItem.query.get_or_404(item_id)
+        db.session.delete(item)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return redirect(url_for("list_items"))
+
+@app.route("/edit-lost/<int:item_id>", methods=["GET", "POST"])
+@app.route("/edit/<int:item_id>", methods=["GET", "POST"])
+def edit_lost(item_id):
+    item = LostItem.query.get_or_404(item_id)
+    if request.method == "POST":
+        item.ten_do = request.form.get("ten_do")
+        item.loai_do = request.form.get("loai_do")
+        item.mau_sac = request.form.get("mau_sac")
+        item.noi_mat = request.form.get("noi_mat")
+        item.ngay_mat = request.form.get("ngay_mat")
+        
+        file = request.files.get("hinh_anh")
+        if file and file.filename != "":
+            try:
+                res = cloudinary.uploader.upload(file)
+                item.hinh_anh = res.get("secure_url", "")
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
+            
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return redirect(url_for("list_items"))
+        
+    return render_template("edit_lost.html", item=item, is_lost=True)
+
+@app.route("/edit-found/<int:item_id>", methods=["GET", "POST"])
+def edit_found(item_id):
+    item = FoundItem.query.get_or_404(item_id)
+    if request.method == "POST":
+        item.ten_do = request.form.get("ten_do")
+        item.loai_do = request.form.get("loai_do")
+        item.mau_sac = request.form.get("mau_sac")
+        item.noi_nhat = request.form.get("noi_nhat")
+        item.ngay_nhat = request.form.get("ngay_nhat")
+        
+        file = request.files.get("hinh_anh")
+        if file and file.filename != "":
+            try:
+                res = cloudinary.uploader.upload(file)
+                item.hinh_anh = res.get("secure_url", "")
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
+            
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return redirect(url_for("found_list"))
+        
+    return render_template("edit_lost.html", item=item, is_lost=False)
+
+@app.route("/dashboard")
+def dashboard():
+    try:
+        tong_so = LostItem.query.count()
+        all_items = LostItem.query.all()
+    except Exception:
+        tong_so = 0
+        all_items = []
+
+    CATEGORIES_MAP = {
+        "Sách vở / Dụng cụ học tập": ["Sách vở / Dụng cụ học tập", "Sách vở", "Sách", "Vở", "Tập", "Bút", "Thước", "Bóp viết", "Sách Tin học", "Sách tin 11", "Dụng cụ học tập"],
+        "Thiết bị điện tử (Laptop, Điện thoại...)": ["Thiết bị điện tử (Laptop, Điện thoại...)", "Thiết bị điện tử", "Laptop", "Điện thoại", "Máy tính Casio", "Casio", "mouse", "máy tính", "Chuột"],
+        "Trang phục / Phụ kiện (Áo khoác, Ví...)": ["Trang phục / Phụ kiện (Áo khoác, Ví...)", "Trang phục / Phụ kiện", "Áo khoác", "Balo", "Mũ", "Ví", "Vali", "Cặp", "Nón"],
+        "Giấy tờ / Thẻ học sinh": ["Giấy tờ / Thẻ học sinh", "Giấy tờ", "Thẻ học sinh", "Thẻ HS", "Căn cước", "Thẻ"],
+        "Khác": ["Khác", "Bình nước", "Không xác định", "vase", "Khu vực khác"]
+    }
+
+    category_counts = {cat: 0 for cat in CATEGORIES_MAP.keys()}
+
+    for item in all_items:
+        raw_cat = str(item.loai_do).strip() if item.loai_do else "Khác"
+        mapped = False
+        for new_cat, old_list in CATEGORIES_MAP.items():
+            if any(old.lower() in raw_cat.lower() or raw_cat.lower() in old.lower() for old in old_list):
+                category_counts[new_cat] += 1
+                mapped = True
+                break
+        if not mapped:
+            category_counts["Khác"] += 1
+
+    thong_ke = [(cat, count) for cat, count in category_counts.items()]
+    return render_template("dashboard.html", tong_so=tong_so, thong_ke=thong_ke)
+
+@app.route("/heatmap")
+def heatmap():
+    areas = [
+        "Sân trường", "Nhà xe", "Căn tin", "Thư viện", "Sân bóng",
+        "Phòng STEM", "Phòng Tin học 1", "Phòng Tin học 2",
+        "Phòng Văn", "Phòng Sử - Địa", "Phòng Hội trường",
+        "Phòng Đoàn - Đội", "Khu Văn phòng", "Phòng Tâm lý",
+        "6A1", "6A2", "6A3", "7A1", "7A2", "7A3",
+        "8A1", "8A2", "8A3", "9A1", "9A2", "9A3",
+        "10A1", "10A2", "10A3", "11A1", "11A2", "12A1", "12A2"
+    ]
+    try:
+        db_data = db.session.query(LostItem.noi_mat, func.count(LostItem.id)).group_by(LostItem.noi_mat).all()
+        count_dict = dict(db_data)
+    except Exception:
+        count_dict = {}
+
+    data = [(area, count_dict.get(area, 0)) for area in areas]
+    return render_template("heatmap.html", data=data)
+
+@app.route("/found-return/<int:id>")
+def found_return(id):
+    try:
+        item = FoundItem.query.get_or_404(id)
+        item.trang_thai = "DA_TRA"
+        now_vn = datetime.now(VN_TZ).replace(tzinfo=None)
+        item.thoi_diem_tra = now_vn
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+    return redirect(url_for("found_list"))
 
 @app.route("/match")
 def match_items():
@@ -310,43 +552,313 @@ def match_items():
     except Exception:
         lost_items, found_items = [], []
 
+    invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
+
     for lost in lost_items:
         for found in found_items:
-            anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do)
+            img1_str = str(lost.hinh_anh).strip().lower() if lost.hinh_anh else ""
+            img2_str = str(found.hinh_anh).strip().lower() if found.hinh_anh else ""
+
+            has_real_images = bool(
+                img1_str and img2_str 
+                and img1_str not in invalid_imgs 
+                and img2_str not in invalid_imgs
+            )
+
+            if has_real_images:
+                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
+            else:
+                anh_score, image_ratio = 0, 0.0
+
             ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
-            
+
             mau_score = 0
-            if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "":
+            if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "" and found.mau_sac.strip() != "":
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+
+            if anh_score == 50 and mau_score < 15:
+                mau_score = 15
 
             vi_tri_score = 0
             if lost.noi_mat and found.noi_nhat:
                 vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-                vi_tri_score = 10 if vi_tri > 0.8 else (5 if vi_tri > 0.5 else 0)
+                if vi_tri > 0.8:
+                    vi_tri_score = 10
+                elif vi_tri > 0.5:
+                    vi_tri_score = 5
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-            score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
-            ket_luan = "🟢 Khả năng trùng khớp cao" if score >= 80 else ("🟡 Có khả năng trùng khớp" if score >= 60 else ("🟠 Có một số điểm tương đồng" if score >= 40 else "🔴 Khả năng trùng khớp thấp"))
+            score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+            image_confidence = int(min(100, image_ratio * 100))
+
+            reasons = []
+            if has_real_images:
+                if anh_score >= 35:
+                    reasons.append("Hình ảnh rất giống")
+                elif anh_score >= 15:
+                    reasons.append("Hình ảnh có điểm tương đồng")
+
+            if ten_score >= 10:
+                reasons.append("Tên đồ tương đồng")
+            if mau_score >= 10:
+                reasons.append("Màu sắc tương đồng")
+            if vi_tri_score == 10:
+                reasons.append("Vị trí liên quan")
+            if ngay_score >= 7:
+                reasons.append("Thời gian khớp/gần nhau")
+
+            if score >= 80:
+                ket_luan = "🟢 Khả năng trùng khớp cao"
+            elif score >= 60:
+                ket_luan = "🟡 Có khả năng trùng khớp"
+            elif score >= 40:
+                ket_luan = "🟠 Có một số điểm tương đồng"
+            else:
+                ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+            details = {
+                "hinh_anh": anh_score,
+                "ten_do": ten_score,
+                "mau_sac": mau_score,
+                "vi_tri": vi_tri_score,
+                "ngay": ngay_score,
+                "score_image": anh_score,
+                "score_name": ten_score,
+                "score_color": mau_score,
+                "score_location": vi_tri_score,
+                "score_date": ngay_score,
+                "image_confidence": image_confidence
+            }
 
             matches.append({
-                "lost": lost, "found": found, "score": score, "ket_luan": ket_luan,
-                "score_image": anh_score, "score_name": ten_score, "score_color": mau_score,
-                "score_location": vi_tri_score, "score_date": ngay_score
+                "lost": lost,
+                "found": found,
+                "score": score,
+                "ket_luan": ket_luan,
+                "reason": reasons,
+                "details": details,
+                "score_image": anh_score,
+                "score_name": ten_score,
+                "score_color": mau_score,
+                "score_location": vi_tri_score,
+                "score_date": ngay_score,
+                "hinh_anh": anh_score,
+                "ten_do": ten_score,
+                "mau_sac": mau_score,
+                "vi_tri": vi_tri_score,
+                "ngay": ngay_score
             })
 
     matches.sort(key=lambda x: x["score"], reverse=True)
     return render_template("match.html", matches=matches)
 
-@app.route("/lost-list")
-def list_items():
-    items = LostItem.query.order_by(LostItem.id.desc()).all()
-    return render_template("list_items.html", items=items)
+@app.route("/teacher-check/<int:lost_id>/<int:found_id>")
+def teacher_check(lost_id, found_id):
+    lost = LostItem.query.get_or_404(lost_id)
+    found = FoundItem.query.get_or_404(found_id)
 
-@app.route("/found-list")
-def found_list():
-    items = FoundItem.query.order_by(FoundItem.id.desc()).all()
-    return render_template("found_list.html", items=items)
+    invalid_imgs = ["", "none", "null", "chưa có ảnh", "chua co anh", "no_image.png", "default.jpg"]
+    img1_str = str(lost.hinh_anh).strip().lower() if lost.hinh_anh else ""
+    img2_str = str(found.hinh_anh).strip().lower() if found.hinh_anh else ""
+
+    has_real_images = bool(
+        img1_str and img2_str 
+        and img1_str not in invalid_imgs 
+        and img2_str not in invalid_imgs
+    )
+
+    if has_real_images:
+        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
+    else:
+        anh_score, image_ratio = 0, 0.0
+
+    ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
+
+    mau_score = 0
+    if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "" and found.mau_sac.strip() != "":
+        mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+
+    if anh_score == 50 and mau_score < 15:
+        mau_score = 15
+
+    vi_tri_score = 0
+    if lost.noi_mat and found.noi_nhat:
+        vi_tri = similarity(lost.noi_mat, found.noi_nhat)
+        if vi_tri > 0.8:
+            vi_tri_score = 10
+        elif vi_tri > 0.5:
+            vi_tri_score = 5
+
+    ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+    score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+
+    if score >= 80:
+        ket_luan = "🟢 Khả năng trùng khớp cao"
+    elif score >= 60:
+        ket_luan = "🟡 Có khả năng trùng khớp"
+    elif score >= 40:
+        ket_luan = "🟠 Có một số điểm tương đồng"
+    else:
+        ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+    image_warning = None
+    if has_real_images and image_ratio < 0.20:
+        image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
+    elif not has_real_images:
+        image_warning = "⚠️ Bài đăng này không có hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
+
+    return render_template(
+        "teacher_check.html",
+        lost=lost,
+        found=found,
+        score=score,
+        ket_luan=ket_luan,
+        image_warning=image_warning
+    )
+
+@app.route("/confirm-return/<int:lost_id>/<int:found_id>", methods=["GET", "POST"])
+def confirm_return(lost_id, found_id):
+    pin_code = request.form.get("pin_code", "").strip() if request.method == "POST" else request.args.get("pin_code", "").strip()
+    current_pin = get_current_pin()
+
+    if pin_code != current_pin:
+        return """
+        <script>
+            alert("Ma PIN Giao vien khong chinh xac! Vui long thu lai.");
+            window.history.back();
+        </script>
+        """
+
+    try:
+        lost = LostItem.query.get_or_404(lost_id)
+        found = FoundItem.query.get_or_404(found_id)
+
+        found.trang_thai = "DA_TRA"
+        lost.trang_thai = "DA_TIM"
+        
+        thoi_diem = datetime.now(VN_TZ).replace(tzinfo=None)
+        found.thoi_diem_tra = thoi_diem
+        lost.thoi_diem_tra = thoi_diem
+
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    return """
+    <script>
+        alert("Xác nhận đã trả thành công! Bài báo mất đã chuyển sang trạng thái 'Đã tìm thấy'.");
+        window.location.href = "/lost-list";
+    </script>
+    """
+
+@app.route("/export-excel", methods=["GET"])
+def export_excel():
+    try:
+        status = request.args.get("status", "all")
+        month = request.args.get("month", "")
+        year = request.args.get("year", "")
+
+        lost_query = LostItem.query
+        found_query = FoundItem.query
+
+        status_label = "Tat_Ca"
+        if status == "completed":
+            lost_query = lost_query.filter(LostItem.trang_thai.in_(["DA_TIM", "Đã tìm thấy"]))
+            found_query = found_query.filter(FoundItem.trang_thai.in_(["DA_TRA", "Đã hoàn trả"]))
+            status_label = "Da_Hoan_Tra"
+        elif status == "pending":
+            lost_query = lost_query.filter(LostItem.trang_thai.in_(["DANG_TIM", "Đang tìm"]))
+            found_query = found_query.filter(FoundItem.trang_thai.in_(["DANG_LUU_GIU", "Đang lưu giữ"]))
+            status_label = "Dang_Luu_Giu"
+
+        time_label = "Toan_Thoi_Gian"
+        if year:
+            lost_query = lost_query.filter(LostItem.ngay_mat.like(f"{year}-%"))
+            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"{year}-%"))
+            time_label = f"Nam_{year}"
+
+        if month:
+            m_str = f"{int(month):02d}"
+            lost_query = lost_query.filter(LostItem.ngay_mat.like(f"%-{m_str}-%"))
+            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"%-{m_str}-%"))
+            time_label = f"Thang_{m_str}_{year if year else ''}".strip("_")
+
+        lost_items = lost_query.all()
+        found_items = found_query.all()
+
+        lost_data = [{
+            "STT": i + 1,
+            "Tên đồ vật": item.ten_do,
+            "Loại đồ": item.loai_do,
+            "Màu sắc": item.mau_sac,
+            "Nơi mất": item.noi_mat,
+            "Ngày mất": item.ngay_mat,
+            "Trạng thái": "Đã tìm thấy" if item.trang_thai in ["DA_TIM", "Đã tìm thấy"] else "Đang tìm"
+        } for i, item in enumerate(lost_items)]
+
+        found_data = [{
+            "STT": i + 1,
+            "Tên đồ vật": item.ten_do,
+            "Loại đồ": item.loai_do,
+            "Màu sắc": item.mau_sac,
+            "Nơi nhặt": item.noi_nhat,
+            "Ngày nhặt": item.ngay_nhat,
+            "Trạng thái": "Đã hoàn trả" if item.trang_thai in ["DA_TRA", "Đã hoàn trả"] else "Đang lưu giữ"
+        } for i, item in enumerate(found_items)]
+
+        df_lost = pd.DataFrame(lost_data)
+        df_found = pd.DataFrame(found_data)
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_lost.to_excel(writer, sheet_name="Đồ báo mất", index=False)
+            df_found.to_excel(writer, sheet_name="Đồ báo nhặt", index=False)
+        
+        output.seek(0)
+
+        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"BaoCao_DoThatLac_{status_label}_{time_label}_{now_str}.xlsx"
+
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        print("Lỗi xuất Excel:", e)
+        return "Lỗi xuất Excel", 500
+
+@app.route("/get-pin")
+def get_pin():
+    return jsonify({"pin": get_current_pin()})
+
+@app.route("/change-pin", methods=["GET", "POST"])
+def change_pin():
+    if request.method == "POST":
+        old_pin = request.form.get("old_pin", "").strip()
+        new_pin = request.form.get("new_pin", "").strip()
+        confirm_pin = request.form.get("confirm_pin", "").strip()
+
+        current_pin = get_current_pin()
+
+        if old_pin != current_pin:
+            return render_template("change_pin.html", error="Mã PIN cũ không chính xác!")
+
+        if new_pin != confirm_pin:
+            return render_template("change_pin.html", error="Mã PIN mới và Xác nhận PIN không trùng khớp!")
+
+        if len(new_pin) < 4:
+            return render_template("change_pin.html", error="Mã PIN mới phải có ít nhất 4 ký tự!")
+
+        if save_new_pin(new_pin):
+            return render_template("change_pin.html", success=f"Đổi Mã PIN thành công! Mã PIN mới là: {new_pin}")
+        else:
+            return render_template("change_pin.html", error="Lỗi không thể lưu mã PIN mới. Vui lòng thử lại!")
+
+    return render_template("change_pin.html")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=True)
