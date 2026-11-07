@@ -609,6 +609,7 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
+            # BẮT BỘC 0 ĐIỂM HÌNH ẢNH NẾU CÓ BÀI THIẾU ẢNH
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
             else:
@@ -617,6 +618,7 @@ def match_items():
             ten_sim = similarity(lost.ten_do, found.ten_do)
             ten_score = int(ten_sim * 15)
 
+            # CHỈ BÙ ĐIỂM KHI CẢ 2 ĐỀU CÓ ẢNH THỰC TẾ
             if has1 and has2 and ten_sim >= 0.70 and anh_score < 25:
                 anh_score = 30
                 image_ratio = 0.60
