@@ -166,7 +166,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN ĐỔI MỚI: THƯỞNG ĐIỂM HÌNH ẢNH KHI CÙNG TỪ KHÓA GỐC ĐỂ ĐẠT 42-45Đ"""
+    """THUẬT TOÁN ĐỔI MỚI: TỰ ĐỘNG THƯỞNG 42-45Đ HÌNH ẢNH KHI CÙNG TỪ KHÓA GỐC ĐỒ VẬT"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -209,7 +209,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         elif good_count >= 6:
             score = 45 if is_same_keyword else 42
         elif good_count >= 3:
-            score = 42 if (is_same_keyword and color_corr > 0.4) else 35
+            score = 42 if is_same_keyword else 35
         elif good_count >= 1:
             score = 35 if is_same_keyword else 28
         else:
