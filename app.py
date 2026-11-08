@@ -121,18 +121,22 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        # --- BỔ SUNG AUTO-CROP: TỰ ĐỘNG CẮT NỀN TRẮNG DƯ THỪA ĐỂ QUÉT VẬT THỂ ---
+        # CHỈ CẮT VIỀN NẾU ẢNH CÓ NỀN TRẮNG TÍNH THUẦN (TRÁNH LÀM MẤT NẾT ĐÈN/BÚT/BALO)
         try:
             gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            _, thresh = cv2.threshold(gray_temp, 240, 255, cv2.THRESH_BINARY_INV)
-            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            if contours:
-                c = max(contours, key=cv2.contourArea)
-                x, y, w, h = cv2.boundingRect(c)
-                if w > 15 and h > 15:
-                    img = img[y:y+h, x:x+w]
-        except Exception as crop_err:
-            print(f"Lỗi crop ảnh: {crop_err}")
+            # Kiểm tra nếu các góc ảnh là màu trắng thuần (ảnh studio/catalog)
+            h_img, w_img = gray_temp.shape
+            corner_pixels = [gray_temp[0,0], gray_temp[0, w_img-1], gray_temp[h_img-1, 0], gray_temp[h_img-1, w_img-1]]
+            if sum(c > 235 for c in corner_pixels) >= 3:
+                _, thresh = cv2.threshold(gray_temp, 240, 255, cv2.THRESH_BINARY_INV)
+                contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    c = max(contours, key=cv2.contourArea)
+                    x, y, w, h = cv2.boundingRect(c)
+                    if w > 20 and h > 20:
+                        img = img[y:y+h, x:x+w]
+        except Exception:
+            pass
 
         crop_img = cv2.resize(img, (200, 200), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
@@ -163,7 +167,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename):
-    """THUẬT TOÁN ĐỔI MỚI - CHẤM ĐIỂM HÌNH ẢNH SAU KHÍ CẮT NỀN TRẮNG"""
+    """THUẬT TOÁN ĐỔI MỚI - CHẤM ĐIỂM HÌNH ẢNH CÂN BẰNG NĂNG LỰC NHẬN ĐIỆN"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -188,7 +192,7 @@ def image_score(img1_filename, img2_filename):
                 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                 matches = bf.knnMatch(des1, des2, k=2)
                 for m_pair in matches:
-                    if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
+                    if len(m_pair) == 2 and m_pair[0].distance < 0.78 * m_pair[1].distance:
                         good_count += 1
         except Exception:
             good_count = 0
@@ -201,16 +205,16 @@ def image_score(img1_filename, img2_filename):
         except Exception:
             color_corr = 0.0
 
-        if good_count >= 12:
+        if good_count >= 10:
             score = 50
-        elif good_count >= 8:
+        elif good_count >= 6:
             score = 42
-        elif good_count >= 4:
-            score = 32
-        elif good_count >= 2:
-            score = 22
+        elif good_count >= 3:
+            score = 35
+        elif good_count >= 1:
+            score = 28
         else:
-            score = int(color_corr * 20)
+            score = int(color_corr * 25)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -642,7 +646,7 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # LỚP 2: TÍNH ĐIỂM OPENCV CHUẨN XÁC (ĐÃ TỰ ĐỘNG CẮT NỀN TRẮNG CHỐNG BẦY PHÔNG NỀN)
+            # LỚP 2: TÍNH ĐIỂM OPENCV CHUẨN XÁC
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
