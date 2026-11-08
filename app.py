@@ -2,6 +2,7 @@ import os
 import io
 import uuid
 import json
+import re
 from datetime import datetime, timezone, timedelta
 from PIL import Image
 import pandas as pd
@@ -188,13 +189,13 @@ def image_score(img1_filename, img2_filename):
         if good_count >= 12:
             score = 50
         elif good_count >= 8:
-            score = 42
+            score = 40
         elif good_count >= 4:
-            score = 32
+            score = 30
         elif good_count >= 2:
-            score = 22
+            score = 20
         else:
-            score = int(color_corr * 20)
+            score = int(color_corr * 15)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -202,53 +203,52 @@ def image_score(img1_filename, img2_filename):
         print(f"Lỗi image_score: {e}")
         return 0, 0.0
 
-def get_exact_object_type(text_name):
+def get_core_keyword(text_name):
+    """TRÍCH XUẤT TỪ KHÓA CHÍNH BẢN CHẤT CỦA ĐỒ VẬT (BỎ TỪ PHỤ/MÔ TẢ)"""
+    if not text_name:
+        return ""
     t = str(text_name).lower().strip()
     
-    if any(k in t for k in ["bút", "viết", "bút bi", "bút chì", "bút xóa", "bóp viết"]):
-        return "PEN"
-    if any(k in t for k in ["sách", "vở", "tập", "bài tập", "sgk", "ngữ văn", "toán", "tiếng anh"]):
-        return "BOOK"
-    if any(k in t for k in ["casio", "máy tính bỏ túi", "sạc", "tai nghe", "airpod"]):
-        return "SMALL_ELEC"
-    if any(k in t for k in ["laptop", "máy tính", "ipad", "điện thoại", "phone"]):
-        return "LARGE_ELEC"
-    if any(k in t for k in ["balo", "ba lô", "túi", "túi xách", "cặp", "vali"]):
-        return "BAG"
-    if any(k in t for k in ["ví", "bóp", "ví tiền"]):
-        return "WALLET"
-    if any(k in t for k in ["dây chuyền", "nhẫn", "vòng", "bông tai", "khuyên"]):
-        return "JEWELRY"
-    if any(k in t for k in ["thẻ", "căn cước", "cccd", "giấy tờ", "bằng lái"]):
-        return "CARD"
-    if any(k in t for k in ["bình nước", "bình giữ nhiệt"]):
-        return "BOTTLE"
+    # Danh sách đồng nghĩa chuẩn hóa
+    synonyms_map = {
+        "bút": ["bút", "viết", "bút bi", "bút chì", "bút xóa"],
+        "sách": ["sách", "vở", "tập", "sgk", "bài tập", "ngữ văn", "toán", "tiếng anh", "tin học"],
+        "laptop": ["laptop", "máy tính", "lap", "macbook"],
+        "điện thoại": ["điện thoại", "phone", "iphone", "samsung"],
+        "máy tính casio": ["casio", "máy tính bỏ túi", "máy tính học sinh"],
+        "balo": ["balo", "ba lô", "túi", "túi xách", "cặp", "vali"],
+        "ví": ["ví", "bóp", "ví tiền", "bóp tiền"],
+        "dây chuyền": ["dây chuyền", "vòng cổ"],
+        "nhẫn": ["nhẫn"],
+        "nón": ["nón", "mũ", "nón kết"],
+        "thẻ": ["thẻ", "căn cước", "cccd", "giấy tờ", "thẻ học sinh"],
+        "bình nước": ["bình nước", "bình giữ nhiệt"],
+        "sáo": ["sáo", "sáo trúc"],
+        "đèn": ["đèn", "đèn học", "đèn để bàn"]
+    }
 
-    return "OTHER"
+    for core_key, words in synonyms_map.items():
+        if any(re.search(r'\b' + re.escape(w) + r'\b', t) for w in words):
+            return core_key
+            
+    # Nếu không nằm trong từ điển, lấy từ đầu tiên của tên đồ làm từ khóa chính
+    tokens = t.split()
+    return tokens[0] if tokens else t
 
 def similarity(text1, text2):
     if not text1 or not text2:
         return 0.0
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
     
-    # TRƯỜNG HỢP TÊN TRÙNG NHAU HOÀN TOÀN
     if t1 == t2:
         return 1.0
 
-    synonyms = [
-        {"ví", "bóp", "ví tiền", "bóp tiền"},
-        {"cặp", "balo", "ba lô", "túi"},
-        {"bút", "viết", "bút bi"},
-        {"thẻ", "thẻ học sinh", "thẻ hs"},
-        {"máy tính", "casio", "máy tính bỏ túi"},
-        {"nón", "mũ", "nón kết"}
-    ]
-    
-    for group in synonyms:
-        if t1 in group and t2 in group:
-            return 1.0
-        if any(w in t1 for w in group) and any(w in t2 for w in group):
-            return 0.90
+    k1 = get_core_keyword(t1)
+    k2 = get_core_keyword(t2)
+
+    # Nếu cùng từ khóa gốc (ví dụ "bút bi" vs "bút"), tính độ giống nhau cao
+    if k1 == k2 and k1 != "":
+        return 0.90
 
     if t1 in t2 or t2 in t1:
         return 0.85
@@ -605,19 +605,18 @@ def match_items():
 
     for lost in lost_items:
         for found in found_items:
-            type1 = get_exact_object_type(lost.ten_do)
-            type2 = get_exact_object_type(found.ten_do)
+            key1 = get_core_keyword(lost.ten_do)
+            key2 = get_core_keyword(found.ten_do)
 
-            ten_sim = similarity(lost.ten_do, found.ten_do)
-
-            # LỚP 1: BỎ CẶP LỆCH BẢN CHẤT
-            if type1 != "OTHER" and type2 != "OTHER" and type1 != type2:
+            # ĐIỀU KIỆN TUYỆT ĐỐI: Khác từ khóa đồ vật chính -> Loại bỏ 100%
+            if key1 != key2:
                 continue
 
+            ten_sim = similarity(lost.ten_do, found.ten_do)
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # LỚP 2: TÍNH ĐIỂM HÌNH ẢNH
+            # ĐIỂM HÌNH ẢNH OPENCV
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
@@ -625,18 +624,17 @@ def match_items():
 
             ten_score = int(ten_sim * 15)
 
-            # TÍNH MÀU SẮC CHỈ KHI CÓ THÔNG TIN
+            # MÀU SẮC
             mau_score = 0
             m1 = str(lost.mau_sac or "").strip().lower()
             m2 = str(found.mau_sac or "").strip().lower()
-
             if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
 
+            # VỊ TRÍ
             vi_tri_score = 0
             v1 = str(lost.noi_mat or "").strip().lower()
             v2 = str(found.noi_nhat or "").strip().lower()
-
             if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
                 vi_tri = similarity(lost.noi_mat, found.noi_nhat)
                 if vi_tri > 0.8:
@@ -644,12 +642,13 @@ def match_items():
                 elif vi_tri > 0.5:
                     vi_tri_score = 5
 
+            # NGÀY THÁNG
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
             if not (has1 and has2):
                 anh_score = 0
 
-            # TÍNH ĐIỂM TỔNG
+            # TỔNG ĐIỂM
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
             image_confidence = int(min(100, image_ratio * 100))
