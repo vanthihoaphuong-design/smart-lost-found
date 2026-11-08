@@ -149,7 +149,6 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename):
-    """THUẬT TOÁN TÍNH ĐIỂM HÌNH ẢNH ĐỘC LẬP (0 - 50 ĐIỂM)"""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -205,7 +204,6 @@ def image_score(img1_filename, img2_filename):
         return 0, 0.0
 
 def get_core_keyword(text_name):
-    """TRÍCH XUẤT TỪ KHÓA CHÍNH ĐỂ LỌC BẢN CHẤT ĐỒ VẬT"""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
@@ -616,7 +614,7 @@ def match_items():
             key1 = get_core_keyword(lost.ten_do)
             key2 = get_core_keyword(found.ten_do)
 
-            # LỚP 1: LỌC BẢN CHẤT TỪ KHÓA CHÍNH (KHÁC NHAU -> LOẠI 100%)
+            # LỚP 1: LỌC BẢN CHẤT ĐỒ VẬT (Khác từ khóa gốc -> Chặn lập tức)
             if key1 != key2:
                 continue
 
@@ -624,7 +622,7 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # LỚP 2: TÍNH ĐIỂM HÌNH ẢNH OPENCV ĐỘC LẬP
+            # LỚP 2: TÍNH ĐIỂM OPENCV
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
@@ -632,13 +630,12 @@ def match_items():
 
             ten_score = int(ten_sim * 15)
 
+            # LỚP 3: TÍNH ĐIỂM THÀNH PHẦN (Chuẩn 100% không ép max tổng ảo)
             mau_score = 0
             m1 = str(lost.mau_sac or "").strip().lower()
             m2 = str(found.mau_sac or "").strip().lower()
             if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-            elif ten_sim >= 0.85:
-                mau_score = 12
 
             vi_tri_score = 0
             v1 = str(lost.noi_mat or "").strip().lower()
@@ -655,10 +652,8 @@ def match_items():
             if not (has1 and has2):
                 anh_score = 0
 
-            # LỚP 3: CƠ CHẾ BÙ ĐIỂM THÔNG MINH CHO ĐỒ KHỚP BẢN CHẤT
+            # TỔNG ĐIỂM CHÍNH XÁC NGUYÊN BẢN BẰNG CỘNG 5 THÀNH PHẦN
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-            if ten_sim >= 0.85 and (anh_score >= 20 or mau_score >= 12):
-                score = max(score, 68)
 
             image_confidence = int(min(100, image_ratio * 100))
 
@@ -743,8 +738,6 @@ def teacher_check(lost_id, found_id):
     m2 = str(found.mau_sac or "").strip().lower()
     if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-    elif ten_sim >= 0.85:
-        mau_score = 12
 
     vi_tri_score = 0
     v1 = str(lost.noi_mat or "").strip().lower()
@@ -762,8 +755,6 @@ def teacher_check(lost_id, found_id):
         anh_score = 0
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-    if ten_sim >= 0.85 and (anh_score >= 20 or mau_score >= 12):
-        score = max(score, 68)
 
     if score >= 75:
         ket_luan = "🟢 Khả năng trùng khớp cao"
