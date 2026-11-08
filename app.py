@@ -121,6 +121,7 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
+        # Chỉ crop nền trắng thuần nếu là ảnh studio/catalog
         try:
             gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             h_img, w_img = gray_temp.shape
@@ -220,7 +221,7 @@ def image_score(img1_filename, img2_filename):
         return 0, 0.0
 
 def get_core_keyword(text_name):
-    """TRÍCH XUẤT TỪ KHÓA CHÍNH (KHÓA CỨNG CASIO VS LAPTOP, TÁCH MÔN HỌC)"""
+    """TRÍCH XUẤT TỪ KHÓA CỨNG (KHÓA TÁCH BIỆT CHI TIẾT TỪNG MÔN HỌC & ĐỒ VẬT)"""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
@@ -228,9 +229,9 @@ def get_core_keyword(text_name):
     synonyms_map = {
         "máy tính casio": ["casio", "fx580", "fx 580", "máy tính bỏ túi", "casio580"],
         "laptop": ["laptop", "macbook", "máy tính xách tay"],
-        "sách toán": ["toán", "math", "bài tập toán"],
-        "sách văn": ["ngữ văn", "văn học", "bài tập ngữ văn"],
-        "sách tiếng anh": ["tiếng anh", "english"],
+        "sách toán": ["sách toán", "toán", "math", "bài tập toán"],
+        "sách văn": ["sách văn", "ngữ văn", "văn học", "bài tập ngữ văn"],
+        "sách tiếng anh": ["sách anh", "tiếng anh", "english"],
         "sách tin học": ["tin học", "tin 11", "tin 9", "tin 10"],
         "sách lý": ["vật lý", "lý"],
         "sách hóa": ["hóa học", "hóa"],
@@ -634,7 +635,7 @@ def match_items():
             key1 = get_core_keyword(lost.ten_do)
             key2 = get_core_keyword(found.ten_do)
 
-            # LỚP 1: LỌC BẢN CHẤT CỨNG (Casio vs Laptop -> LOẠI THẲNG)
+            # LỚP 1: LỌC BẢN CHẤT CỨNG (Sách Văn vs Sách Anh -> CHẶN NGAY LẬP TỨC)
             if key1 != key2:
                 continue
 
@@ -642,65 +643,43 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # CƠ CHẾ ĐIỂM LINH HOẠT THEO VIỆC CÓ ẢNH HOẶC KHÔNG ẢNH
+            # LỚP 2: ĐIỂM OPENCV
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
-                
-                if key1 == key2 and key1 != "":
-                    ten_score = 15
-                else:
-                    ten_score = int(ten_sim * 15)
-
-                mau_score = 0
-                m1 = str(lost.mau_sac or "").strip().lower()
-                m2 = str(found.mau_sac or "").strip().lower()
-                if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-                    mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-
-                vi_tri_score = 0
-                v1 = str(lost.noi_mat or "").strip().lower()
-                v2 = str(found.noi_nhat or "").strip().lower()
-                if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-                    vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-                    if vi_tri > 0.8:
-                        vi_tri_score = 10
-                    elif vi_tri > 0.5:
-                        vi_tri_score = 5
-
-                ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-                score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
             else:
-                # THANG ĐIỂM CHUẨN KHI KHÔNG CÓ ẢNH (TỔNG 100Đ): TÊN(45) + MÀU(25) + VỊ TRÍ(15) + NGÀY(15)
                 anh_score, image_ratio = 0, 0.0
-                
-                if key1 == key2 and key1 != "":
-                    ten_score = 45
-                else:
-                    ten_score = int(ten_sim * 45)
 
-                mau_score = 0
-                m1 = str(lost.mau_sac or "").strip().lower()
-                m2 = str(found.mau_sac or "").strip().lower()
-                if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-                    mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 25)
-                elif key1 == key2 and key1 != "":
-                    mau_score = 20 # Bù điểm màu khi rỗng
+            # LỚP 3: CHUẨN HÓA THANG ĐIỂM TỔNG CỐ ĐỊNH 100Đ
+            if key1 == key2 and key1 != "":
+                ten_score = 15
+            else:
+                ten_score = int(ten_sim * 15)
 
-                vi_tri_score = 0
-                v1 = str(lost.noi_mat or "").strip().lower()
-                v2 = str(found.noi_nhat or "").strip().lower()
-                if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-                    vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-                    if vi_tri > 0.8:
-                        vi_tri_score = 15
-                    elif vi_tri > 0.5:
-                        vi_tri_score = 8
+            mau_score = 0
+            m1 = str(lost.mau_sac or "").strip().lower()
+            m2 = str(found.mau_sac or "").strip().lower()
+            if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
+                mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+            elif key1 == key2 and key1 != "":
+                mau_score = 12 # Thưởng màu nếu trùng loại
 
-                ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-                if ngay_score > 0:
-                    ngay_score = int((ngay_score / 10.0) * 15)
+            vi_tri_score = 0
+            v1 = str(lost.noi_mat or "").strip().lower()
+            v2 = str(found.noi_nhat or "").strip().lower()
+            if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
+                vi_tri = similarity(lost.noi_mat, found.noi_nhat)
+                if vi_tri > 0.8:
+                    vi_tri_score = 10
+                elif vi_tri > 0.5:
+                    vi_tri_score = 5
 
-                score = ten_score + mau_score + vi_tri_score + ngay_score
+            ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+            if not (has1 and has2):
+                anh_score = 0
+
+            # ĐẢM BẢO TỔNG BẰNG ĐÚNG PHÉP CỘNG THỰC TẾ
+            score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
             image_confidence = int(min(100, image_ratio * 100))
 
@@ -711,7 +690,7 @@ def match_items():
                 reasons.append("Tên đồ tương đồng")
             if mau_score >= 10:
                 reasons.append("Màu sắc tương đồng")
-            if vi_tri_score >= 8:
+            if vi_tri_score >= 5:
                 reasons.append("Vị trí liên quan")
             if ngay_score >= 6:
                 reasons.append("Thời gian khớp/gần nhau")
@@ -777,53 +756,35 @@ def teacher_check(lost_id, found_id):
 
     if has1 and has2:
         anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
-        ten_score = 15 if (key1 == key2 and key1 != "") else int(similarity(lost.ten_do, found.ten_do) * 15)
-        
-        mau_score = 0
-        m1 = str(lost.mau_sac or "").strip().lower()
-        m2 = str(found.mau_sac or "").strip().lower()
-        if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-            mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-
-        vi_tri_score = 0
-        v1 = str(lost.noi_mat or "").strip().lower()
-        v2 = str(found.noi_nhat or "").strip().lower()
-        if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-            vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-            if vi_tri > 0.8:
-                vi_tri_score = 10
-            elif vi_tri > 0.5:
-                vi_tri_score = 5
-
-        ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-        score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
     else:
         anh_score, image_ratio = 0, 0.0
-        ten_score = 45 if (key1 == key2 and key1 != "") else int(similarity(lost.ten_do, found.ten_do) * 45)
-        
-        mau_score = 0
-        m1 = str(lost.mau_sac or "").strip().lower()
-        m2 = str(found.mau_sac or "").strip().lower()
-        if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-            mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 25)
-        elif key1 == key2 and key1 != "":
-            mau_score = 20
 
-        vi_tri_score = 0
-        v1 = str(lost.noi_mat or "").strip().lower()
-        v2 = str(found.noi_nhat or "").strip().lower()
-        if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-            vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-            if vi_tri > 0.8:
-                vi_tri_score = 15
-            elif vi_tri > 0.5:
-                vi_tri_score = 8
+    ten_score = 15 if (key1 == key2 and key1 != "") else int(similarity(lost.ten_do, found.ten_do) * 15)
+    
+    mau_score = 0
+    m1 = str(lost.mau_sac or "").strip().lower()
+    m2 = str(found.mau_sac or "").strip().lower()
+    if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
+        mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+    elif key1 == key2 and key1 != "":
+        mau_score = 12
 
-        ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-        if ngay_score > 0:
-            ngay_score = int((ngay_score / 10.0) * 15)
+    vi_tri_score = 0
+    v1 = str(lost.noi_mat or "").strip().lower()
+    v2 = str(found.noi_nhat or "").strip().lower()
+    if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
+        vi_tri = similarity(lost.noi_mat, found.noi_nhat)
+        if vi_tri > 0.8:
+            vi_tri_score = 10
+        elif vi_tri > 0.5:
+            vi_tri_score = 5
 
-        score = ten_score + mau_score + vi_tri_score + ngay_score
+    ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+    if not (has1 and has2):
+        anh_score = 0
+
+    score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
     if score >= 75:
         ket_luan = "🟢 Khả năng trùng khớp cao"
