@@ -886,3 +886,51 @@ def export_excel():
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_lost.to_excel(writer, sheet_name="Đồ báo mất", index=False)
+            df_found.to_excel(writer, sheet_name="Đồ báo nhặt", index=False)
+        
+        output.seek(0)
+
+        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"BaoCao_DoThatLac_{status_label}_{time_label}_{now_str}.xlsx"
+
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        print("Lỗi xuất Excel:", e)
+        return "Lỗi xuất Excel", 500
+
+@app.route("/get-pin")
+def get_pin():
+    return jsonify({"pin": get_current_pin()})
+
+@app.route("/change-pin", methods=["GET", "POST"])
+def change_pin():
+    if request.method == "POST":
+        old_pin = request.form.get("old_pin", "").strip()
+        new_pin = request.form.get("new_pin", "").strip()
+        confirm_pin = request.form.get("confirm_pin", "").strip()
+
+        current_pin = get_current_pin()
+
+        if old_pin != current_pin:
+            return render_template("change_pin.html", error="Mã PIN cũ không chính xác!")
+
+        if new_pin != confirm_pin:
+            return render_template("change_pin.html", error="Mã PIN mới và Xác nhận PIN không trùng khớp!")
+
+        if len(new_pin) < 4:
+            return render_template("change_pin.html", error="Mã PIN mới phải có ít nhất 4 ký tự!")
+
+        if save_new_pin(new_pin):
+            return render_template("change_pin.html", success=f"Đổi Mã PIN thành công! Mã PIN mới là: {new_pin}")
+        else:
+            return render_template("change_pin.html", error="Lỗi không thể lưu mã PIN mới. Vui lòng thử lại!")
+
+    return render_template("change_pin.html")
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
