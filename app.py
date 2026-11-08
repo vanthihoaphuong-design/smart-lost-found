@@ -103,20 +103,25 @@ def extract_foreground_and_mask(img):
     try:
         if not HAS_OPENCV or img is None:
             return img, None, 1.0
+        h, w = img.shape[:2]
+        aspect_ratio = float(w) / float(h) if h > 0 else 1.0
+
+        # Làm mịn ảnh nhẹ nhàng để giữ nguyên chi tiết bút bi/vật thể nhỏ
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-        _, thresh = cv2.threshold(blurred, 235, 255, cv2.THRESH_BINARY_INV)
+        blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+        
+        # Nhận diện phông nền mềm mại
+        _, thresh = cv2.threshold(blurred, 245, 255, cv2.THRESH_BINARY_INV)
         
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        aspect_ratio = 1.0
         if contours:
             c = max(contours, key=cv2.contourArea)
-            x, y, w, h = cv2.boundingRect(c)
-            img_area = img.shape[0] * img.shape[1]
-            if h > 0:
-                aspect_ratio = float(w) / float(h)
-            if (w * h) > (img_area * 0.03):
-                return img[y:y+h, x:x+w], thresh[y:y+h, x:x+w], aspect_ratio
+            x, y, cw, ch = cv2.boundingRect(c)
+            img_area = w * h
+            if (cw * ch) > (img_area * 0.02) and ch > 0:
+                aspect_ratio = float(cw) / float(ch)
+                return img[y:y+ch, x:x+cw], thresh[y:y+ch, x:x+cw], aspect_ratio
+
         return img, thresh, aspect_ratio
     except Exception:
         return img, None, 1.0
@@ -133,7 +138,7 @@ def calculate_image_features(img_path):
         img = None
         if str(img_path).startswith("http://") or str(img_path).startswith("https://"):
             import urllib.request
-            req = urllib.request.urlopen(str(img_path), timeout=4)
+            req = urllib.request.urlopen(str(img_path), timeout=5)
             arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
             img = cv2.imdecode(arr, -1)
         else:
@@ -145,34 +150,30 @@ def calculate_image_features(img_path):
             return None
 
         crop_img, object_mask, aspect_ratio = extract_foreground_and_mask(img)
-        crop_img = cv2.resize(crop_img, (200, 200), interpolation=cv2.INTER_AREA)
+        crop_img = cv2.resize(crop_img, (220, 220), interpolation=cv2.INTER_AREA)
         if object_mask is not None:
-            object_mask = cv2.resize(object_mask, (200, 200), interpolation=cv2.INTER_NEAREST)
+            object_mask = cv2.resize(object_mask, (220, 220), interpolation=cv2.INTER_NEAREST)
 
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         features = {"aspect_ratio": aspect_ratio}
 
         try:
-            orb = cv2.ORB_create(nfeatures=500)
-            kp, des = orb.detectAndCompute(gray, mask=object_mask)
+            orb = cv2.ORB_create(nfeatures=1000, scaleFactor=1.2, nlevels=8)
+            kp, des = orb.detectAndCompute(gray, mask=None)
             features["orb_keypoints"] = kp
             features["orb_descriptors"] = des
         except Exception:
             features["orb_keypoints"], features["orb_descriptors"] = [], None
 
         try:
-            if object_mask is not None:
-                masked_gray = cv2.bitwise_and(gray, gray, mask=object_mask)
-            else:
-                masked_gray = gray
-            resized = cv2.resize(masked_gray, (9, 8), interpolation=cv2.INTER_AREA)
+            resized = cv2.resize(gray, (9, 8), interpolation=cv2.INTER_AREA)
             features["dhash"] = (resized[:, 1:] > resized[:, :-1]).flatten()
         except Exception:
             features["dhash"] = None
 
         try:
             hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
-            hist = cv2.calcHist([hsv], [0, 1], object_mask, [30, 32], [0, 180, 0, 256])
+            hist = cv2.calcHist([hsv], [0, 1], None, [30, 32], [0, 180, 0, 256])
             if hist is not None:
                 cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
             features["hsv_hist"] = hist
@@ -210,7 +211,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
                 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                 matches = bf.knnMatch(des1, des2, k=2)
                 for m_pair in matches:
-                    if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
+                    if len(m_pair) == 2 and m_pair[0].distance < 0.78 * m_pair[1].distance:
                         good_count += 1
         except Exception:
             good_count = 0
@@ -235,19 +236,24 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
         ar2 = features2.get("aspect_ratio", 1.0)
         shape_diff = abs(ar1 - ar2)
 
-        if good_count >= 12:
+        # Tính toán thang điểm linh hoạt cho vật thể nhỏ
+        if good_count >= 10:
             orb_pts = 38
-        elif good_count >= 8:
-            orb_pts = 30
-        elif good_count >= 4:
-            orb_pts = 20
+        elif good_count >= 6:
+            orb_pts = 32
+        elif good_count >= 3:
+            orb_pts = 24
         else:
-            orb_pts = 8
+            orb_pts = 12
 
-        if shape_diff > 0.4 and good_count < 6:
-            total_points = min(orb_pts + int(color_corr * 3), 8)
+        if shape_diff > 0.55 and good_count < 4:
+            total_points = min(orb_pts + int(color_corr * 4), 12)
         else:
-            total_points = orb_pts + (7 if hash_sim >= 0.75 else 0) + int(color_corr * 5)
+            total_points = orb_pts + (8 if hash_sim >= 0.70 else 0) + int(color_corr * 7)
+
+        # Bù điểm khi dHash hoặc biểu đồ màu khớp cao
+        if hash_sim >= 0.82 and color_corr >= 0.60:
+            total_points = max(total_points, 35)
 
         total_points = min(50, max(0, total_points))
         return int(total_points), float(total_points / 50.0)
@@ -261,6 +267,20 @@ def similarity(text1, text2):
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
     if t1 == t2:
         return 1.0
+
+    synonyms = [
+        {"ví", "bóp", "ví tiền", "bóp tiền"},
+        {"cặp", "balo", "ba lô", "túi"},
+        {"bút", "viết", "bút bi"},
+        {"thẻ", "thẻ học sinh", "thẻ hs"},
+        {"máy tính", "casio", "máy tính bỏ túi"},
+        {"nón", "mũ", "nón kết"}
+    ]
+    
+    for group in synonyms:
+        if any(w in t1 for w in group) and any(w in t2 for w in group):
+            return 0.90
+
     stopwords = ["sách", "bài tập", "bút", "cái", "chiếc", "vở", "tập"]
     w1 = [w for w in t1.split() if w not in stopwords]
     w2 = [w for w in t2.split() if w not in stopwords]
@@ -634,9 +654,17 @@ def match_items():
             ten_sim = similarity(lost.ten_do, found.ten_do)
             ten_score = int(ten_sim * 15)
 
+            # BÙ ĐIỂM HÌNH ẢNH THÔNG MINH: Nếu Tên trùng khớp cao (ten_sim >= 0.70) và cả 2 đều có ảnh
+            if has1 and has2 and ten_sim >= 0.70 and anh_score < 30:
+                anh_score = 30
+                image_ratio = 0.60
+
             mau_score = 0
             if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "" and found.mau_sac.strip() != "":
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+
+            if has1 and has2 and anh_score >= 30 and mau_score < 12:
+                mau_score = 12
 
             vi_tri_score = 0
             if lost.noi_mat and found.noi_nhat:
@@ -648,12 +676,13 @@ def match_items():
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
+            # ÉP VỀ 0 NẾU THỰC SỰ THIẾU ẢNH
             if not (has1 and has2):
                 anh_score = 0
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
-            if ten_sim < 0.25:
+            if ten_sim < 0.25 and anh_score < 25:
                 score = min(score, 32)
 
             image_confidence = int(min(100, image_ratio * 100))
@@ -738,9 +767,16 @@ def teacher_check(lost_id, found_id):
     ten_sim = similarity(lost.ten_do, found.ten_do)
     ten_score = int(ten_sim * 15)
 
+    if has1 and has2 and ten_sim >= 0.70 and anh_score < 30:
+        anh_score = 30
+        image_ratio = 0.60
+
     mau_score = 0
     if lost.mau_sac and found.mau_sac and lost.mau_sac.strip() != "" and found.mau_sac.strip() != "":
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+
+    if has1 and has2 and anh_score >= 30 and mau_score < 12:
+        mau_score = 12
 
     vi_tri_score = 0
     if lost.noi_mat and found.noi_nhat:
@@ -757,7 +793,7 @@ def teacher_check(lost_id, found_id):
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
-    if ten_sim < 0.25:
+    if ten_sim < 0.25 and anh_score < 25:
         score = min(score, 32)
 
     if score >= 75:
