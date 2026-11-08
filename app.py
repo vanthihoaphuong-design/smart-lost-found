@@ -125,7 +125,7 @@ def calculate_image_features(img_path):
         features = {}
 
         try:
-            orb = cv2.ORB_create(nfeatures=500)
+            orb = cv2.ORB_create(nfeatures=600)
             kp, des = orb.detectAndCompute(gray, None)
             features["orb_keypoints"] = kp
             features["orb_descriptors"] = des
@@ -172,7 +172,7 @@ def image_score(img1_filename, img2_filename):
                 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                 matches = bf.knnMatch(des1, des2, k=2)
                 for m_pair in matches:
-                    if len(m_pair) == 2 and m_pair[0].distance < 0.70 * m_pair[1].distance:
+                    if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
                         good_count += 1
         except Exception:
             good_count = 0
@@ -185,16 +185,16 @@ def image_score(img1_filename, img2_filename):
         except Exception:
             color_corr = 0.0
 
-        if good_count >= 15:
+        if good_count >= 12:
             score = 50
-        elif good_count >= 10:
-            score = 40
-        elif good_count >= 5:
-            score = 30
+        elif good_count >= 8:
+            score = 42
+        elif good_count >= 4:
+            score = 32
         elif good_count >= 2:
-            score = 20
+            score = 22
         else:
-            score = int(color_corr * 15)
+            score = int(color_corr * 20)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -203,33 +203,26 @@ def image_score(img1_filename, img2_filename):
         return 0, 0.0
 
 def get_exact_object_type(text_name):
-    """BỘ LỌC PHÂN LOẠI CON (SUB-CATEGORY) CỰC KỲ CHÍNH XÁC"""
     t = str(text_name).lower().strip()
     
-    # 1. Nhóm Bút / Viết
     if any(k in t for k in ["bút", "viết", "bút bi", "bút chì", "bút xóa", "bóp viết"]):
         return "PEN"
-    # 2. Nhóm Sách / Vở / Tập
     if any(k in t for k in ["sách", "vở", "tập", "bài tập", "sgk", "ngữ văn", "toán", "tiếng anh"]):
         return "BOOK"
-    # 3. Nhóm Thiết bị điện tử nhỏ (Máy tính bỏ túi, Sạc, Tai nghe)
     if any(k in t for k in ["casio", "máy tính bỏ túi", "sạc", "tai nghe", "airpod"]):
         return "SMALL_ELEC"
-    # 4. Nhóm Laptop / Máy tính lớn / iPad
     if any(k in t for k in ["laptop", "máy tính", "ipad", "điện thoại", "phone"]):
         return "LARGE_ELEC"
-    # 5. Nhóm Balo / Túi xách / Cặp
     if any(k in t for k in ["balo", "ba lô", "túi", "túi xách", "cặp", "vali"]):
         return "BAG"
-    # 6. Nhóm Ví / Bóp tiền
     if any(k in t for k in ["ví", "bóp", "ví tiền"]):
         return "WALLET"
-    # 7. Nhóm Phụ kiện Trang sức
     if any(k in t for k in ["dây chuyền", "nhẫn", "vòng", "bông tai", "khuyên"]):
         return "JEWELRY"
-    # 8. Nhóm Giấy tờ / Thẻ
     if any(k in t for k in ["thẻ", "căn cước", "cccd", "giấy tờ", "bằng lái"]):
         return "CARD"
+    if any(k in t for k in ["bình nước", "bình giữ nhiệt"]):
+        return "BOTTLE"
 
     return "OTHER"
 
@@ -237,6 +230,8 @@ def similarity(text1, text2):
     if not text1 or not text2:
         return 0.0
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
+    
+    # TRƯỜNG HỢP TÊN TRÙNG NHAU HOÀN TOÀN
     if t1 == t2:
         return 1.0
 
@@ -250,18 +245,13 @@ def similarity(text1, text2):
     ]
     
     for group in synonyms:
+        if t1 in group and t2 in group:
+            return 1.0
         if any(w in t1 for w in group) and any(w in t2 for w in group):
             return 0.90
 
-    stopwords = ["sách", "bài tập", "bút", "cái", "chiếc", "vở", "tập"]
-    w1 = [w for w in t1.split() if w not in stopwords]
-    w2 = [w for w in t2.split() if w not in stopwords]
-    
     if t1 in t2 or t2 in t1:
         return 0.85
-        
-    if w1 and w2 and set(w1).isdisjoint(set(w2)):
-        return 0.1
 
     return SequenceMatcher(None, t1, t2).ratio()
 
@@ -620,13 +610,14 @@ def match_items():
 
             ten_sim = similarity(lost.ten_do, found.ten_do)
 
-            # ĐIỀU KIỆN TIÊN QUYẾT: Khác bản chất đồ vật -> Bỏ qua lập tức
+            # LỚP 1: BỎ CẶP LỆCH BẢN CHẤT
             if type1 != "OTHER" and type2 != "OTHER" and type1 != type2:
                 continue
 
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
+            # LỚP 2: TÍNH ĐIỂM HÌNH ẢNH
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
@@ -634,12 +625,19 @@ def match_items():
 
             ten_score = int(ten_sim * 15)
 
+            # TÍNH MÀU SẮC CHỈ KHI CÓ THÔNG TIN
             mau_score = 0
-            if lost.mau_sac and found.mau_sac and str(lost.mau_sac).strip().lower() not in ["none", ""] and str(found.mau_sac).strip().lower() not in ["none", ""]:
+            m1 = str(lost.mau_sac or "").strip().lower()
+            m2 = str(found.mau_sac or "").strip().lower()
+
+            if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
 
             vi_tri_score = 0
-            if lost.noi_mat and found.noi_nhat and str(lost.noi_mat).strip().lower() not in ["none", ""] and str(found.noi_nhat).strip().lower() not in ["none", ""]:
+            v1 = str(lost.noi_mat or "").strip().lower()
+            v2 = str(found.noi_nhat or "").strip().lower()
+
+            if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
                 vi_tri = similarity(lost.noi_mat, found.noi_nhat)
                 if vi_tri > 0.8:
                     vi_tri_score = 10
@@ -651,6 +649,7 @@ def match_items():
             if not (has1 and has2):
                 anh_score = 0
 
+            # TÍNH ĐIỂM TỔNG
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
             image_confidence = int(min(100, image_ratio * 100))
@@ -732,11 +731,15 @@ def teacher_check(lost_id, found_id):
     ten_score = int(ten_sim * 15)
 
     mau_score = 0
-    if lost.mau_sac and found.mau_sac and str(lost.mau_sac).strip().lower() not in ["none", ""] and str(found.mau_sac).strip().lower() not in ["none", ""]:
+    m1 = str(lost.mau_sac or "").strip().lower()
+    m2 = str(found.mau_sac or "").strip().lower()
+    if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
 
     vi_tri_score = 0
-    if lost.noi_mat and found.noi_nhat and str(lost.noi_mat).strip().lower() not in ["none", ""] and str(found.noi_nhat).strip().lower() not in ["none", ""]:
+    v1 = str(lost.noi_mat or "").strip().lower()
+    v2 = str(found.noi_nhat or "").strip().lower()
+    if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
         vi_tri = similarity(lost.noi_mat, found.noi_nhat)
         if vi_tri > 0.8:
             vi_tri_score = 10
