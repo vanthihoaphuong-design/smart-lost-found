@@ -119,13 +119,11 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        # Resize ảnh về kích thước chuẩn
         crop_img = cv2.resize(img, (200, 200), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         
         features = {}
 
-        # 1. ORB Keypoints & Descriptors
         try:
             orb = cv2.ORB_create(nfeatures=500)
             kp, des = orb.detectAndCompute(gray, None)
@@ -134,7 +132,6 @@ def calculate_image_features(img_path):
         except Exception:
             features["orb_keypoints"], features["orb_descriptors"] = [], None
 
-        # 2. HSV Color Histogram (Tránh nhiễu màu phông trắng)
         try:
             hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
             hist = cv2.calcHist([hsv], [0, 1], None, [18, 20], [0, 180, 0, 256])
@@ -188,7 +185,6 @@ def image_score(img1_filename, img2_filename):
         except Exception:
             color_corr = 0.0
 
-        # Điểm ảnh tính chính xác dựa trên điểm đặc trưng vật thể thực sự
         if good_count >= 15:
             score = 50
         elif good_count >= 10:
@@ -206,19 +202,35 @@ def image_score(img1_filename, img2_filename):
         print(f"Lỗi image_score: {e}")
         return 0, 0.0
 
-def get_base_category(text_name, category_str):
-    """LỚP 1: Tự động gom nhóm danh mục thực sự của đồ vật"""
-    t = (str(text_name) + " " + str(category_str)).lower().strip()
-
-    if any(k in t for k in ["laptop", "máy tính", "điện thoại", "phone", "casio", "sạc", "airpod", "ipad"]):
-        return "ELECTRONICS"
-    if any(k in t for k in ["bút", "viết", "sách", "vở", "tập", "thước", "hộp bút", "bóp viết"]):
-        return "STATIONERY"
-    if any(k in t for k in ["balo", "ba lô", "ví", "bóp", "túi", "áo", "quần", "dây chuyền", "nhẫn", "vòng", "nón", "mũ"]):
-        return "PERSONAL_ITEMS"
-    if any(k in t for k in ["thẻ", "căn cước", "cccd", "giấy"]):
-        return "DOCUMENTS"
+def get_exact_object_type(text_name):
+    """BỘ LỌC PHÂN LOẠI CON (SUB-CATEGORY) CỰC KỲ CHÍNH XÁC"""
+    t = str(text_name).lower().strip()
     
+    # 1. Nhóm Bút / Viết
+    if any(k in t for k in ["bút", "viết", "bút bi", "bút chì", "bút xóa", "bóp viết"]):
+        return "PEN"
+    # 2. Nhóm Sách / Vở / Tập
+    if any(k in t for k in ["sách", "vở", "tập", "bài tập", "sgk", "ngữ văn", "toán", "tiếng anh"]):
+        return "BOOK"
+    # 3. Nhóm Thiết bị điện tử nhỏ (Máy tính bỏ túi, Sạc, Tai nghe)
+    if any(k in t for k in ["casio", "máy tính bỏ túi", "sạc", "tai nghe", "airpod"]):
+        return "SMALL_ELEC"
+    # 4. Nhóm Laptop / Máy tính lớn / iPad
+    if any(k in t for k in ["laptop", "máy tính", "ipad", "điện thoại", "phone"]):
+        return "LARGE_ELEC"
+    # 5. Nhóm Balo / Túi xách / Cặp
+    if any(k in t for k in ["balo", "ba lô", "túi", "túi xách", "cặp", "vali"]):
+        return "BAG"
+    # 6. Nhóm Ví / Bóp tiền
+    if any(k in t for k in ["ví", "bóp", "ví tiền"]):
+        return "WALLET"
+    # 7. Nhóm Phụ kiện Trang sức
+    if any(k in t for k in ["dây chuyền", "nhẫn", "vòng", "bông tai", "khuyên"]):
+        return "JEWELRY"
+    # 8. Nhóm Giấy tờ / Thẻ
+    if any(k in t for k in ["thẻ", "căn cước", "cccd", "giấy tờ", "bằng lái"]):
+        return "CARD"
+
     return "OTHER"
 
 def similarity(text1, text2):
@@ -603,20 +615,18 @@ def match_items():
 
     for lost in lost_items:
         for found in found_items:
-            cat1 = get_base_category(lost.ten_do, lost.loai_do)
-            cat2 = get_base_category(found.ten_do, found.loai_do)
+            type1 = get_exact_object_type(lost.ten_do)
+            type2 = get_exact_object_type(found.ten_do)
 
             ten_sim = similarity(lost.ten_do, found.ten_do)
 
-            # LỚP 1: KHÓA TẠO CẶP SAI
-            # Nếu 2 món đồ thuộc 2 nhóm danh mục khác nhau hoàn toàn VÀ tên không có từ đồng nghĩa
-            if cat1 != cat2 and ten_sim < 0.40:
+            # ĐIỀU KIỆN TIÊN QUYẾT: Khác bản chất đồ vật -> Bỏ qua lập tức
+            if type1 != "OTHER" and type2 != "OTHER" and type1 != type2:
                 continue
 
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # LỚP 2: TÍNH ĐIỂM HÌNH ẢNH
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
@@ -627,8 +637,6 @@ def match_items():
             mau_score = 0
             if lost.mau_sac and found.mau_sac and str(lost.mau_sac).strip().lower() not in ["none", ""] and str(found.mau_sac).strip().lower() not in ["none", ""]:
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-            elif cat1 == cat2 and ten_sim >= 0.70:
-                mau_score = 12
 
             vi_tri_score = 0
             if lost.noi_mat and found.noi_nhat and str(lost.noi_mat).strip().lower() not in ["none", ""] and str(found.noi_nhat).strip().lower() not in ["none", ""]:
@@ -643,7 +651,6 @@ def match_items():
             if not (has1 and has2):
                 anh_score = 0
 
-            # LỚP 3: TÍNH TỔNG ĐIỂM
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
             image_confidence = int(min(100, image_ratio * 100))
