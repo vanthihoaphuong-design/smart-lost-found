@@ -121,7 +121,7 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
-        # Chỉ crop nền trắng thuần nếu là ảnh studio/catalog
+        # CHỈ CẮT VIỀN NẾU ẢNH CÓ NỀN TRẮNG THUẦN (ẢNH STUDIO/CATALOG/MẶT DÂY CHUYỀN)
         try:
             gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             h_img, w_img = gray_temp.shape
@@ -165,7 +165,8 @@ def calculate_image_features(img_path):
         print(f"Lỗi tính feature: {e}")
         return None
 
-def image_score(img1_filename, img2_filename):
+def image_score(img1_filename, img2_filename, is_same_keyword=False):
+    """THUẬT TOÁN ĐỔI MỚI: THƯỞNG ĐIỂM HÌNH ẢNH KHI CÙNG TỪ KHÓA GỐC ĐỂ ĐẠT 42-45Đ"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -206,13 +207,13 @@ def image_score(img1_filename, img2_filename):
         if good_count >= 10:
             score = 50
         elif good_count >= 6:
-            score = 42
+            score = 45 if is_same_keyword else 42
         elif good_count >= 3:
-            score = 35
+            score = 42 if (is_same_keyword and color_corr > 0.4) else 35
         elif good_count >= 1:
-            score = 28
+            score = 35 if is_same_keyword else 28
         else:
-            score = int(color_corr * 25)
+            score = int(color_corr * 30) if is_same_keyword else int(color_corr * 25)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -244,6 +245,7 @@ def get_core_keyword(text_name):
         "nón": ["nón", "mũ", "nón kết"],
         "thẻ": ["thẻ", "căn cước", "cccd", "thẻ học sinh"],
         "bình nước": ["bình nước", "bình giữ nhiệt"],
+        "sữa": ["sữa", "hộp sữa", "milo", "vinamilk", "th true milk"],
         "sáo": ["sáo", "sáo trúc"],
         "đèn": ["đèn", "đèn học", "đèn để bàn"]
     }
@@ -643,14 +645,15 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # LỚP 2: ĐIỂM OPENCV
+            # LỚP 2: ĐIỂM OPENCV (TRUYỀN THÊM TRỢ LỰC TỪ KHÓA TRÙNG KHỚP)
+            is_same_key = (key1 == key2 and key1 != "")
             if has1 and has2:
-                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
             else:
                 anh_score, image_ratio = 0, 0.0
 
             # LỚP 3: CHUẨN HÓA THANG ĐIỂM TỔNG CỐ ĐỊNH 100Đ
-            if key1 == key2 and key1 != "":
+            if is_same_key:
                 ten_score = 15
             else:
                 ten_score = int(ten_sim * 15)
@@ -660,7 +663,7 @@ def match_items():
             m2 = str(found.mau_sac or "").strip().lower()
             if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-            elif key1 == key2 and key1 != "":
+            elif is_same_key:
                 mau_score = 12 # Thưởng màu nếu trùng loại
 
             vi_tri_score = 0
@@ -753,20 +756,21 @@ def teacher_check(lost_id, found_id):
 
     key1 = get_core_keyword(lost.ten_do)
     key2 = get_core_keyword(found.ten_do)
+    is_same_key = (key1 == key2 and key1 != "")
 
     if has1 and has2:
-        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
+        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
     else:
         anh_score, image_ratio = 0, 0.0
 
-    ten_score = 15 if (key1 == key2 and key1 != "") else int(similarity(lost.ten_do, found.ten_do) * 15)
+    ten_score = 15 if is_same_key else int(similarity(lost.ten_do, found.ten_do) * 15)
     
     mau_score = 0
     m1 = str(lost.mau_sac or "").strip().lower()
     m2 = str(found.mau_sac or "").strip().lower()
     if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-    elif key1 == key2 and key1 != "":
+    elif is_same_key:
         mau_score = 12
 
     vi_tri_score = 0
