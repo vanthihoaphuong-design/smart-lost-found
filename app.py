@@ -149,6 +149,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename):
+    """THUẬT TOÁN TÍNH ĐIỂM HÌNH ẢNH ĐỘC LẬP (0 - 50 ĐIỂM)"""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -204,12 +205,11 @@ def image_score(img1_filename, img2_filename):
         return 0, 0.0
 
 def get_core_keyword(text_name):
-    """TRÍCH XUẤT TỪ KHÓA CHÍNH BẢN CHẤT CỦA ĐỒ VẬT (BỎ TỪ PHỤ/MÔ TẢ)"""
+    """TRÍCH XUẤT TỪ KHÓA CHÍNH ĐỂ LỌC BẢN CHẤT ĐỒ VẬT"""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
     
-    # Danh sách đồng nghĩa chuẩn hóa
     synonyms_map = {
         "bút": ["bút", "viết", "bút bi", "bút chì", "bút xóa"],
         "sách": ["sách", "vở", "tập", "sgk", "bài tập", "ngữ văn", "toán", "tiếng anh", "tin học"],
@@ -231,7 +231,6 @@ def get_core_keyword(text_name):
         if any(re.search(r'\b' + re.escape(w) + r'\b', t) for w in words):
             return core_key
             
-    # Nếu không nằm trong từ điển, lấy từ đầu tiên của tên đồ làm từ khóa chính
     tokens = t.split()
     return tokens[0] if tokens else t
 
@@ -246,7 +245,6 @@ def similarity(text1, text2):
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
 
-    # Nếu cùng từ khóa gốc (ví dụ "bút bi" vs "bút"), tính độ giống nhau cao
     if k1 == k2 and k1 != "":
         return 0.90
 
@@ -271,7 +269,17 @@ def date_score(date1, date2):
     if not d1 or not d2:
         return 0
     diff = abs((d1 - d2).days)
-    return 10 if diff == 0 else (8 if diff == 1 else (5 if diff == 2 else (3 if diff == 3 else 0)))
+    if diff == 0:
+        return 10
+    elif diff <= 3:
+        return 8
+    elif diff <= 7:
+        return 6
+    elif diff <= 15:
+        return 4
+    elif diff <= 30:
+        return 2
+    return 0
 
 def get_current_pin():
     try:
@@ -608,7 +616,7 @@ def match_items():
             key1 = get_core_keyword(lost.ten_do)
             key2 = get_core_keyword(found.ten_do)
 
-            # ĐIỀU KIỆN TUYỆT ĐỐI: Khác từ khóa đồ vật chính -> Loại bỏ 100%
+            # LỚP 1: LỌC BẢN CHẤT TỪ KHÓA CHÍNH (KHÁC NHAU -> LOẠI 100%)
             if key1 != key2:
                 continue
 
@@ -616,7 +624,7 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # ĐIỂM HÌNH ẢNH OPENCV
+            # LỚP 2: TÍNH ĐIỂM HÌNH ẢNH OPENCV ĐỘC LẬP
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
@@ -624,14 +632,14 @@ def match_items():
 
             ten_score = int(ten_sim * 15)
 
-            # MÀU SẮC
             mau_score = 0
             m1 = str(lost.mau_sac or "").strip().lower()
             m2 = str(found.mau_sac or "").strip().lower()
             if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+            elif ten_sim >= 0.85:
+                mau_score = 12
 
-            # VỊ TRÍ
             vi_tri_score = 0
             v1 = str(lost.noi_mat or "").strip().lower()
             v2 = str(found.noi_nhat or "").strip().lower()
@@ -642,14 +650,15 @@ def match_items():
                 elif vi_tri > 0.5:
                     vi_tri_score = 5
 
-            # NGÀY THÁNG
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
             if not (has1 and has2):
                 anh_score = 0
 
-            # TỔNG ĐIỂM
+            # LỚP 3: CƠ CHẾ BÙ ĐIỂM THÔNG MINH CHO ĐỒ KHỚP BẢN CHẤT
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+            if ten_sim >= 0.85 and (anh_score >= 20 or mau_score >= 12):
+                score = max(score, 68)
 
             image_confidence = int(min(100, image_ratio * 100))
 
@@ -662,7 +671,7 @@ def match_items():
                 reasons.append("Màu sắc tương đồng")
             if vi_tri_score == 10:
                 reasons.append("Vị trí liên quan")
-            if ngay_score >= 7:
+            if ngay_score >= 6:
                 reasons.append("Thời gian khớp/gần nhau")
 
             if score >= 75:
@@ -734,6 +743,8 @@ def teacher_check(lost_id, found_id):
     m2 = str(found.mau_sac or "").strip().lower()
     if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+    elif ten_sim >= 0.85:
+        mau_score = 12
 
     vi_tri_score = 0
     v1 = str(lost.noi_mat or "").strip().lower()
@@ -751,6 +762,8 @@ def teacher_check(lost_id, found_id):
         anh_score = 0
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+    if ten_sim >= 0.85 and (anh_score >= 20 or mau_score >= 12):
+        score = max(score, 68)
 
     if score >= 75:
         ket_luan = "🟢 Khả năng trùng khớp cao"
