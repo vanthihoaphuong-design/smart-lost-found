@@ -106,11 +106,9 @@ def extract_foreground_and_mask(img):
         h, w = img.shape[:2]
         aspect_ratio = float(w) / float(h) if h > 0 else 1.0
 
-        # Làm mịn ảnh nhẹ nhàng để giữ nguyên chi tiết bút bi/vật thể nhỏ
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (3, 3), 0)
         
-        # Nhận diện phông nền mềm mại
         _, thresh = cv2.threshold(blurred, 245, 255, cv2.THRESH_BINARY_INV)
         
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -151,8 +149,6 @@ def calculate_image_features(img_path):
 
         crop_img, object_mask, aspect_ratio = extract_foreground_and_mask(img)
         crop_img = cv2.resize(crop_img, (220, 220), interpolation=cv2.INTER_AREA)
-        if object_mask is not None:
-            object_mask = cv2.resize(object_mask, (220, 220), interpolation=cv2.INTER_NEAREST)
 
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         features = {"aspect_ratio": aspect_ratio}
@@ -211,7 +207,7 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
                 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                 matches = bf.knnMatch(des1, des2, k=2)
                 for m_pair in matches:
-                    if len(m_pair) == 2 and m_pair[0].distance < 0.78 * m_pair[1].distance:
+                    if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
                         good_count += 1
         except Exception:
             good_count = 0
@@ -236,24 +232,23 @@ def image_score(img1_filename, img2_filename, ten_do1="", ten_do2="", noi1="", n
         ar2 = features2.get("aspect_ratio", 1.0)
         shape_diff = abs(ar1 - ar2)
 
-        # Tính toán thang điểm linh hoạt cho vật thể nhỏ
         if good_count >= 10:
             orb_pts = 38
         elif good_count >= 6:
-            orb_pts = 32
+            orb_pts = 30
         elif good_count >= 3:
-            orb_pts = 24
+            orb_pts = 20
         else:
-            orb_pts = 12
+            orb_pts = 5
 
-        if shape_diff > 0.55 and good_count < 4:
-            total_points = min(orb_pts + int(color_corr * 4), 12)
+        if shape_diff > 0.50 and good_count < 4:
+            total_points = min(orb_pts + int(color_corr * 3), 8)
         else:
-            total_points = orb_pts + (8 if hash_sim >= 0.70 else 0) + int(color_corr * 7)
+            total_points = orb_pts + (7 if hash_sim >= 0.75 else 0) + int(color_corr * 5)
 
-        # Bù điểm khi dHash hoặc biểu đồ màu khớp cao
-        if hash_sim >= 0.82 and color_corr >= 0.60:
-            total_points = max(total_points, 35)
+        # Chặn nếu không có điểm ORB thực sự trùng khớp
+        if good_count < 3 and hash_sim < 0.75:
+            total_points = min(total_points, 5)
 
         total_points = min(50, max(0, total_points))
         return int(total_points), float(total_points / 50.0)
@@ -654,7 +649,11 @@ def match_items():
             ten_sim = similarity(lost.ten_do, found.ten_do)
             ten_score = int(ten_sim * 15)
 
-            # BÙ ĐIỂM HÌNH ẢNH THÔNG MINH: Nếu Tên trùng khớp cao (ten_sim >= 0.70) và cả 2 đều có ảnh
+            # CHẶN CỨNG: Nếu tên đồ hoàn toàn khác nhau (ten_sim < 0.25) -> Giới hạn điểm hình ảnh chỉ tối đa 5 điểm
+            if ten_sim < 0.25:
+                anh_score = min(anh_score, 5)
+
+            # BÙ ĐIỂM HÌNH ẢNH: Nếu Tên trùng khớp cao (ten_sim >= 0.70) và cả 2 đều có ảnh
             if has1 and has2 and ten_sim >= 0.70 and anh_score < 30:
                 anh_score = 30
                 image_ratio = 0.60
@@ -676,14 +675,14 @@ def match_items():
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-            # ÉP VỀ 0 NẾU THỰC SỰ THIẾU ẢNH
             if not (has1 and has2):
                 anh_score = 0
 
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
+            # KHÓA TRẦN ĐIỂM TỔNG TỐI ĐA 25 ĐIỂM CHO NGUYÊN NHÂN TÊN VÀ ẢNH KHÔNG KHỚP
             if ten_sim < 0.25 and anh_score < 25:
-                score = min(score, 32)
+                score = min(score, 25)
 
             image_confidence = int(min(100, image_ratio * 100))
 
@@ -767,6 +766,9 @@ def teacher_check(lost_id, found_id):
     ten_sim = similarity(lost.ten_do, found.ten_do)
     ten_score = int(ten_sim * 15)
 
+    if ten_sim < 0.25:
+        anh_score = min(anh_score, 5)
+
     if has1 and has2 and ten_sim >= 0.70 and anh_score < 30:
         anh_score = 30
         image_ratio = 0.60
@@ -794,7 +796,7 @@ def teacher_check(lost_id, found_id):
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
     if ten_sim < 0.25 and anh_score < 25:
-        score = min(score, 32)
+        score = min(score, 25)
 
     if score >= 75:
         ket_luan = "🟢 Khả năng trùng khớp cao"
