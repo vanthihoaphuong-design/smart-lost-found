@@ -166,7 +166,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN ĐỔI MỚI: TỰ ĐỘNG THƯỞNG 42-45Đ HÌNH ẢNH KHI CÙNG TỪ KHÓA GỐC ĐỒ VẬT"""
+    """THUẬT TOÁN TỐI ƯU CAO CẤP: SIẾT NÉT ORB VÀ TÁCH MẶT THỊ GIÁC CHUẨN XÁC"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -191,7 +191,8 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                 matches = bf.knnMatch(des1, des2, k=2)
                 for m_pair in matches:
-                    if len(m_pair) == 2 and m_pair[0].distance < 0.78 * m_pair[1].distance:
+                    # SIẾT ĐỘ CHÍNH XÁC NÉT TỪ 0.78 XUỐNG 0.72 ĐỂ LỌC NÉT DÂY XÍCH VÀ PHÔNG NỀN
+                    if len(m_pair) == 2 and m_pair[0].distance < 0.72 * m_pair[1].distance:
                         good_count += 1
         except Exception:
             good_count = 0
@@ -204,10 +205,12 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         except Exception:
             color_corr = 0.0
 
-        if good_count >= 10:
+        # PHÂN MỨC ĐIỂM HÌNH ẢNH CHÍNH XÁC CAO
+        if good_count >= 12:
             score = 50
-        elif good_count >= 6:
-            score = 45 if is_same_keyword else 42
+        elif good_count >= 7:
+            # Nếu nét khớp nhiều và trùng từ khóa nhưng màu quá lệch (<0.3) -> giữ ở 40đ (cho Dây chuyền khác mẫu)
+            score = 45 if (is_same_keyword and color_corr >= 0.3) else 40
         elif good_count >= 3:
             score = 42 if is_same_keyword else 35
         elif good_count >= 1:
