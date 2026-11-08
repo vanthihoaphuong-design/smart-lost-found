@@ -68,6 +68,9 @@ with app.app_context():
 
 FEATURE_CACHE = {}
 
+# Tập hợp các từ phụ / từ chỉ số lượng tiếng Việt cần bỏ khi xử lý từ lạ
+STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
+
 def check_real_image(img_path):
     if not img_path:
         return False
@@ -166,7 +169,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN ĐỔI MỚI: TỰ ĐỘNG THƯỞNG 42-45Đ HÌNH ẢNH KHI CÙNG TỪ KHÓA GỐC ĐỒ VẬT"""
+    """THUẬT TOÁN CÂN BẰNG: TRỢ LỰC TỪ KHÓA TRÙNG VÀ ĐẢM BẢO CHUẨN ĐIỂM HÌNH ẢNH"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -222,7 +225,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         return 0, 0.0
 
 def get_core_keyword(text_name):
-    """TRÍCH XUẤT TỪ KHÓA CỨNG (KHÓA TÁCH BIỆT CHI TIẾT TỪNG MÔN HỌC & ĐỒ VẬT)"""
+    """TRÍCH XUẤT TỪ KHÓA CỨNG - TỰ ĐỘNG LỌC TỪ PHỤ VÀ TỪ LẠ"""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
@@ -230,6 +233,7 @@ def get_core_keyword(text_name):
     synonyms_map = {
         "máy tính casio": ["casio", "fx580", "fx 580", "máy tính bỏ túi", "casio580"],
         "laptop": ["laptop", "macbook", "máy tính xách tay"],
+        "chuột": ["chuột", "con chuột", "chuột máy tính", "mouse"],
         "sách toán": ["sách toán", "toán", "math", "bài tập toán"],
         "sách văn": ["sách văn", "ngữ văn", "văn học", "bài tập ngữ văn"],
         "sách tiếng anh": ["sách anh", "tiếng anh", "english"],
@@ -254,7 +258,8 @@ def get_core_keyword(text_name):
         if any(re.search(r'\b' + re.escape(w) + r'\b', t) for w in words):
             return core_key
             
-    tokens = t.split()
+    # Tự động lọc các từ phụ tiếng Việt (con, cái, chiếc...) đối với từ lạ
+    tokens = [w for w in t.split() if w not in STOP_WORDS_VN]
     return tokens[0] if tokens else t
 
 def similarity(text1, text2):
@@ -636,17 +641,17 @@ def match_items():
         for found in found_items:
             key1 = get_core_keyword(lost.ten_do)
             key2 = get_core_keyword(found.ten_do)
+            ten_sim = similarity(lost.ten_do, found.ten_do)
+            is_same_key = (key1 == key2 and key1 != "")
 
-            # LỚP 1: LỌC BẢN CHẤT CỨNG (Sách Văn vs Sách Anh -> CHẶN NGAY LẬP TỨC)
-            if key1 != key2:
+            # LỚP 1: LỌC THÔNG MINH (TRÙNG TỪ KHÓA GỐC HOẶC ĐỘ TƯƠNG ĐỒNG TÊN > 60%)
+            if not is_same_key and ten_sim < 0.60:
                 continue
 
-            ten_sim = similarity(lost.ten_do, found.ten_do)
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
             # LỚP 2: ĐIỂM OPENCV (TRUYỀN THÊM TRỢ LỰC TỪ KHÓA TRÙNG KHỚP)
-            is_same_key = (key1 == key2 and key1 != "")
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
             else:
@@ -664,7 +669,7 @@ def match_items():
             if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
                 mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
             elif is_same_key:
-                mau_score = 12 # Thưởng màu nếu trùng loại
+                mau_score = 12
 
             vi_tri_score = 0
             v1 = str(lost.noi_mat or "").strip().lower()
