@@ -121,6 +121,19 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
+        # --- BỔ SUNG AUTO-CROP: TỰ ĐỘNG CẮT NỀN TRẮNG DƯ THỪA ĐỂ QUÉT VẬT THỂ ---
+        try:
+            gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            _, thresh = cv2.threshold(gray_temp, 240, 255, cv2.THRESH_BINARY_INV)
+            contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                c = max(contours, key=cv2.contourArea)
+                x, y, w, h = cv2.boundingRect(c)
+                if w > 15 and h > 15:
+                    img = img[y:y+h, x:x+w]
+        except Exception as crop_err:
+            print(f"Lỗi crop ảnh: {crop_err}")
+
         crop_img = cv2.resize(img, (200, 200), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         
@@ -150,7 +163,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename):
-    """THUẬT TOÁN ĐỔI MỚI - CHỐNG DÌM ĐIỂM HÌNH ẢNH CỦA ĐỒ VẬT ÍT NÉT"""
+    """THUẬT TOÁN ĐỔI MỚI - CHẤM ĐIỂM HÌNH ẢNH SAU KHÍ CẮT NỀN TRẮNG"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -175,7 +188,7 @@ def image_score(img1_filename, img2_filename):
                 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                 matches = bf.knnMatch(des1, des2, k=2)
                 for m_pair in matches:
-                    if len(m_pair) == 2 and m_pair[0].distance < 0.80 * m_pair[1].distance:
+                    if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
                         good_count += 1
         except Exception:
             good_count = 0
@@ -188,17 +201,16 @@ def image_score(img1_filename, img2_filename):
         except Exception:
             color_corr = 0.0
 
-        # Nới rộng thang điểm cho đồ vật đơn giản/ít nét (như bút bi, đèn học)
-        if good_count >= 8:
+        if good_count >= 12:
             score = 50
-        elif good_count >= 5:
-            score = 45
-        elif good_count >= 3:
-            score = 40
-        elif good_count >= 1:
-            score = 35
+        elif good_count >= 8:
+            score = 42
+        elif good_count >= 4:
+            score = 32
+        elif good_count >= 2:
+            score = 22
         else:
-            score = int(30 + color_corr * 15) if color_corr > 0.5 else int(color_corr * 30)
+            score = int(color_corr * 20)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -272,7 +284,7 @@ def parse_date_flexible(date_str):
     return None
 
 def date_score(date1, date2):
-    """CẬP NHẬT THANG ĐIỂM THỜI GIAN HỢP LÝ THỰC TẾ"""
+    """THANG ĐIỂM THỜI GIAN THỰC TẾ HỌC ĐƯỜNG"""
     d1, d2 = parse_date_flexible(date1), parse_date_flexible(date2)
     if not d1 or not d2:
         return 0
@@ -630,19 +642,19 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # LỚP 2: TÍNH ĐIỂM OPENCV ĐỘC LẬP (ĐÃ NÂNG CẤP CHỐNG DÌM ĐIỂM HÌNH ẢNH)
+            # LỚP 2: TÍNH ĐIỂM OPENCV CHUẨN XÁC (ĐÃ TỰ ĐỘNG CẮT NỀN TRẮNG CHỐNG BẦY PHÔNG NỀN)
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
                 anh_score, image_ratio = 0, 0.0
 
-            # Ưu tiên Tên đồ nếu đã cùng từ khóa gốc
+            # Điểm tên đồ vật
             if key1 == key2 and key1 != "":
                 ten_score = 15
             else:
                 ten_score = int(ten_sim * 15)
 
-            # LỚP 3: ĐIỂM MÀU SẮC, VỊ TRÍ VÀ NGÀY THÁNG
+            # LỚP 3: MÀU SẮC, VỊ TRÍ VÀ NGÀY THÁNG
             mau_score = 0
             m1 = str(lost.mau_sac or "").strip().lower()
             m2 = str(found.mau_sac or "").strip().lower()
@@ -664,7 +676,7 @@ def match_items():
             if not (has1 and has2):
                 anh_score = 0
 
-            # TỔNG ĐIỂM CHUẨN XÁC BẰNG CỘNG NGUYÊN BẢN 5 THÀNH PHẦN
+            # TỔNG ĐIỂM CHUẨN XÁC = CỘNG NGUYÊN BẢN 5 THÀNH PHẦN
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
             image_confidence = int(min(100, image_ratio * 100))
