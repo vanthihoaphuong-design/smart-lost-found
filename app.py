@@ -16,13 +16,14 @@ import cloudinary.uploader
 
 VN_TZ = timezone(timedelta(hours=7))
 
+# Bọc an toàn OpenCV chống crash trên môi trường Render / Server
+HAS_OPENCV = False
 try:
     import cv2
     import numpy as np
     HAS_OPENCV = True
 except Exception as e:
-    HAS_OPENCV = False
-    print(f"Lỗi OpenCV: {e}")
+    print(f"Cảnh báo OpenCV không khả dụng: {e}")
 
 cloudinary.config(
     cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", ""),
@@ -149,8 +150,9 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename):
+    """THUẬT TOÁN ĐỔI MỚI - CHỐNG DÌM ĐIỂM HÌNH ẢNH CỦA ĐỒ VẬT ÍT NÉT"""
     try:
-        if not check_real_image(img1_filename) or not check_real_image(img2_filename):
+        if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
 
         str1 = str(img1_filename).strip()
@@ -169,11 +171,11 @@ def image_score(img1_filename, img2_filename):
         try:
             kp1, des1 = features1.get("orb_keypoints", []), features1.get("orb_descriptors")
             kp2, des2 = features2.get("orb_keypoints", []), features2.get("orb_descriptors")
-            if des1 is not None and des2 is not None and len(kp1) >= 4 and len(kp2) >= 4:
+            if des1 is not None and des2 is not None and len(kp1) >= 2 and len(kp2) >= 2:
                 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                 matches = bf.knnMatch(des1, des2, k=2)
                 for m_pair in matches:
-                    if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
+                    if len(m_pair) == 2 and m_pair[0].distance < 0.80 * m_pair[1].distance:
                         good_count += 1
         except Exception:
             good_count = 0
@@ -186,16 +188,17 @@ def image_score(img1_filename, img2_filename):
         except Exception:
             color_corr = 0.0
 
-        if good_count >= 12:
+        # Nới rộng thang điểm cho đồ vật đơn giản/ít nét (như bút bi, đèn học)
+        if good_count >= 8:
             score = 50
-        elif good_count >= 8:
+        elif good_count >= 5:
+            score = 45
+        elif good_count >= 3:
             score = 40
-        elif good_count >= 4:
-            score = 30
-        elif good_count >= 2:
-            score = 20
+        elif good_count >= 1:
+            score = 35
         else:
-            score = int(color_corr * 15)
+            score = int(30 + color_corr * 15) if color_corr > 0.5 else int(color_corr * 30)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -204,12 +207,11 @@ def image_score(img1_filename, img2_filename):
         return 0, 0.0
 
 def get_core_keyword(text_name):
-    """TRÍCH XUẤT TỪ KHÓA CHÍNH (PHÂN TÁCH RÕ CÁC MÔN HỌC & ĐỒ VẬT)"""
+    """TRÍCH XUẤT TỪ KHÓA CHÍNH (PHÂN TÁCH RÕ CHI TIẾT TỪNG MÔN HỌC VÀ ĐỒ VẬT)"""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
     
-    # Phân tách chi tiết môn học để tránh ghép nhầm Sách Ngữ Văn với Sách Toán
     synonyms_map = {
         "sách toán": ["toán", "math", "bài tập toán"],
         "sách văn": ["ngữ văn", "văn học", "bài tập ngữ văn"],
@@ -270,20 +272,19 @@ def parse_date_flexible(date_str):
     return None
 
 def date_score(date1, date2):
+    """CẬP NHẬT THANG ĐIỂM THỜI GIAN HỢP LÝ THỰC TẾ"""
     d1, d2 = parse_date_flexible(date1), parse_date_flexible(date2)
     if not d1 or not d2:
         return 0
     diff = abs((d1 - d2).days)
     if diff == 0:
         return 10
-    elif diff <= 3:
-        return 8
-    elif diff <= 7:
-        return 6
+    elif diff <= 5:
+        return 9
     elif diff <= 15:
-        return 4
+        return 7
     elif diff <= 30:
-        return 2
+        return 4
     return 0
 
 def get_current_pin():
@@ -621,7 +622,7 @@ def match_items():
             key1 = get_core_keyword(lost.ten_do)
             key2 = get_core_keyword(found.ten_do)
 
-            # LỚP 1: BỎ HOÀN TOÀN NẾU KHÁC MÔN HỌC HOẶC KHÁC ĐỒ VẬT GỐC
+            # LỚP 1: LỌC BẢN CHẤT CỨNG (Nếu khác từ khóa gốc như Sách Văn vs Sách Toán -> Chặn luôn)
             if key1 != key2:
                 continue
 
@@ -629,15 +630,19 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # LỚP 2: TÍNH ĐIỂM OPENCV ĐỘC LẬP
+            # LỚP 2: TÍNH ĐIỂM OPENCV ĐỘC LẬP (ĐÃ NÂNG CẤP CHỐNG DÌM ĐIỂM HÌNH ẢNH)
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
                 anh_score, image_ratio = 0, 0.0
 
-            ten_score = int(ten_sim * 15)
+            # Ưu tiên Tên đồ nếu đã cùng từ khóa gốc
+            if key1 == key2 and key1 != "":
+                ten_score = 15
+            else:
+                ten_score = int(ten_sim * 15)
 
-            # LỚP 3: MÀU SẮC & VỊ TRÍ & NGÀY THÁNG CHUẨN
+            # LỚP 3: ĐIỂM MÀU SẮC, VỊ TRÍ VÀ NGÀY THÁNG
             mau_score = 0
             m1 = str(lost.mau_sac or "").strip().lower()
             m2 = str(found.mau_sac or "").strip().lower()
@@ -659,7 +664,7 @@ def match_items():
             if not (has1 and has2):
                 anh_score = 0
 
-            # TỔNG ĐIỂM BẰNG ĐÚNG TỔNG 5 NGUYÊN TỐ CỘNG LẠI
+            # TỔNG ĐIỂM CHUẨN XÁC BẰNG CỘNG NGUYÊN BẢN 5 THÀNH PHẦN
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
             image_confidence = int(min(100, image_ratio * 100))
@@ -737,8 +742,12 @@ def teacher_check(lost_id, found_id):
     else:
         anh_score, image_ratio = 0, 0.0
 
-    ten_sim = similarity(lost.ten_do, found.ten_do)
-    ten_score = int(ten_sim * 15)
+    key1 = get_core_keyword(lost.ten_do)
+    key2 = get_core_keyword(found.ten_do)
+    if key1 == key2 and key1 != "":
+        ten_score = 15
+    else:
+        ten_score = int(similarity(lost.ten_do, found.ten_do) * 15)
 
     mau_score = 0
     m1 = str(lost.mau_sac or "").strip().lower()
