@@ -204,22 +204,29 @@ def image_score(img1_filename, img2_filename):
         return 0, 0.0
 
 def get_core_keyword(text_name):
+    """TRÍCH XUẤT TỪ KHÓA CHÍNH (PHÂN TÁCH RÕ CÁC MÔN HỌC & ĐỒ VẬT)"""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
     
+    # Phân tách chi tiết môn học để tránh ghép nhầm Sách Ngữ Văn với Sách Toán
     synonyms_map = {
+        "sách toán": ["toán", "math", "bài tập toán"],
+        "sách văn": ["ngữ văn", "văn học", "bài tập ngữ văn"],
+        "sách tiếng anh": ["tiếng anh", "english"],
+        "sách tin học": ["tin học", "tin 11", "tin 9", "tin 10"],
+        "sách lý": ["vật lý", "lý"],
+        "sách hóa": ["hóa học", "hóa"],
         "bút": ["bút", "viết", "bút bi", "bút chì", "bút xóa"],
-        "sách": ["sách", "vở", "tập", "sgk", "bài tập", "ngữ văn", "toán", "tiếng anh", "tin học"],
         "laptop": ["laptop", "máy tính", "lap", "macbook"],
         "điện thoại": ["điện thoại", "phone", "iphone", "samsung"],
-        "máy tính casio": ["casio", "máy tính bỏ túi", "máy tính học sinh"],
-        "balo": ["balo", "ba lô", "túi", "túi xách", "cặp", "vali"],
+        "máy tính casio": ["casio", "máy tính bỏ túi"],
+        "balo": ["balo", "ba lô", "túi", "túi xách", "cặp"],
         "ví": ["ví", "bóp", "ví tiền", "bóp tiền"],
         "dây chuyền": ["dây chuyền", "vòng cổ"],
         "nhẫn": ["nhẫn"],
         "nón": ["nón", "mũ", "nón kết"],
-        "thẻ": ["thẻ", "căn cước", "cccd", "giấy tờ", "thẻ học sinh"],
+        "thẻ": ["thẻ", "căn cước", "cccd", "thẻ học sinh"],
         "bình nước": ["bình nước", "bình giữ nhiệt"],
         "sáo": ["sáo", "sáo trúc"],
         "đèn": ["đèn", "đèn học", "đèn để bàn"]
@@ -614,7 +621,7 @@ def match_items():
             key1 = get_core_keyword(lost.ten_do)
             key2 = get_core_keyword(found.ten_do)
 
-            # LỚP 1: LỌC BẢN CHẤT ĐỒ VẬT (Khác từ khóa gốc -> Chặn lập tức)
+            # LỚP 1: BỎ HOÀN TOÀN NẾU KHÁC MÔN HỌC HOẶC KHÁC ĐỒ VẬT GỐC
             if key1 != key2:
                 continue
 
@@ -622,7 +629,7 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # LỚP 2: TÍNH ĐIỂM OPENCV
+            # LỚP 2: TÍNH ĐIỂM OPENCV ĐỘC LẬP
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh)
             else:
@@ -630,7 +637,7 @@ def match_items():
 
             ten_score = int(ten_sim * 15)
 
-            # LỚP 3: TÍNH ĐIỂM THÀNH PHẦN (Chuẩn 100% không ép max tổng ảo)
+            # LỚP 3: MÀU SẮC & VỊ TRÍ & NGÀY THÁNG CHUẨN
             mau_score = 0
             m1 = str(lost.mau_sac or "").strip().lower()
             m2 = str(found.mau_sac or "").strip().lower()
@@ -652,7 +659,7 @@ def match_items():
             if not (has1 and has2):
                 anh_score = 0
 
-            # TỔNG ĐIỂM CHÍNH XÁC NGUYÊN BẢN BẰNG CỘNG 5 THÀNH PHẦN
+            # TỔNG ĐIỂM BẰNG ĐÚNG TỔNG 5 NGUYÊN TỐ CỘNG LẠI
             score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
             image_confidence = int(min(100, image_ratio * 100))
@@ -879,51 +886,3 @@ def export_excel():
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine="openpyxl") as writer:
             df_lost.to_excel(writer, sheet_name="Đồ báo mất", index=False)
-            df_found.to_excel(writer, sheet_name="Đồ báo nhặt", index=False)
-        
-        output.seek(0)
-
-        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"BaoCao_DoThatLac_{status_label}_{time_label}_{now_str}.xlsx"
-
-        return send_file(
-            output,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name=filename
-        )
-    except Exception as e:
-        print("Lỗi xuất Excel:", e)
-        return "Lỗi xuất Excel", 500
-
-@app.route("/get-pin")
-def get_pin():
-    return jsonify({"pin": get_current_pin()})
-
-@app.route("/change-pin", methods=["GET", "POST"])
-def change_pin():
-    if request.method == "POST":
-        old_pin = request.form.get("old_pin", "").strip()
-        new_pin = request.form.get("new_pin", "").strip()
-        confirm_pin = request.form.get("confirm_pin", "").strip()
-
-        current_pin = get_current_pin()
-
-        if old_pin != current_pin:
-            return render_template("change_pin.html", error="Mã PIN cũ không chính xác!")
-
-        if new_pin != confirm_pin:
-            return render_template("change_pin.html", error="Mã PIN mới và Xác nhận PIN không trùng khớp!")
-
-        if len(new_pin) < 4:
-            return render_template("change_pin.html", error="Mã PIN mới phải có ít nhất 4 ký tự!")
-
-        if save_new_pin(new_pin):
-            return render_template("change_pin.html", success=f"Đổi Mã PIN thành công! Mã PIN mới là: {new_pin}")
-        else:
-            return render_template("change_pin.html", error="Lỗi không thể lưu mã PIN mới. Vui lòng thử lại!")
-
-    return render_template("change_pin.html")
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
