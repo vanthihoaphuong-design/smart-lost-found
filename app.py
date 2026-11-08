@@ -69,23 +69,28 @@ FEATURE_CACHE = {}
 def check_real_image(img_path):
     if not img_path:
         return False
-    str_path = str(img_path).strip().lower()
-    
-    # Nếu chứa bất kỳ từ khóa nào dưới đây -> Khẳng định KHÔNG CÓ ẢNH THỰC TẾ
-    invalid_keywords = [
-        "chua co anh", "chưa có ảnh", "no_image", "default", 
-        "none", "null", "placeholder", "undefined", "120?text="
-    ]
-    if any(k in str_path for k in invalid_keywords):
-        return False
-        
-    # Nếu là ảnh upload local thì phải kiểm tra xem file có thực sự tồn tại trong ổ đĩa không
-    if not (str_path.startswith("http://") or str_path.startswith("https://")):
-        p = os.path.join(app.config["UPLOAD_FOLDER"], str_path) if not os.path.isabs(str_path) else str_path
-        if not os.path.exists(p):
+    try:
+        str_path = str(img_path).strip().lower()
+        if str_path in ["", "none", "null", "undefined"]:
+            return False
+            
+        invalid_keywords = [
+            "chua co anh", "chưa có ảnh", "no_image", "default", 
+            "placeholder", "120?text="
+        ]
+        if any(k in str_path for k in invalid_keywords):
             return False
 
-    return True
+        if str_path.startswith("http://") or str_path.startswith("https://"):
+            return True
+
+        p = os.path.join(app.config.get("UPLOAD_FOLDER", "static/uploads"), str_path) if not os.path.isabs(str_path) else str_path
+        if os.path.exists(p):
+            return True
+            
+        return False
+    except Exception:
+        return False
 
 def get_feature_cache(img_path):
     return FEATURE_CACHE.get(img_path) if img_path else None
@@ -621,7 +626,6 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # CHỈ TÍNH ĐIỂM KHI CẢ 2 CÙNG CÓ ẢNH THỰC TẾ HỢP LỆ
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, lost.ten_do, found.ten_do, lost.noi_mat, found.noi_nhat)
             else:
@@ -630,7 +634,6 @@ def match_items():
             ten_sim = similarity(lost.ten_do, found.ten_do)
             ten_score = int(ten_sim * 15)
 
-            # CHỈ BÙ ĐIỂM NẾU CẢ 2 BÀI ĐỀU CÓ ẢNH THỰC TẾ
             if has1 and has2 and ten_sim >= 0.70 and anh_score < 25:
                 anh_score = 30
                 image_ratio = 0.60
@@ -652,7 +655,6 @@ def match_items():
 
             ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-            # KHÓA CỨNG: Nếu một trong 2 bài KHÔNG CÓ ẢNH THỰC TẾ -> Điểm hình ảnh ÉP VỀ 0
             if not (has1 and has2):
                 anh_score = 0
 
@@ -885,3 +887,61 @@ def export_excel():
             "Loại đồ": item.loai_do,
             "Màu sắc": item.mau_sac,
             "Nơi nhặt": item.noi_nhat,
+            "Ngày nhặt": item.ngay_nhat,
+            "Trạng thái": "Đã hoàn trả" if item.trang_thai in ["DA_TRA", "Đã hoàn trả"] else "Đang lưu giữ"
+        } for i, item in enumerate(found_items)]
+
+        df_lost = pd.DataFrame(lost_data)
+        df_found = pd.DataFrame(found_data)
+
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine="openpyxl") as writer:
+            df_lost.to_excel(writer, sheet_name="Đồ báo mất", index=False)
+            df_found.to_excel(writer, sheet_name="Đồ báo nhặt", index=False)
+        
+        output.seek(0)
+
+        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"BaoCao_DoThatLac_{status_label}_{time_label}_{now_str}.xlsx"
+
+        return send_file(
+            output,
+            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        print("Lỗi xuất Excel:", e)
+        return "Lỗi xuất Excel", 500
+
+@app.route("/get-pin")
+def get_pin():
+    return jsonify({"pin": get_current_pin()})
+
+@app.route("/change-pin", methods=["GET", "POST"])
+def change_pin():
+    if request.method == "POST":
+        old_pin = request.form.get("old_pin", "").strip()
+        new_pin = request.form.get("new_pin", "").strip()
+        confirm_pin = request.form.get("confirm_pin", "").strip()
+
+        current_pin = get_current_pin()
+
+        if old_pin != current_pin:
+            return render_template("change_pin.html", error="Mã PIN cũ không chính xác!")
+
+        if new_pin != confirm_pin:
+            return render_template("change_pin.html", error="Mã PIN mới và Xác nhận PIN không trùng khớp!")
+
+        if len(new_pin) < 4:
+            return render_template("change_pin.html", error="Mã PIN mới phải có ít nhất 4 ký tự!")
+
+        if save_new_pin(new_pin):
+            return render_template("change_pin.html", success=f"Đổi Mã PIN thành công! Mã PIN mới là: {new_pin}")
+        else:
+            return render_template("change_pin.html", error="Lỗi không thể lưu mã PIN mới. Vui lòng thử lại!")
+
+    return render_template("change_pin.html")
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=True)
