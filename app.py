@@ -169,7 +169,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN CÂN BẰNG: TRỢ LỰC TỪ KHÓA TRÙNG VÀ ĐẢM BẢO CHUẨN ĐIỂM HÌNH ẢNH"""
+    """THUẬT TOÁN CHUẨN HÓA ĐIỂM HÌNH ẢNH: GIỚI HẠN MỐC THƯỞNG 45Đ CHO ẢNH BÌA SÁCH/ẢNH CHỤP LẠI"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -207,16 +207,16 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         except Exception:
             color_corr = 0.0
 
-        if good_count >= 10:
-            score = 50
-        elif good_count >= 6:
+        if good_count >= 12:
             score = 45 if is_same_keyword else 42
+        elif good_count >= 6:
+            score = 42 if is_same_keyword else 38
         elif good_count >= 3:
-            score = 42 if is_same_keyword else 35
+            score = 38 if is_same_keyword else 32
         elif good_count >= 1:
-            score = 35 if is_same_keyword else 28
+            score = 32 if is_same_keyword else 25
         else:
-            score = int(color_corr * 30) if is_same_keyword else int(color_corr * 25)
+            score = int(color_corr * 25)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -269,6 +269,12 @@ def similarity(text1, text2):
     
     if t1 == t2:
         return 1.0
+
+    # LỌC SỐ PHÒNG/SỐ LỚP CHÍNH XÁC (Phòng Tin 1 vs Phòng Tin 2 -> Trả về độ tương đồng cực thấp)
+    nums1 = re.findall(r'\d+', t1)
+    nums2 = re.findall(r'\d+', t2)
+    if nums1 and nums2 and nums1 != nums2:
+        return 0.1
 
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
@@ -651,7 +657,7 @@ def match_items():
             has1 = check_real_image(lost.hinh_anh)
             has2 = check_real_image(found.hinh_anh)
 
-            # LỚP 2: ĐIỂM OPENCV (TRUYỀN THÊM TRỢ LỰC TỪ KHÓA TRÙNG KHỚP)
+            # LỚP 2: ĐIỂM OPENCV
             if has1 and has2:
                 anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
             else:
