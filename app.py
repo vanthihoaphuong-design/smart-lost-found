@@ -16,7 +16,6 @@ import cloudinary.uploader
 
 VN_TZ = timezone(timedelta(hours=7))
 
-# Bọc an toàn OpenCV chống crash trên môi trường Render / Server
 HAS_OPENCV = False
 try:
     import cv2
@@ -67,8 +66,6 @@ with app.app_context():
         print(f"Lỗi Create DB All: {e}")
 
 FEATURE_CACHE = {}
-
-# Tập hợp các từ phụ / từ chỉ số lượng tiếng Việt cần bỏ khi xử lý từ lạ
 STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
 
 def check_real_image(img_path):
@@ -78,83 +75,49 @@ def check_real_image(img_path):
         str_path = str(img_path).strip().lower()
         if str_path in ["", "none", "null", "undefined"]:
             return False
-            
-        invalid_keywords = [
-            "chua co anh", "chưa có ảnh", "no_image", "default", 
-            "placeholder", "120?text="
-        ]
+        invalid_keywords = ["chua co anh", "chưa có ảnh", "no_image", "default", "placeholder", "120?text="]
         if any(k in str_path for k in invalid_keywords):
             return False
-
         if str_path.startswith("http://") or str_path.startswith("https://"):
             return True
-
         p = os.path.join(app.config.get("UPLOAD_FOLDER", "static/uploads"), str_path) if not os.path.isabs(str_path) else str_path
         return os.path.exists(p)
     except Exception:
         return False
 
-def get_feature_cache(img_path):
-    return FEATURE_CACHE.get(img_path) if img_path else None
-
-def save_feature_cache(img_path, features):
-    if img_path:
-        FEATURE_CACHE[img_path] = features
-
 def calculate_image_features(img_path):
     if not HAS_OPENCV or not check_real_image(img_path):
         return None
     
-    cached = get_feature_cache(img_path)
-    if cached is not None:
-        return cached
+    if img_path in FEATURE_CACHE:
+        return FEATURE_CACHE[img_path]
 
     try:
-        img = None
+        img_bytes = None
         if str(img_path).startswith("http://") or str(img_path).startswith("https://"):
             import urllib.request
-            req = urllib.request.Request(
-                str(img_path), 
-                headers={'User-Agent': 'Mozilla/5.0'}
-            )
-            with urllib.request.urlopen(req, timeout=3) as response:
-                img_array = np.asarray(bytearray(response.read()), dtype=np.uint8)
-                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+            req = urllib.request.Request(str(img_path), headers={'User-Agent': 'Mozilla/5.0'})
+            with urllib.request.urlopen(req, timeout=2.5) as response:
+                img_bytes = response.read()
         else:
             p = os.path.join(app.config["UPLOAD_FOLDER"], str(img_path)) if not os.path.isabs(str(img_path)) else str(img_path)
             if os.path.exists(p):
-                img = cv2.imread(p, cv2.IMREAD_COLOR)
+                with open(p, "rb") as f:
+                    img_bytes = f.read()
 
-        if img is None:
+        if not img_bytes:
             return None
 
-        # THU NHỎ ẢNH VỀ CHUẨN 200x200 NGAY ĐỂ TIẾT KIỆM 90% RAM RENDER
-        crop_img = cv2.resize(img, (200, 200), interpolation=cv2.INTER_AREA)
-        del img # Giải phóng bộ nhớ ảnh gốc ngay lập tức
-
-        # CHỈ CẮT VIỀN NẾU ẢNH CÓ NỀN TRẮNG THUẦN
-        try:
-            gray_temp = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
-            h_img, w_img = gray_temp.shape
-            corner_pixels = [gray_temp[0,0], gray_temp[0, w_img-1], gray_temp[h_img-1, 0], gray_temp[h_img-1, w_img-1]]
-            if sum(c > 235 for c in corner_pixels) >= 3:
-                _, thresh = cv2.threshold(gray_temp, 240, 255, cv2.THRESH_BINARY_INV)
-                contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if contours:
-                    c = max(contours, key=cv2.contourArea)
-                    x, y, w, h = cv2.boundingRect(c)
-                    if w > 20 and h > 20:
-                        crop_img = crop_img[y:y+h, x:x+w]
-                        crop_img = cv2.resize(crop_img, (200, 200), interpolation=cv2.INTER_AREA)
-        except Exception:
-            pass
+        # DÙNG PIL THU NHỎ KÍCH THƯỚC TRƯỚC KHI CHUYỂN OPENCV (SIÊU TIẾT KIỆM RAM)
+        pil_img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+        pil_img.thumbnail((180, 180))
+        crop_img = np.array(pil_img)[:, :, ::-1].copy() # PIL RGB -> OpenCV BGR
 
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         
         features = {}
-
         try:
-            orb = cv2.ORB_create(nfeatures=400) # Giới hạn 400 features để chạy siêu nhẹ
+            orb = cv2.ORB_create(nfeatures=300)
             kp, des = orb.detectAndCompute(gray, None)
             features["orb_keypoints"] = kp
             features["orb_descriptors"] = des
@@ -163,41 +126,37 @@ def calculate_image_features(img_path):
 
         try:
             hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
-            hist = cv2.calcHist([hsv], [0, 1], None, [18, 20], [0, 180, 0, 256])
+            hist = cv2.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256])
             if hist is not None:
                 cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
             features["hsv_hist"] = hist
         except Exception:
             features["hsv_hist"] = None
 
-        save_feature_cache(img_path, features)
+        FEATURE_CACHE[img_path] = features
         return features
     except Exception as e:
         print(f"Lỗi tính feature: {e}")
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN ĐỐI SÁNH HÌNH ẢNH: ĐÁNH GIÁ CHÍNH XÁC NÉT VÀ MÀU SẮC THỰC TẾ"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
 
-        str1 = str(img1_filename).strip()
-        str2 = str(img2_filename).strip()
-
-        if str1 == str2:
+        if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
 
-        features1 = calculate_image_features(img1_filename)
-        features2 = calculate_image_features(img2_filename)
+        f1 = calculate_image_features(img1_filename)
+        f2 = calculate_image_features(img2_filename)
 
-        if features1 is None or features2 is None:
+        if f1 is None or f2 is None:
             return 0, 0.0
 
         good_count = 0
         try:
-            kp1, des1 = features1.get("orb_keypoints", []), features1.get("orb_descriptors")
-            kp2, des2 = features2.get("orb_keypoints", []), features2.get("orb_descriptors")
+            kp1, des1 = f1.get("orb_keypoints", []), f1.get("orb_descriptors")
+            kp2, des2 = f2.get("orb_keypoints", []), f2.get("orb_descriptors")
             if des1 is not None and des2 is not None and len(kp1) >= 2 and len(kp2) >= 2:
                 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                 matches = bf.knnMatch(des1, des2, k=2)
@@ -209,24 +168,22 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
 
         color_corr = 0.0
         try:
-            hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
+            hist1, hist2 = f1.get("hsv_hist"), f2.get("hsv_hist")
             if hist1 is not None and hist2 is not None:
                 color_corr = max(0.0, float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)))
         except Exception:
             color_corr = 0.0
 
-        # TÍNH ĐIỂM ẢNH CHUẨN DỰA VÀO ĐIỂM NÉT VÀ ĐỘ TRÙNG MÀU HSV
-        if good_count >= 12:
+        if good_count >= 10:
             score = 50
-        elif good_count >= 8:
+        elif good_count >= 6:
             score = 40
-        elif good_count >= 4:
+        elif good_count >= 3:
             score = 30
         elif good_count >= 1:
             score = 20
         else:
-            # Nếu không tìm thấy nét ORB tương đồng, điểm ảnh tính theo độ trùng màu HSV (tối đa 25 điểm)
-            score = int(color_corr * 25)
+            score = int(color_corr * 22)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -235,11 +192,9 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         return 0, 0.0
 
 def get_core_keyword(text_name):
-    """TRÍCH XUẤT TỪ KHÓA CỨNG - TỰ ĐỘNG LỌC TỪ PHỤ VÀ TỪ LẠ"""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
-    
     synonyms_map = {
         "máy tính casio": ["casio", "fx580", "fx 580", "máy tính bỏ túi", "casio580"],
         "laptop": ["laptop", "macbook", "máy tính xách tay"],
@@ -268,7 +223,6 @@ def get_core_keyword(text_name):
         if any(re.search(r'\b' + re.escape(w) + r'\b', t) for w in words):
             return core_key
             
-    # Tự động lọc các từ phụ tiếng Việt (con, cái, chiếc...) đối với từ lạ
     tokens = [w for w in t.split() if w not in STOP_WORDS_VN]
     return tokens[0] if tokens else t
 
@@ -276,19 +230,14 @@ def similarity(text1, text2):
     if not text1 or not text2:
         return 0.0
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
-    
     if t1 == t2:
         return 1.0
-
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
-
     if k1 == k2 and k1 != "":
         return 0.90
-
     if t1 in t2 or t2 in t1:
         return 0.85
-
     return SequenceMatcher(None, t1, t2).ratio()
 
 def parse_date_flexible(date_str):
@@ -655,24 +604,19 @@ def match_items():
                 ten_sim = similarity(lost.ten_do, found.ten_do)
                 is_same_key = (key1 == key2 and key1 != "")
 
-                # LỚP 1: LỌC THÔNG MINH (TRÙNG TỪ KHÓA GỐC HOẶC ĐỘ TƯƠNG ĐỒNG TÊN > 60%)
+                # LỚP LỌC SƠ BỘ: CHỈ TÍNH ĐIỂM ẢNH CHO NGUYÊN CẶP CÓ KHẢ NĂNG TRÙNG
                 if not is_same_key and ten_sim < 0.60:
                     continue
 
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
 
-                # LỚP 2: ĐIỂM OPENCV TÍNH CHÍNH XÁC THEO HÌNH ẢNH
                 if has1 and has2:
                     anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
                 else:
                     anh_score, image_ratio = 0, 0.0
 
-                # LỚP 3: CHUẨN HÓA THANG ĐIỂM TỔNG CỐ ĐỊNH 100Đ
-                if is_same_key:
-                    ten_score = 15
-                else:
-                    ten_score = int(ten_sim * 15)
+                ten_score = 15 if is_same_key else int(ten_sim * 15)
 
                 mau_score = 0
                 m1 = str(lost.mau_sac or "").strip().lower()
@@ -697,9 +641,7 @@ def match_items():
                 if not (has1 and has2):
                     anh_score = 0
 
-                # ĐẢM BẢO TỔNG BẰNG ĐÚNG PHÉP CỘNG THỰC TẾ
                 score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-
                 image_confidence = int(min(100, image_ratio * 100))
 
                 reasons = []
@@ -756,7 +698,7 @@ def match_items():
                     "ngay": ngay_score
                 })
             except Exception as err:
-                print(f"Bỏ qua cặp bài lỗi dữ liệu/RAM ({lost.id} - {found.id}): {err}")
+                print(f"Bỏ qua cặp bài lỗi ({lost.id} - {found.id}): {err}")
                 continue
 
     matches.sort(key=lambda x: x["score"], reverse=True)
@@ -767,71 +709,72 @@ def teacher_check(lost_id, found_id):
     try:
         lost = LostItem.query.get_or_404(lost_id)
         found = FoundItem.query.get_or_404(found_id)
-    except Exception:
+
+        has1 = check_real_image(lost.hinh_anh)
+        has2 = check_real_image(found.hinh_anh)
+
+        key1 = get_core_keyword(lost.ten_do)
+        key2 = get_core_keyword(found.ten_do)
+        is_same_key = (key1 == key2 and key1 != "")
+
+        if has1 and has2:
+            anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
+        else:
+            anh_score, image_ratio = 0, 0.0
+
+        ten_score = 15 if is_same_key else int(similarity(lost.ten_do, found.ten_do) * 15)
+        
+        mau_score = 0
+        m1 = str(lost.mau_sac or "").strip().lower()
+        m2 = str(found.mau_sac or "").strip().lower()
+        if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
+            mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+        elif is_same_key:
+            mau_score = 12
+
+        vi_tri_score = 0
+        v1 = str(lost.noi_mat or "").strip().lower()
+        v2 = str(found.noi_nhat or "").strip().lower()
+        if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
+            vi_tri = similarity(lost.noi_mat, found.noi_nhat)
+            if vi_tri > 0.8:
+                vi_tri_score = 10
+            elif vi_tri > 0.5:
+                vi_tri_score = 5
+
+        ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+        if not (has1 and has2):
+            anh_score = 0
+
+        score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+
+        if score >= 75:
+            ket_luan = "🟢 Khả năng trùng khớp cao"
+        elif score >= 55:
+            ket_luan = "🟡 Có khả năng trùng khớp"
+        elif score >= 38:
+            ket_luan = "🟠 Có một số điểm tương đồng"
+        else:
+            ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+        image_warning = None
+        if has1 and has2 and image_ratio < 0.20:
+            image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
+        elif not (has1 and has2):
+            image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
+
+        return render_template(
+            "teacher_check.html",
+            lost=lost,
+            found=found,
+            score=score,
+            ket_luan=ket_luan,
+            image_warning=image_warning
+        )
+    except Exception as e:
+        print(f"Lỗi teacher check: {e}")
         return redirect(url_for("match_items"))
-
-    has1 = check_real_image(lost.hinh_anh)
-    has2 = check_real_image(found.hinh_anh)
-
-    key1 = get_core_keyword(lost.ten_do)
-    key2 = get_core_keyword(found.ten_do)
-    is_same_key = (key1 == key2 and key1 != "")
-
-    if has1 and has2:
-        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
-    else:
-        anh_score, image_ratio = 0, 0.0
-
-    ten_score = 15 if is_same_key else int(similarity(lost.ten_do, found.ten_do) * 15)
-    
-    mau_score = 0
-    m1 = str(lost.mau_sac or "").strip().lower()
-    m2 = str(found.mau_sac or "").strip().lower()
-    if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-        mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-    elif is_same_key:
-        mau_score = 12
-
-    vi_tri_score = 0
-    v1 = str(lost.noi_mat or "").strip().lower()
-    v2 = str(found.noi_nhat or "").strip().lower()
-    if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-        vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-        if vi_tri > 0.8:
-            vi_tri_score = 10
-        elif vi_tri > 0.5:
-            vi_tri_score = 5
-
-    ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-    if not (has1 and has2):
-        anh_score = 0
-
-    score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-
-    if score >= 75:
-        ket_luan = "🟢 Khả năng trùng khớp cao"
-    elif score >= 55:
-        ket_luan = "🟡 Có khả năng trùng khớp"
-    elif score >= 38:
-        ket_luan = "🟠 Có một số điểm tương đồng"
-    else:
-        ket_luan = "🔴 Khả năng trùng khớp thấp"
-
-    image_warning = None
-    if has1 and has2 and image_ratio < 0.20:
-        image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
-    elif not (has1 and has2):
-        image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
-
-    return render_template(
-        "teacher_check.html",
-        lost=lost,
-        found=found,
-        score=score,
-        ket_luan=ket_luan,
-        image_warning=image_warning
-    )
 
 @app.route("/confirm-return/<int:lost_id>/<int:found_id>", methods=["GET", "POST"])
 def confirm_return(lost_id, found_id):
