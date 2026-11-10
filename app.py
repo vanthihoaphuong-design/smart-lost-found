@@ -106,53 +106,42 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
 
 def _get_image_fingerprint(img_path):
     """
-    Trích xuất vân tay nét 256-bit (dHash 16x16) và cắt vùng trung tâm vật thể.
-    Siêu nhẹ RAM nhưng soi cực kỹ chi tiết nhỏ (mặt dây chuyền, logo, nét bút).
+    Trích xuất vân tay ảnh bằng PIL nhẹ RAM.
+    Tự động đệm viền vuông (Square Pad) để giữ chuẩn tỉ lệ hình dáng đồ vật.
     """
     data = _read_image_bytes(img_path)
     if not data:
         return None
 
     try:
-        from PIL import Image
+        from PIL import Image, ImageOps
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
+            
+            # Đệm viền trắng vuông cho khung hình
             w, h = im_rgb.size
+            max_side = max(w, h)
+            pad_w = (max_side - w) // 2
+            pad_h = (max_side - h) // 2
+            im_square = ImageOps.expand(im_rgb, (pad_w, pad_h, pad_w, pad_h), fill=(255, 255, 255))
 
-            # 1. TÍNH DHASH TOÀN BỘ ẢNH (16x16 -> 256 bits bắt khung hình)
-            im_gray = im_rgb.convert("L")
+            # 1. dHash Nét Khung Thể (16x16 -> 256 bits)
+            im_gray = im_square.convert("L")
             im_dh = im_gray.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh = list(im_dh.getdata())
-            dhash_full = 0
+            dhash_val = 0
             for row in range(16):
                 for col in range(16):
                     left = pixels_dh[row * 17 + col]
                     right = pixels_dh[row * 17 + col + 1]
-                    dhash_full = (dhash_full << 1) | int(left > right)
+                    dhash_val = (dhash_val << 1) | int(left > right)
 
-            # 2. CẮT VÙNG TRUNG TÂM (CENTER CROP 60%) ĐỂ SOI CHI TIẾT NHỎ (MẶT DÂY CHUYỀN, LOGO)
-            left_c = int(w * 0.2)
-            top_c = int(h * 0.2)
-            right_c = int(w * 0.8)
-            bottom_c = int(h * 0.8)
-            crop_center = im_gray.crop((left_c, top_c, right_c, bottom_c))
-            
-            im_dh_center = crop_center.resize((17, 16), Image.Resampling.LANCZOS)
-            pixels_center = list(im_dh_center.getdata())
-            dhash_center = 0
-            for row in range(16):
-                for col in range(16):
-                    left = pixels_center[row * 17 + col]
-                    right = pixels_center[row * 17 + col + 1]
-                    dhash_center = (dhash_center << 1) | int(left > right)
-
-            # 3. HISTOGRAM MÀU SẮC CHÍNH XÁC NÂNG CAO (PHÂN BIỆT RÕ XANH LÁ VS XANH DƯƠNG)
-            im_thumb = im_rgb.resize((24, 24))
+            # 2. Color Spectrum Histogram (16x16)
+            im_thumb = im_square.resize((16, 16))
             hist_color = im_thumb.histogram()
 
             return {
-                "dhash_full": dhash_full,
-                "dhash_center": dhash_center,
+                "dhash": dhash_val,
                 "hist": hist_color
             }
     except Exception as e:
@@ -163,8 +152,7 @@ def _get_image_fingerprint(img_path):
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
     """
-    Thuật toán đối sánh nét chi tiết nâng cao (Max 50đ).
-    Phân biệt rõ mặt dây chuyền khác nhau, vali khác màu và bù điểm cho góc chụp bút lệch.
+    Thuật toán đối sánh nét & dải màu chuẩn hóa (Max 50đ).
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
@@ -177,38 +165,33 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         f2 = _get_image_fingerprint(img2_filename)
 
         if f1 is None or f2 is None:
-            return (20, 0.4) if is_same_keyword else (0, 0.0)
+            return (32, 0.64) if is_same_keyword else (0, 0.0)
 
-        # Khoảng cách Nét toàn cảnh (256 bits)
-        dist_full = (f1["dhash_full"] ^ f2["dhash_full"]).bit_count()
-        # Khoảng cách Nét trung tâm (mặt dây chuyền, hoa văn)
-        dist_center = (f1["dhash_center"] ^ f2["dhash_center"]).bit_count()
+        # 1. Khoảng cách dHash (256 bits)
+        dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
 
-        # So sánh màu sắc (Cosine Similarity)
+        # 2. So sánh Cosine Histogram dải màu
         h1, h2 = f1["hist"], f2["hist"]
         dot = sum(a * b for a, b in zip(h1, h2))
         norm1 = sum(a * a for a in h1) ** 0.5
         norm2 = sum(b * b for b in h2) ** 0.5
         color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
 
-        # PHÁT HIỆN SỰ KHÁC BIỆT CHI TIẾT
-        # Nếu chi tiết trung tâm (mặt dây chuyền) khác nhau nhiều -> Phạt điểm nặng
-        if dist_center > 70:
-            score = 15  # Mặt dây chuyền khác nhau sẽ bị hạ điểm
-        elif color_sim < 0.65:
-            score = 18  # Vali khác màu (xanh lá vs xanh dương) sẽ bị hạ điểm
-        elif dist_full <= 35 or dist_center <= 30:
-            score = 48  # Trùng khớp nét hoàn hảo
-        elif dist_full <= 55 or dist_center <= 45:
-            score = 40  # Cùng loại bút bi chụp góc lệch/xa gần
-        elif dist_full <= 75:
-            score = 30
-        else:
-            score = 20
-
-        # Trợ lực vừa phải nếu cùng từ khóa tên đồ
-        if is_same_keyword and score < 25:
+        # THANG ĐIỂM LINH HOẠT VỚI NGƯỠNG THỰC TẾ
+        if dist_dh <= 45 or color_sim >= 0.88:
+            score = 48  # Giống nhau rõ rệt (Ví, Máy tính, Bút, Sữa...)
+        elif dist_dh <= 70 or color_sim >= 0.75:
+            score = 40  # Tương đồng nét & phom đồ
+        elif dist_dh <= 95 or color_sim >= 0.60:
+            score = 32  # Tương đồng vừa phải
+        elif color_sim >= 0.45:
             score = 25
+        else:
+            score = int(color_sim * 35)
+
+        # Trợ lực tối thiểu 35đ nếu cùng từ khóa tên đồ
+        if is_same_keyword and score < 35:
+            score = 35
 
         score = min(50, max(0, score))
         similarity_ratio = float(score / 50.0)
@@ -216,7 +199,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         return score, similarity_ratio
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return (20, 0.4) if is_same_keyword else (0, 0.0)
+        return (35, 0.70) if is_same_keyword else (0, 0.0)
 
 def get_core_keyword(text_name):
     if not text_name:
