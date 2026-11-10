@@ -5,8 +5,6 @@ import json
 import re
 import gc
 from datetime import datetime, timezone, timedelta
-from PIL import Image
-import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 from sqlalchemy import func
@@ -15,22 +13,7 @@ from difflib import SequenceMatcher
 import cloudinary
 import cloudinary.uploader
 
-HAS_IMAGEHASH = False
-try:
-    import imagehash
-    HAS_IMAGEHASH = True
-except Exception as e:
-    print(f"Cảnh báo ImageHash không khả dụng: {e}")
-
 VN_TZ = timezone(timedelta(hours=7))
-
-HAS_OPENCV = False
-try:
-    import cv2
-    import numpy as np
-    HAS_OPENCV = True
-except Exception as e:
-    print(f"Cảnh báo OpenCV không khả dụng: {e}")
 
 cloudinary.config(
     cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", ""),
@@ -92,69 +75,66 @@ def check_real_image(img_path):
     except Exception:
         return False
 
-def calculate_image_features(img_path):
+def _read_image_bytes(img_path, max_bytes=1_500_000):
+    """Đọc ảnh có giới hạn dung lượng để tránh tải ảnh lớn vào RAM."""
     if not check_real_image(img_path):
         return None
 
     try:
-        img_bytes = None
-        if str(img_path).startswith("http://") or str(img_path).startswith("https://"):
+        path = str(img_path).strip()
+        if path.startswith(("http://", "https://")):
             import urllib.request
-            req = urllib.request.Request(str(img_path), headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=2.0) as response:
-                img_bytes = response.read()
-        else:
-            p = os.path.join(app.config["UPLOAD_FOLDER"], str(img_path)) if not os.path.isabs(str(img_path)) else str(img_path)
-            if os.path.exists(p):
-                with open(p, "rb") as f:
-                    img_bytes = f.read()
+            req = urllib.request.Request(path, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=3) as response:
+                data = response.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                return None
+            return data
 
-        if not img_bytes:
+        local_path = path if os.path.isabs(path) else os.path.join(
+            app.config.get("UPLOAD_FOLDER", "static/uploads"), path
+        )
+        if not os.path.isfile(local_path):
             return None
-
-        features = {}
-        phash_val = None
-        crop_img = None
-
-        try:
-            pil_img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
-            if HAS_IMAGEHASH:
-                phash_val = imagehash.phash(pil_img)
-            
-            pil_img.thumbnail((100, 100)) # Thu nhỏ còn 100px siêu nhẹ
-            crop_img = np.array(pil_img)[:, :, ::-1].copy()
-            pil_img.close()
-        except Exception:
-            crop_img = None
-
-        features["phash"] = phash_val
-
-        if HAS_OPENCV and crop_img is not None:
-            gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
-            try:
-                orb = cv2.ORB_create(nfeatures=150)
-                kp, des = orb.detectAndCompute(gray, None)
-                features["orb_keypoints"] = kp
-                features["orb_descriptors"] = des
-            except Exception:
-                features["orb_keypoints"], features["orb_descriptors"] = [], None
-
-            try:
-                hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
-                hist = cv2.calcHist([hsv], [0, 1], None, [12, 12], [0, 180, 0, 256])
-                if hist is not None:
-                    cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
-                features["hsv_hist"] = hist
-            except Exception:
-                features["hsv_hist"] = None
-
-        del img_bytes
-        return features
+        if os.path.getsize(local_path) > max_bytes:
+            return None
+        with open(local_path, "rb") as f:
+            return f.read(max_bytes + 1)
     except Exception as e:
-        print(f"Lỗi tính feature: {e}")
+        print(f"Không đọc được ảnh: {e}")
         return None
 
+
+def _average_hash(img_path):
+    """Tạo mã ảnh 64-bit từ ảnh thu nhỏ; không dùng OpenCV/NumPy."""
+    data = _read_image_bytes(img_path)
+    if not data:
+        return None
+
+    try:
+        from PIL import Image
+        with Image.open(io.BytesIO(data)) as im:
+            im = im.convert("L")
+            im.thumbnail((64, 64))
+            im = im.resize((8, 8))
+            pixels = list(im.getdata())
+
+        if not pixels:
+            return None
+        avg = sum(pixels) / len(pixels)
+        value = 0
+        for pixel in pixels:
+            value = (value << 1) | int(pixel >= avg)
+        return value
+    except Exception as e:
+        print(f"Lỗi xử lý ảnh: {e}")
+        return None
+    finally:
+        del data
+
+
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
+    """So sánh ảnh nhẹ RAM bằng average-hash; không lưu đặc trưng ảnh trong bộ nhớ."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -162,68 +142,31 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
 
-        f1 = calculate_image_features(img1_filename)
-        f2 = calculate_image_features(img2_filename)
+        h1 = _average_hash(img1_filename)
+        h2 = _average_hash(img2_filename)
 
-        if f1 is None or f2 is None:
-            return (15, 0.3) if is_same_keyword else (0, 0.0)
+        # Không tự cộng điểm khi ảnh không đọc được.
+        if h1 is None or h2 is None:
+            return 0, 0.0
 
-        phash_sim = 0.0
-        p1, p2 = f1.get("phash"), f2.get("phash")
-        if p1 is not None and p2 is not None:
-            diff = p1 - p2
-            if diff <= 6:
-                phash_sim = 1.0
-            elif diff <= 12:
-                phash_sim = 0.8
-            elif diff <= 18:
-                phash_sim = 0.5
-            else:
-                phash_sim = 0.2
+        distance = (h1 ^ h2).bit_count()
+        similarity_ratio = max(0.0, 1.0 - distance / 64.0)
 
-        good_count = 0
-        if HAS_OPENCV:
-            try:
-                kp1, des1 = f1.get("orb_keypoints", []), f1.get("orb_descriptors")
-                kp2, des2 = f2.get("orb_keypoints", []), f2.get("orb_descriptors")
-                if des1 is not None and des2 is not None and len(kp1) >= 2 and len(kp2) >= 2:
-                    bf = cv2.BFMatcher(cv2.NORM_HAMMING)
-                    matches = bf.knnMatch(des1, des2, k=2)
-                    for m_pair in matches:
-                        if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
-                            good_count += 1
-            except Exception:
-                good_count = 0
-
-        color_corr = 0.0
-        if HAS_OPENCV:
-            try:
-                hist1, hist2 = f1.get("hsv_hist"), f2.get("hsv_hist")
-                if hist1 is not None and hist2 is not None:
-                    color_corr = max(0.0, float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)))
-            except Exception:
-                color_corr = 0.0
-
-        if good_count >= 6:
-            score = 50
-        elif phash_sim >= 0.8:
-            score = 42 if good_count >= 2 else 38
-        elif good_count >= 3:
-            score = 35
-        elif phash_sim >= 0.5:
+        # Điểm ảnh thận trọng: ảnh tương tự mới được điểm cao.
+        if distance <= 5:
+            score = 38
+        elif distance <= 10:
             score = 28
-        elif good_count >= 1:
-            score = 22
+        elif distance <= 16:
+            score = 16
         else:
-            score = int(color_corr * 20)
-            if is_same_keyword and score < 15:
-                score = 15
+            score = 0
 
-        score = min(50, max(0, score))
-        return score, float(score / 50.0)
+        return score, similarity_ratio
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return (15, 0.3) if is_same_keyword else (0, 0.0)
+        return 0, 0.0
+
 
 def get_core_keyword(text_name):
     if not text_name:
@@ -557,7 +500,10 @@ def edit_found(item_id):
 def dashboard():
     try:
         tong_so = LostItem.query.count()
-        all_items = LostItem.query.all()
+        # Chỉ lấy số lượng theo nhóm từ CSDL, không nạp toàn bộ bản ghi vào RAM.
+        all_items = db.session.query(
+            LostItem.loai_do, func.count(LostItem.id)
+        ).group_by(LostItem.loai_do).all()
     except Exception:
         tong_so = 0
         all_items = []
@@ -572,16 +518,16 @@ def dashboard():
 
     category_counts = {cat: 0 for cat in CATEGORIES_MAP.keys()}
 
-    for item in all_items:
-        raw_cat = str(item.loai_do).strip() if item.loai_do else "Khác"
+    for raw_value, item_count in all_items:
+        raw_cat = str(raw_value).strip() if raw_value else "Khác"
         mapped = False
         for new_cat, old_list in CATEGORIES_MAP.items():
             if any(old.lower() in raw_cat.lower() or raw_cat.lower() in old.lower() for old in old_list):
-                category_counts[new_cat] += 1
+                category_counts[new_cat] += int(item_count)
                 mapped = True
                 break
         if not mapped:
-            category_counts["Khác"] += 1
+            category_counts["Khác"] += int(item_count)
 
     thong_ke = [(cat, count) for cat, count in category_counts.items()]
     return render_template("dashboard.html", tong_so=tong_so, thong_ke=thong_ke)
@@ -623,69 +569,98 @@ def found_return(id):
 
 @app.route("/match")
 def match_items():
-    matches = []
+    """
+    Đối sánh theo từng nhóm dữ liệu nhỏ để giảm RAM trên Render Free.
+    Mặc định xét 100 tin mất mới nhất và 100 tin nhặt mới nhất,
+    chỉ giữ tối đa 40 kết quả tốt nhất để hiển thị.
+    Có thể điều chỉnh bằng biến môi trường MATCH_ITEM_LIMIT và MATCH_RESULT_LIMIT.
+    """
+    import heapq
+
+    matches_heap = []
+    item_limit = max(10, min(int(os.environ.get("MATCH_ITEM_LIMIT", "100")), 300))
+    result_limit = max(10, min(int(os.environ.get("MATCH_RESULT_LIMIT", "40")), 100))
+
     try:
-        # LẤY TOÀN BỘ CSDL CỦA NHÀ TRƯỜNG (KHÔNG DÙNG LIMIT HOẶC BỎ BỚT DỮ LIỆU)
-        lost_items = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").order_by(LostItem.id.desc()).all()
-        found_items = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA").order_by(FoundItem.id.desc()).all()
-    except Exception:
+        lost_items = (
+            LostItem.query
+            .filter(LostItem.trang_thai != "DA_TIM")
+            .order_by(LostItem.id.desc())
+            .limit(item_limit)
+            .all()
+        )
+        found_items = (
+            FoundItem.query
+            .filter(FoundItem.trang_thai != "DA_TRA")
+            .order_by(FoundItem.id.desc())
+            .limit(item_limit)
+            .all()
+        )
+    except Exception as e:
+        print(f"Lỗi tải dữ liệu đối sánh: {e}")
         lost_items, found_items = [], []
 
     for lost in lost_items:
         for found in found_items:
             try:
-                # 1. TÍNH ĐIỂM VĂN BẢN TRƯỚC (RẤT NHẸ RAM)
                 key1 = get_core_keyword(lost.ten_do)
                 key2 = get_core_keyword(found.ten_do)
                 ten_sim = similarity(lost.ten_do, found.ten_do)
-                is_same_key = (key1 == key2 and key1 != "")
+                is_same_key = key1 == key2 and bool(key1)
 
-                # LỚP LỌC SƠ BỘ VĂN BẢN (CHỈ XỬ LÝ ẢNH NẾU TỪ KHÓA TRÙNG HOẶC ĐỘ TƯƠNG ĐỒNG TÊN >= 45%)
+                # Loại sớm những cặp tên đồ quá khác nhau.
                 if not is_same_key and ten_sim < 0.45:
                     continue
 
                 ten_score = 15 if is_same_key else int(ten_sim * 15)
 
-                mau_score = 0
                 m1 = str(lost.mau_sac or "").strip().lower()
                 m2 = str(found.mau_sac or "").strip().lower()
-                if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-                    mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-                elif is_same_key:
-                    mau_score = 12
+                mau_score = 0
+                if m1 not in ("", "none", "null") and m2 not in ("", "none", "null"):
+                    mau_score = int(similarity(m1, m2) * 15)
 
-                vi_tri_score = 0
                 v1 = str(lost.noi_mat or "").strip().lower()
                 v2 = str(found.noi_nhat or "").strip().lower()
-                if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-                    vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-                    if vi_tri > 0.8:
-                        vi_tri_score = 10
-                    elif vi_tri > 0.5:
-                        vi_tri_score = 5
+                vi_tri_score = 0
+                if v1 and v2 and v1 not in ("none", "null") and v2 not in ("none", "null"):
+                    vi_tri = similarity(v1, v2)
+                    vi_tri_score = 10 if vi_tri > 0.8 else (5 if vi_tri > 0.5 else 0)
 
                 ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-                # 2. CHỈ TẢI ẢNH KHI CẶP BÀI NÀY CÓ TỔNG ĐIỂM VĂN BẢN HỢP LỆ (BẢO VỆ RAM 100%)
                 text_total = ten_score + mau_score + vi_tri_score + ngay_score
-                
+
+                # Chỉ xử lý ảnh cho cặp đã có thông tin mô tả tương đối phù hợp.
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
-
-                # Chỉ gọi OpenCV/pHash tải ảnh nếu cặp bài đăng đạt chuẩn thông tin text
-                if has1 and has2 and (is_same_key or text_total >= 15):
-                    anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
+                if has1 and has2 and (is_same_key or text_total >= 20):
+                    anh_score, image_ratio = image_score(
+                        lost.hinh_anh, found.hinh_anh,
+                        is_same_keyword=is_same_key
+                    )
                 else:
                     anh_score, image_ratio = 0, 0.0
 
-                if not (has1 and has2):
-                    anh_score = 0
+                score = anh_score + text_total
 
-                score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-                image_confidence = int(min(100, image_ratio * 100))
+                # Không để tên đồ khác loại được xếp thành cặp phù hợp cao.
+                if not is_same_key and ten_sim < 0.60:
+                    score = min(score, 32)
+
+                if score < 20:
+                    continue
+
+                if score >= 75:
+                    ket_luan = "🟢 Khả năng trùng khớp cao"
+                elif score >= 55:
+                    ket_luan = "🟡 Có khả năng trùng khớp"
+                elif score >= 38:
+                    ket_luan = "🟠 Có một số điểm tương đồng"
+                else:
+                    ket_luan = "🔴 Cần kiểm tra thêm"
 
                 reasons = []
-                if has1 and has2 and anh_score >= 20:
+                if anh_score >= 16:
                     reasons.append("Hình ảnh có điểm tương đồng")
                 if ten_score >= 10:
                     reasons.append("Tên đồ tương đồng")
@@ -696,15 +671,7 @@ def match_items():
                 if ngay_score >= 6:
                     reasons.append("Thời gian khớp/gần nhau")
 
-                if score >= 75:
-                    ket_luan = "🟢 Khả năng trùng khớp cao"
-                elif score >= 55:
-                    ket_luan = "🟡 Có khả năng trùng khớp"
-                elif score >= 38:
-                    ket_luan = "🟠 Có một số điểm tương đồng"
-                else:
-                    ket_luan = "🔴 Khả năng trùng khớp thấp"
-
+                image_confidence = int(min(100, image_ratio * 100))
                 details = {
                     "hinh_anh": anh_score,
                     "ten_do": ten_score,
@@ -719,7 +686,7 @@ def match_items():
                     "image_confidence": image_confidence
                 }
 
-                matches.append({
+                result = {
                     "lost": lost,
                     "found": found,
                     "score": score,
@@ -736,16 +703,21 @@ def match_items():
                     "mau_sac": mau_score,
                     "vi_tri": vi_tri_score,
                     "ngay": ngay_score
-                })
+                }
+
+                # Chỉ giữ các kết quả tốt nhất, không tích lũy toàn bộ cặp trong RAM.
+                heapq.heappush(matches_heap, (score, int(lost.id), int(found.id), result))
+                if len(matches_heap) > result_limit:
+                    heapq.heappop(matches_heap)
+
             except Exception as err:
                 print(f"Bỏ qua cặp bài lỗi ({lost.id} - {found.id}): {err}")
-                continue
 
-    # ÉP GIẢI PHÓNG RAM ĐỊNH KỲ
+    matches = [entry[3] for entry in sorted(matches_heap, reverse=True)]
+    del matches_heap, lost_items, found_items
     gc.collect()
-
-    matches.sort(key=lambda x: x["score"], reverse=True)
     return render_template("match.html", matches=matches)
+
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
 def teacher_check(lost_id, found_id):
@@ -862,6 +834,7 @@ def confirm_return(lost_id, found_id):
 @app.route("/export-excel", methods=["GET"])
 def export_excel():
     try:
+        import pandas as pd
         status = request.args.get("status", "all")
         month = request.args.get("month", "")
         year = request.args.get("year", "")
@@ -967,4 +940,4 @@ def change_pin():
     return render_template("change_pin.html")
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(host="0.0.0.0", port=5000, debug=False)
