@@ -165,11 +165,13 @@ def _get_image_fingerprint(img_path):
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
     """
-    Thuật toán đối sánh ảnh linh hoạt - Đã giải quyết triệt để lỗi dậm chân 20 điểm.
+    Thuật toán đối sánh ảnh phân loại thực tế:
+    - Ảnh trùng khớp màu & dáng (Ví đen - Ví đen): 42 - 48/50đ
+    - Khác màu hoặc khác loại đồ (Bút xanh - Bút đỏ, Balo - Túi xách): 12 - 15/50đ
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
-            return (20, 0.40) if is_same_keyword else (0, 0.0)
+            return 0, 0.0
 
         if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
@@ -178,35 +180,39 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         f2 = _get_image_fingerprint(img2_filename)
 
         if f1 is None or f2 is None:
-            return (42, 0.84) if is_same_keyword else (0, 0.0)
+            return (15, 0.30) if is_same_keyword else (0, 0.0)
 
-        # 1. Khoảng cách bit dHash
+        # 1. Khoảng cách dHash
         dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
         dist_center = (f1["dhash_center"] ^ f2["dhash_center"]).bit_count()
 
-        # 2. So sánh Histogram dải màu RGB
+        # 2. So sánh Cosine Histogram dải màu RGB
         h1, h2 = f1["hist"], f2["hist"]
         dot = sum(a * b for a, b in zip(h1, h2))
         norm1 = sum(a * a for a in h1) ** 0.5
         norm2 = sum(b * b for b in h2) ** 0.5
         color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
 
-        # TÍNH ĐIỂM HÌNH ÁNH THEO NGƯỠNG RỘNG
-        if color_sim < 0.60:
-            score = 12  # Phạt nặng đồ khác hẳn màu (Vali xanh vs Vali vàng)
-        elif dist_dh <= 85 or dist_center <= 85 or color_sim >= 0.78:
-            score = 48  # Giống nhau tối đa
-        elif dist_dh <= 125 or dist_center <= 120 or color_sim >= 0.65:
-            score = 42  # Giống nhau rõ rệt (Ví, Bút, Chuột, Máy tính, Sữa)
+        # PHẠT NẶNG ĐỒ KHÁC MÀU VÀ KHÁC DÁNG
+        # Nếu khác dải màu (Bút đỏ vs Bút xanh, Balo đen vs Túi xách nâu) -> Khống chế tối đa 12-15đ
+        if color_sim < 0.72:
+            score = 12
+        elif dist_center > 100:
+            score = 15
+        elif dist_dh <= 60 and dist_center <= 60 and color_sim >= 0.85:
+            score = 48  # Giống nhau tuyệt đối
+        elif dist_dh <= 90 or color_sim >= 0.78:
+            score = 40  # Giống nhau rõ rệt
         else:
-            score = 35
+            score = 20
 
-        # ĐẢM BẢO TRỢ LỰC KHI CÙNG TỪ KHÓA TÊN ĐỒ VẬT
+        # TRỢ LỰC CÓ ĐIỀU KIỆN CHẶT CHẼ
+        # Chỉ trợ lực khi DẢI MÀU THỰC TẾ tương đồng (color_sim >= 0.72)
         if is_same_keyword:
-            if color_sim >= 0.60:
-                score = max(score, 42)  # Ảnh cùng đồ vật -> Ép lên 42 - 48đ
+            if color_sim >= 0.72 and dist_center <= 100:
+                score = max(score, 40)
             else:
-                score = min(score, 18)  # Khác màu rõ rệt -> Khống chế 18đ
+                score = min(score, 15)  # Trùng tên nhưng khác màu/dáng -> Chặn điểm ở 15đ!
 
         score = min(50, max(0, score))
         similarity_ratio = float(score / 50.0)
@@ -214,7 +220,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         return score, similarity_ratio
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return (42, 0.84) if is_same_keyword else (0, 0.0)
+        return (15, 0.30) if is_same_keyword else (0, 0.0)
 
 def get_core_keyword(text_name):
     if not text_name:
