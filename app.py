@@ -105,10 +105,7 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
         return None
 
 def _get_image_fingerprint(img_path):
-    """
-    Trích xuất vân tay ảnh (dHash + aHash + Hist màu) bằng PIL thuần.
-    Tự động crop xén viền trắng thừa để bắt chính xác tâm điểm đồ vật.
-    """
+    """Trích xuất ma trận màu & độ sáng chuẩn 32x32 bằng PIL thuần (Không tốn RAM Render)."""
     data = _read_image_bytes(img_path)
     if not data:
         return None
@@ -118,50 +115,25 @@ def _get_image_fingerprint(img_path):
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
             
-            # Cắt bỏ viền trắng/viền thừa xung quanh nếu có
-            bbox = im_rgb.getbbox()
-            if bbox:
-                im_rgb = im_rgb.crop(bbox)
-
-            im_gray = im_rgb.convert("L")
+            # 1. Thu nhỏ về 32x32 để so sánh dải pixel trực tiếp
+            im_thumb = im_rgb.resize((32, 32), Image.Resampling.BILINEAR)
+            pixels = list(im_thumb.getdata())
             
-            # 1. dHash (Difference Hash 8x8)
-            im_dh = im_gray.resize((9, 8), Image.Resampling.LANCZOS)
-            pixels_dh = list(im_dh.getdata())
-            dhash_val = 0
-            for row in range(8):
-                for col in range(8):
-                    left = pixels_dh[row * 9 + col]
-                    right = pixels_dh[row * 9 + col + 1]
-                    dhash_val = (dhash_val << 1) | int(left > right)
-
-            # 2. aHash (Average Hash 8x8)
-            im_ah = im_gray.resize((8, 8), Image.Resampling.BILINEAR)
-            pixels_ah = list(im_ah.getdata())
-            avg = sum(pixels_ah) / max(1, len(pixels_ah))
-            ahash_val = 0
-            for pixel in pixels_ah:
-                ahash_val = (ahash_val << 1) | int(pixel >= avg)
-
-            # 3. Color Spectrum Histogram (16x16)
-            im_thumb = im_rgb.resize((16, 16))
-            hist_color = im_thumb.histogram()
+            # 2. Lấy Histogram dải màu RGB
+            hist = im_rgb.histogram()
 
             return {
-                "dhash": dhash_val,
-                "ahash": ahash_val,
-                "hist": hist_color
+                "pixels": pixels,
+                "hist": hist
             }
     except Exception as e:
-        print(f"Lỗi tính đặc trưng ảnh: {e}")
+        print(f"Lỗi tính fingerprint: {e}")
         return None
     finally:
         del data
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """
-    So sánh độ tương đồng hình ảnh chính xác theo thang điểm tối đa 50.
-    """
+    """Chấm điểm hình ảnh thực tế linh hoạt theo độ giống nhau thực sự (Max 50đ)."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -173,32 +145,41 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         f2 = _get_image_fingerprint(img2_filename)
 
         if f1 is None or f2 is None:
-            return (30, 0.6) if is_same_keyword else (0, 0.0)
+            return (20, 0.4) if is_same_keyword else (0, 0.0)
 
-        dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
-        dist_ah = (f1["ahash"] ^ f2["ahash"]).bit_count()
+        # 1. SO SÁNH MA TRẬN PIXEL (32x32 = 1024 điểm ảnh)
+        p1, p2 = f1["pixels"], f2["pixels"]
+        total_diff = sum(abs(r1-r2) + abs(g1-g2) + abs(b1-b2) for (r1,g1,b1), (r2,g2,b2) in zip(p1, p2))
+        max_possible_diff = 1024 * 255 * 3
+        pixel_sim = max(0.0, 1.0 - (total_diff / max_possible_diff))
 
+        # 2. SO SÁNH HISTOGRAM MÀU SẮC (COSINE SIMILARITY)
         h1, h2 = f1["hist"], f2["hist"]
         dot = sum(a * b for a, b in zip(h1, h2))
         norm1 = sum(a * a for a in h1) ** 0.5
         norm2 = sum(b * b for b in h2) ** 0.5
         color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
 
-        # THANG ĐIỂM CHUẨN ĐỊNH HƯỚNG THEO THỰC TẾ ĐỒ VẬT TRÙNG KHỚP
-        if dist_dh <= 12 or dist_ah <= 10:
-            score = 48
-        elif dist_dh <= 20 or dist_ah <= 16:
-            score = 38
-        elif dist_dh <= 26 or color_sim >= 0.75:
-            score = 30
-        elif color_sim >= 0.55:
+        # KẾT HỢP ĐỘ TƯƠNG ĐỒNG (pixel_sim 60% + color_sim 40%)
+        combined_sim = (pixel_sim * 0.6) + (color_sim * 0.4)
+
+        # QUY ĐỔI SANG THANG ĐIỂM 50 CHÍNH XÁC VÀ LINH HOẠT
+        if combined_sim >= 0.85:
+            score = 48  # Ảnh gần như giống nhau hoàn hảo (Ví tiền, Chuột...)
+        elif combined_sim >= 0.75:
+            score = 42  # Giống nhau rõ rệt
+        elif combined_sim >= 0.65:
+            score = 35  # Tương đồng khá
+        elif combined_sim >= 0.55:
+            score = 28  # Tương đồng vừa phải
+        elif combined_sim >= 0.45:
             score = 22
         else:
-            score = int(color_sim * 20)
+            score = int(combined_sim * 40)
 
-        # Trợ lực tối thiểu 32/50 điểm nếu trùng từ khóa tên đồ
-        if is_same_keyword and score < 32:
-            score = 32
+        # Trợ lực tối thiểu 25đ nếu cùng từ khóa tên đồ
+        if is_same_keyword and score < 25:
+            score = 25
 
         score = min(50, max(0, score))
         similarity_ratio = float(score / 50.0)
@@ -206,7 +187,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         return score, similarity_ratio
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return (30, 0.6) if is_same_keyword else (0, 0.0)
+        return (20, 0.4) if is_same_keyword else (0, 0.0)
 
 def get_core_keyword(text_name):
     if not text_name:
