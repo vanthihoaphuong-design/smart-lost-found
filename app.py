@@ -113,18 +113,23 @@ def calculate_image_features(img_path):
         img = None
         if str(img_path).startswith("http://") or str(img_path).startswith("https://"):
             import urllib.request
-            req = urllib.request.urlopen(str(img_path), timeout=5)
-            arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
-            img = cv2.imdecode(arr, -1)
+            req = urllib.request.Request(
+                str(img_path), 
+                headers={'User-Agent': 'Mozilla/5.0'}
+            )
+            with urllib.request.urlopen(req, timeout=4) as response:
+                img_array = np.asarray(bytearray(response.read()), dtype=np.uint8)
+                # TỰ ĐỘNG THU NHỎ KÍCH THƯỚC ẢNH NGAY KHI GIẢI MÃ CHỐNG TRÀN RAM RENDER (OOM)
+                img = cv2.imdecode(img_array, cv2.IMREAD_REDUCED_COLOR_4)
         else:
             p = os.path.join(app.config["UPLOAD_FOLDER"], str(img_path)) if not os.path.isabs(str(img_path)) else str(img_path)
             if os.path.exists(p):
-                img = cv2.imread(p)
+                img = cv2.imread(p, cv2.IMREAD_REDUCED_COLOR_4)
 
         if img is None:
             return None
 
-        # CHỈ CẮT VIỀN NẾU ẢNH CÓ NỀN TRẮNG THUẦN (ẢNH STUDIO/CATALOG/MẶT DÂY CHUYỀN)
+        # CHỈ CẮT VIỀN NẾU ẢNH CÓ NỀN TRẮNG THUẦN
         try:
             gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             h_img, w_img = gray_temp.shape
@@ -169,7 +174,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN CHUẨN HÓA ĐIỂM HÌNH ẢNH: GIỚI HẠN MỐC THƯỞNG 45Đ CHO ẢNH BÌA SÁCH/ẢNH CHỤP LẠI"""
+    """THUẬT TOÁN CÂN BẰNG: TRỢ LỰC TỪ KHÓA TRÙNG VÀ ĐẢM BẢO CHUẨN ĐIỂM HÌNH ẢNH"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -207,16 +212,16 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         except Exception:
             color_corr = 0.0
 
-        if good_count >= 12:
-            score = 45 if is_same_keyword else 42
+        if good_count >= 10:
+            score = 50
         elif good_count >= 6:
-            score = 42 if is_same_keyword else 38
+            score = 45 if is_same_keyword else 42
         elif good_count >= 3:
-            score = 38 if is_same_keyword else 32
+            score = 42 if is_same_keyword else 35
         elif good_count >= 1:
-            score = 32 if is_same_keyword else 25
+            score = 35 if is_same_keyword else 28
         else:
-            score = int(color_corr * 25)
+            score = int(color_corr * 30) if is_same_keyword else int(color_corr * 25)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -269,12 +274,6 @@ def similarity(text1, text2):
     
     if t1 == t2:
         return 1.0
-
-    # LỌC SỐ PHÒNG/SỐ LỚP CHÍNH XÁC (Phòng Tin 1 vs Phòng Tin 2 -> Trả về độ tương đồng cực thấp)
-    nums1 = re.findall(r'\d+', t1)
-    nums2 = re.findall(r'\d+', t2)
-    if nums1 and nums2 and nums1 != nums2:
-        return 0.1
 
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
@@ -645,111 +644,115 @@ def match_items():
 
     for lost in lost_items:
         for found in found_items:
-            key1 = get_core_keyword(lost.ten_do)
-            key2 = get_core_keyword(found.ten_do)
-            ten_sim = similarity(lost.ten_do, found.ten_do)
-            is_same_key = (key1 == key2 and key1 != "")
+            try:
+                key1 = get_core_keyword(lost.ten_do)
+                key2 = get_core_keyword(found.ten_do)
+                ten_sim = similarity(lost.ten_do, found.ten_do)
+                is_same_key = (key1 == key2 and key1 != "")
 
-            # LỚP 1: LỌC THÔNG MINH (TRÙNG TỪ KHÓA GỐC HOẶC ĐỘ TƯƠNG ĐỒNG TÊN > 60%)
-            if not is_same_key and ten_sim < 0.60:
+                # LỚP 1: LỌC THÔNG MINH (TRÙNG TỪ KHÓA GỐC HOẶC ĐỘ TƯƠNG ĐỒNG TÊN > 60%)
+                if not is_same_key and ten_sim < 0.60:
+                    continue
+
+                has1 = check_real_image(lost.hinh_anh)
+                has2 = check_real_image(found.hinh_anh)
+
+                # LỚP 2: ĐIỂM OPENCV (TRUYỀN THÊM TRỢ LỰC TỪ KHÓA TRÙNG KHỚP)
+                if has1 and has2:
+                    anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
+                else:
+                    anh_score, image_ratio = 0, 0.0
+
+                # LỚP 3: CHUẨN HÓA THANG ĐIỂM TỔNG CỐ ĐỊNH 100Đ
+                if is_same_key:
+                    ten_score = 15
+                else:
+                    ten_score = int(ten_sim * 15)
+
+                mau_score = 0
+                m1 = str(lost.mau_sac or "").strip().lower()
+                m2 = str(found.mau_sac or "").strip().lower()
+                if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
+                    mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+                elif is_same_key:
+                    mau_score = 12
+
+                vi_tri_score = 0
+                v1 = str(lost.noi_mat or "").strip().lower()
+                v2 = str(found.noi_nhat or "").strip().lower()
+                if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
+                    vi_tri = similarity(lost.noi_mat, found.noi_nhat)
+                    if vi_tri > 0.8:
+                        vi_tri_score = 10
+                    elif vi_tri > 0.5:
+                        vi_tri_score = 5
+
+                ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+                if not (has1 and has2):
+                    anh_score = 0
+
+                # ĐẢM BẢO TỔNG BẰNG ĐÚNG PHÉP CỘNG THỰC TẾ
+                score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+
+                image_confidence = int(min(100, image_ratio * 100))
+
+                reasons = []
+                if has1 and has2 and anh_score >= 20:
+                    reasons.append("Hình ảnh có điểm tương đồng")
+                if ten_score >= 10:
+                    reasons.append("Tên đồ tương đồng")
+                if mau_score >= 10:
+                    reasons.append("Màu sắc tương đồng")
+                if vi_tri_score >= 5:
+                    reasons.append("Vị trí liên quan")
+                if ngay_score >= 6:
+                    reasons.append("Thời gian khớp/gần nhau")
+
+                if score >= 75:
+                    ket_luan = "🟢 Khả năng trùng khớp cao"
+                elif score >= 55:
+                    ket_luan = "🟡 Có khả năng trùng khớp"
+                elif score >= 38:
+                    ket_luan = "🟠 Có một số điểm tương đồng"
+                else:
+                    ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+                details = {
+                    "hinh_anh": anh_score,
+                    "ten_do": ten_score,
+                    "mau_sac": mau_score,
+                    "vi_tri": vi_tri_score,
+                    "ngay": ngay_score,
+                    "score_image": anh_score,
+                    "score_name": ten_score,
+                    "score_color": mau_score,
+                    "score_location": vi_tri_score,
+                    "score_date": ngay_score,
+                    "image_confidence": image_confidence
+                }
+
+                matches.append({
+                    "lost": lost,
+                    "found": found,
+                    "score": score,
+                    "ket_luan": ket_luan,
+                    "reason": reasons,
+                    "details": details,
+                    "score_image": anh_score,
+                    "score_name": ten_score,
+                    "score_color": mau_score,
+                    "score_location": vi_tri_score,
+                    "score_date": ngay_score,
+                    "hinh_anh": anh_score,
+                    "ten_do": ten_score,
+                    "mau_sac": mau_score,
+                    "vi_tri": vi_tri_score,
+                    "ngay": ngay_score
+                })
+            except Exception as err:
+                print(f"Bỏ qua cặp bài lỗi dữ liệu/RAM ({lost.id} - {found.id}): {err}")
                 continue
-
-            has1 = check_real_image(lost.hinh_anh)
-            has2 = check_real_image(found.hinh_anh)
-
-            # LỚP 2: ĐIỂM OPENCV
-            if has1 and has2:
-                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
-            else:
-                anh_score, image_ratio = 0, 0.0
-
-            # LỚP 3: CHUẨN HÓA THANG ĐIỂM TỔNG CỐ ĐỊNH 100Đ
-            if is_same_key:
-                ten_score = 15
-            else:
-                ten_score = int(ten_sim * 15)
-
-            mau_score = 0
-            m1 = str(lost.mau_sac or "").strip().lower()
-            m2 = str(found.mau_sac or "").strip().lower()
-            if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-                mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-            elif is_same_key:
-                mau_score = 12
-
-            vi_tri_score = 0
-            v1 = str(lost.noi_mat or "").strip().lower()
-            v2 = str(found.noi_nhat or "").strip().lower()
-            if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-                vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-                if vi_tri > 0.8:
-                    vi_tri_score = 10
-                elif vi_tri > 0.5:
-                    vi_tri_score = 5
-
-            ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-            if not (has1 and has2):
-                anh_score = 0
-
-            # ĐẢM BẢO TỔNG BẰNG ĐÚNG PHÉP CỘNG THỰC TẾ
-            score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-
-            image_confidence = int(min(100, image_ratio * 100))
-
-            reasons = []
-            if has1 and has2 and anh_score >= 20:
-                reasons.append("Hình ảnh có điểm tương đồng")
-            if ten_score >= 10:
-                reasons.append("Tên đồ tương đồng")
-            if mau_score >= 10:
-                reasons.append("Màu sắc tương đồng")
-            if vi_tri_score >= 5:
-                reasons.append("Vị trí liên quan")
-            if ngay_score >= 6:
-                reasons.append("Thời gian khớp/gần nhau")
-
-            if score >= 75:
-                ket_luan = "🟢 Khả năng trùng khớp cao"
-            elif score >= 55:
-                ket_luan = "🟡 Có khả năng trùng khớp"
-            elif score >= 38:
-                ket_luan = "🟠 Có một số điểm tương đồng"
-            else:
-                ket_luan = "🔴 Khả năng trùng khớp thấp"
-
-            details = {
-                "hinh_anh": anh_score,
-                "ten_do": ten_score,
-                "mau_sac": mau_score,
-                "vi_tri": vi_tri_score,
-                "ngay": ngay_score,
-                "score_image": anh_score,
-                "score_name": ten_score,
-                "score_color": mau_score,
-                "score_location": vi_tri_score,
-                "score_date": ngay_score,
-                "image_confidence": image_confidence
-            }
-
-            matches.append({
-                "lost": lost,
-                "found": found,
-                "score": score,
-                "ket_luan": ket_luan,
-                "reason": reasons,
-                "details": details,
-                "score_image": anh_score,
-                "score_name": ten_score,
-                "score_color": mau_score,
-                "score_location": vi_tri_score,
-                "score_date": ngay_score,
-                "hinh_anh": anh_score,
-                "ten_do": ten_score,
-                "mau_sac": mau_score,
-                "vi_tri": vi_tri_score,
-                "ngay": ngay_score
-            })
 
     matches.sort(key=lambda x: x["score"], reverse=True)
     return render_template("match.html", matches=matches)
