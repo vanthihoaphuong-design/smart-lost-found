@@ -3,6 +3,7 @@ import io
 import uuid
 import json
 import re
+import gc
 from datetime import datetime, timezone, timedelta
 from PIL import Image
 import pandas as pd
@@ -73,7 +74,6 @@ with app.app_context():
     except Exception as e:
         print(f"Lỗi Create DB All: {e}")
 
-FEATURE_CACHE = {}
 STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
 
 def check_real_image(img_path):
@@ -96,16 +96,13 @@ def check_real_image(img_path):
 def calculate_image_features(img_path):
     if not check_real_image(img_path):
         return None
-    
-    if img_path in FEATURE_CACHE:
-        return FEATURE_CACHE[img_path]
 
     try:
         img_bytes = None
         if str(img_path).startswith("http://") or str(img_path).startswith("https://"):
             import urllib.request
             req = urllib.request.Request(str(img_path), headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=3.0) as response:
+            with urllib.request.urlopen(req, timeout=2.0) as response:
                 img_bytes = response.read()
         else:
             p = os.path.join(app.config["UPLOAD_FOLDER"], str(img_path)) if not os.path.isabs(str(img_path)) else str(img_path)
@@ -117,27 +114,26 @@ def calculate_image_features(img_path):
             return None
 
         features = {}
-
-        # 1. TÍNH PHASH VÀ THU NHỎ KÍCH THƯỚC (BỌC TRY-EXCEPT BẢO VỆ)
         phash_val = None
+        crop_img = None
+
         try:
             pil_img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
             if HAS_IMAGEHASH:
                 phash_val = imagehash.phash(pil_img)
             
-            pil_img.thumbnail((180, 180))
+            pil_img.thumbnail((120, 120)) # Thu nhỏ ảnh còn 120px để siêu nhẹ RAM
             crop_img = np.array(pil_img)[:, :, ::-1].copy()
-        except Exception as e_pil:
-            print(f"Lỗi xử lý PIL/pHash: {e_pil}")
+            pil_img.close()
+        except Exception:
             crop_img = None
 
         features["phash"] = phash_val
 
-        # 2. XỬ LÝ OPENCV TÍNH ORB VÀ HSV
         if HAS_OPENCV and crop_img is not None:
             gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
             try:
-                orb = cv2.ORB_create(nfeatures=300)
+                orb = cv2.ORB_create(nfeatures=200)
                 kp, des = orb.detectAndCompute(gray, None)
                 features["orb_keypoints"] = kp
                 features["orb_descriptors"] = des
@@ -146,21 +142,20 @@ def calculate_image_features(img_path):
 
             try:
                 hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
-                hist = cv2.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256])
+                hist = cv2.calcHist([hsv], [0, 1], None, [12, 12], [0, 180, 0, 256])
                 if hist is not None:
                     cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
                 features["hsv_hist"] = hist
             except Exception:
                 features["hsv_hist"] = None
 
-        FEATURE_CACHE[img_path] = features
+        del img_bytes
         return features
     except Exception as e:
         print(f"Lỗi tính feature: {e}")
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN ĐỐI SÁNH HYBRID (pHash + ORB + HSV)"""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -174,7 +169,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if f1 is None or f2 is None:
             return (15, 0.3) if is_same_keyword else (0, 0.0)
 
-        # NẤC 1: TÍNH ĐỘ TƯƠNG ĐỒNG THEO pHash
         phash_sim = 0.0
         p1, p2 = f1.get("phash"), f2.get("phash")
         if p1 is not None and p2 is not None:
@@ -188,7 +182,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             else:
                 phash_sim = 0.2
 
-        # NẤC 2: TÍNH ĐIỂM NẾT ORB
         good_count = 0
         if HAS_OPENCV:
             try:
@@ -203,7 +196,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             except Exception:
                 good_count = 0
 
-        # NẤC 3: TÍNH TƯƠNG ĐỒNG MÀU HSV
         color_corr = 0.0
         if HAS_OPENCV:
             try:
@@ -213,8 +205,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             except Exception:
                 color_corr = 0.0
 
-        # CỘNG HỢP ĐIỂM THUẬT TOÁN ĐA TIÊU CHÍ (MAX 50Đ)
-        if good_count >= 8:
+        if good_count >= 6:
             score = 50
         elif phash_sim >= 0.8:
             score = 42 if good_count >= 2 else 38
@@ -635,8 +626,9 @@ def found_return(id):
 def match_items():
     matches = []
     try:
-        lost_items = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").all()
-        found_items = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA").all()
+        # GIỚI HẠN LẤY 15 BÀI MỚI NHẤT MỖI BẢNG ĐỂ TRÁNH TRÀN RAM RENDER
+        lost_items = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").order_by(LostItem.id.desc()).limit(15).all()
+        found_items = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA").order_by(FoundItem.id.desc()).limit(15).all()
     except Exception:
         lost_items, found_items = [], []
 
@@ -648,7 +640,7 @@ def match_items():
                 ten_sim = similarity(lost.ten_do, found.ten_do)
                 is_same_key = (key1 == key2 and key1 != "")
 
-                # LỌC SƠ BỘ LỚP 1: TRÙNG TỪ KHÓA HOẶC TƯƠNG ĐỒNG TÊN >= 50%
+                # CHỈ SO SÁNH ẢNH NẾU CÓ KHẢ NĂNG TRÙNG BÁO TÊN
                 if not is_same_key and ten_sim < 0.50:
                     continue
 
@@ -745,6 +737,9 @@ def match_items():
                 print(f"Bỏ qua cặp bài lỗi ({lost.id} - {found.id}): {err}")
                 continue
 
+    # ÉP PYTHON DỌC DÁC GARBAGE COLLECTION ĐỂ GIẢI PHÓNG RAM NGAY LẬP TỨC
+    gc.collect()
+
     matches.sort(key=lambda x: x["score"], reverse=True)
     return render_template("match.html", matches=matches)
 
@@ -807,6 +802,8 @@ def teacher_check(lost_id, found_id):
             image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
         elif not (has1 and has2):
             image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
+
+        gc.collect()
 
         return render_template(
             "teacher_check.html",
