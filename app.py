@@ -82,8 +82,8 @@ def check_real_image(img_path):
     except Exception:
         return False
 
-def _read_image_bytes(img_path, max_bytes=1_500_000):
-    """Đọc ảnh có giới hạn dung lượng 1.5MB để tối ưu 512MB RAM Render."""
+def _read_image_bytes(img_path, max_bytes=2_000_000):
+    """Đọc dữ liệu ảnh từ Cloudinary/Local an toàn, chống Timeout trên Render."""
     if not check_real_image(img_path):
         return None
 
@@ -91,8 +91,11 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
         path = str(img_path).strip()
         if path.startswith(("http://", "https://")):
             import urllib.request
-            req = urllib.request.Request(path, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=4) as response:
+            req = urllib.request.Request(
+                path, 
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            )
+            with urllib.request.urlopen(req, timeout=8) as response:
                 data = response.read(max_bytes + 1)
             if len(data) > max_bytes:
                 return None
@@ -108,7 +111,7 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
         with open(local_path, "rb") as f:
             return f.read(max_bytes + 1)
     except Exception as e:
-        print(f"Không đọc được ảnh: {e}")
+        print(f"Lỗi đọc ảnh ({img_path}): {e}")
         return None
 
 def _get_image_fingerprint(img_path):
@@ -170,11 +173,10 @@ def _get_image_fingerprint(img_path):
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
     """
-    HÀM ĐỐI SÁNH HÌNH ÁNH ĐỘC LẬP (Mịn thang điểm, không bị phạt rớt 0đ do ánh sáng phông nền):
+    HÀM ĐỐI SÁNH HÌNH ÁNH ĐỘC LẬP MỚI (Khắc phục lỗi 0đ từ xa/gần hoặc Cloudinary):
     - Khung dáng toàn cảnh: Max 20đ
     - Cấu trúc tâm vật thể: Max 15đ
     - Tương đồng dải màu: Max 15đ
-    * KHÔNG cộng điểm thưởng từ tên gọi đồ vật!
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
@@ -197,12 +199,12 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             score_shape = 16
         elif dist_dh <= 130:
             score_shape = 12
-        elif dist_dh <= 160:
+        elif dist_dh <= 165:
             score_shape = 8
-        elif dist_dh <= 185:
-            score_shape = 4
+        elif dist_dh <= 190:
+            score_shape = 5
         else:
-            score_shape = 1
+            score_shape = 2
 
         # 2. ĐÁNH GIÁ CẤU TRÚC RUỘT/TÂM VẬT THỂ (Max 15 điểm)
         dist_center = (f1["dhash_center"] ^ f2["dhash_center"]).bit_count()
@@ -212,10 +214,10 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             score_structure = 12
         elif dist_center <= 120:
             score_structure = 9
-        elif dist_center <= 150:
-            score_structure = 5
+        elif dist_center <= 155:
+            score_structure = 6
         else:
-            score_structure = 2
+            score_structure = 3
 
         # 3. ĐÁNH GIÁ DẢI MÀU RGB (Max 15 điểm)
         h1, h2 = f1["hist"], f2["hist"]
@@ -231,9 +233,9 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         elif color_sim >= 0.45:
             score_color = 8
         elif color_sim >= 0.30:
-            score_color = 4
+            score_color = 5
         else:
-            score_color = 1
+            score_color = 2
 
         total_image_score = score_shape + score_structure + score_color
         total_image_score = min(50, max(0, total_image_score))
@@ -1004,6 +1006,5 @@ def change_pin():
     return render_template("change_pin.html")
 
 if __name__ == "__main__":
-    # Đọc cổng động do Render cấp phát để tránh lỗi status 1
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
