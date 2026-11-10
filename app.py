@@ -4,6 +4,11 @@ import uuid
 import json
 import re
 import gc
+import base64
+import math
+import time
+
+import requests
 from datetime import datetime, timezone, timedelta
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
@@ -147,8 +152,204 @@ def _image_features(img_path):
         del data
 
 
+# ============================================================
+# V3.5 - DOI SANG HINH ANH BANG CLIP API (REPLICATE)
+# Khong tai mo hinh AI ve Render; phu hop may chu RAM thap.
+# ============================================================
+
+CLIP_API_URL = "https://api.replicate.com/v1/models/openai/clip/predictions"
+
+
+def _prepare_clip_image(img_path):
+    """Chuan bi dau vao anh cho CLIP.
+
+    - URL Cloudinary/URL cong khai: gui URL truc tiep.
+    - Anh local: thu nho va nen JPEG thanh data URL <= 256 KB.
+    """
+    if not check_real_image(img_path):
+        return None
+
+    path = str(img_path).strip()
+    if path.startswith(("http://", "https://")):
+        return path
+
+    try:
+        from PIL import Image, ImageOps
+
+        data = _read_image_bytes(path, max_bytes=8_000_000)
+        if not data:
+            return None
+
+        with Image.open(io.BytesIO(data)) as original:
+            image = ImageOps.exif_transpose(original).convert("RGB")
+            image.thumbnail((512, 512))
+
+            for quality in (82, 75, 68, 60, 52):
+                buffer = io.BytesIO()
+                image.save(buffer, format="JPEG", quality=quality, optimize=True)
+                encoded_bytes = buffer.getvalue()
+                if len(encoded_bytes) <= 240 * 1024:
+                    encoded = base64.b64encode(encoded_bytes).decode("ascii")
+                    return "data:image/jpeg;base64," + encoded
+
+        print("[V3.5] Anh local vuot kich thuoc data URL cho phep.")
+        return None
+    except Exception as exc:
+        print(f"[V3.5] Khong chuan bi duoc anh: {exc}")
+        return None
+
+
+# Chi cache vector thanh cong; khong cache loi API de co the thu lai o lan sau.
+_CLIP_VECTOR_CACHE = {}
+_CLIP_CACHE_MAX = 256
+
+
+def _clip_embedding(img_path):
+    """Goi Replicate openai/clip va lay vector embedding 768 chieu."""
+    path_key = str(img_path or "").strip()
+    if not path_key:
+        return None
+
+    if path_key in _CLIP_VECTOR_CACHE:
+        return _CLIP_VECTOR_CACHE[path_key]
+
+    token = os.environ.get("REPLICATE_API_TOKEN", "").strip()
+    if not token:
+        print("[V3.5] Thieu bien moi truong REPLICATE_API_TOKEN.")
+        return None
+
+    image_input = _prepare_clip_image(path_key)
+    if not image_input:
+        return None
+
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+        "Prefer": "wait=60"
+    }
+    payload = {"input": {"image": image_input}}
+
+    try:
+        response = requests.post(
+            CLIP_API_URL,
+            headers=headers,
+            json=payload,
+            timeout=(10, 75)
+        )
+
+        if response.status_code not in (200, 201):
+            print(
+                f"[V3.5] Replicate HTTP {response.status_code}: "
+                f"{response.text[:300]}"
+            )
+            return None
+
+        prediction = response.json()
+
+        # Prefer wait=60 thuong tra ket qua ngay. Neu van dang chay, poll toi da 6 lan.
+        for _ in range(6):
+            if prediction.get("status") in ("succeeded", "failed", "canceled"):
+                break
+
+            get_url = (prediction.get("urls") or {}).get("get")
+            if not get_url:
+                break
+
+            time.sleep(1.5)
+            check_response = requests.get(
+                get_url,
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=(5, 15)
+            )
+            if check_response.status_code != 200:
+                print(
+                    f"[V3.5] Khong doc duoc prediction: "
+                    f"HTTP {check_response.status_code}"
+                )
+                return None
+            prediction = check_response.json()
+
+        if prediction.get("status") != "succeeded":
+            print(
+                "[V3.5] CLIP prediction khong thanh cong:",
+                prediction.get("status"),
+                prediction.get("error")
+            )
+            return None
+
+        output = prediction.get("output")
+        embedding = output.get("embedding") if isinstance(output, dict) else None
+
+        if not isinstance(embedding, list) or len(embedding) < 10:
+            print("[V3.5] API khong tra ve vector embedding hop le.")
+            return None
+
+        vector = tuple(float(value) for value in embedding)
+        if not all(math.isfinite(value) for value in vector):
+            print("[V3.5] Vector embedding co gia tri khong hop le.")
+            return None
+
+        # Xoa muc cu nhat khi cache day de giu RAM Render Free.
+        if len(_CLIP_VECTOR_CACHE) >= _CLIP_CACHE_MAX:
+            _CLIP_VECTOR_CACHE.pop(next(iter(_CLIP_VECTOR_CACHE)))
+        _CLIP_VECTOR_CACHE[path_key] = vector
+        return vector
+
+    except requests.Timeout:
+        print("[V3.5] Het thoi gian cho khi goi CLIP API.")
+        return None
+    except Exception as exc:
+        print(f"[V3.5] Loi goi CLIP API: {exc}")
+        return None
+
+
+def _cosine_similarity(vector1, vector2):
+    """Tinh cosine similarity giua hai vector CLIP."""
+    if not vector1 or not vector2 or len(vector1) != len(vector2):
+        return 0.0
+
+    dot_product = sum(a * b for a, b in zip(vector1, vector2))
+    norm1 = math.sqrt(sum(a * a for a in vector1))
+    norm2 = math.sqrt(sum(b * b for b in vector2))
+
+    if norm1 == 0 or norm2 == 0:
+        return 0.0
+
+    value = dot_product / (norm1 * norm2)
+    return max(-1.0, min(1.0, value))
+
+
+def _local_detail_similarity(img1, img2):
+    """Diem phu toi da 10 tu dHash + histogram mau V3.4."""
+    try:
+        feature1 = _image_features(img1)
+        feature2 = _image_features(img2)
+        if feature1 is None or feature2 is None:
+            return 0
+
+        hash1, color1 = feature1
+        hash2, color2 = feature2
+
+        hamming_distance = (hash1 ^ hash2).bit_count()
+        shape_similarity = 1.0 - (hamming_distance / 64.0)
+        color_similarity = sum(
+            min(a, b) for a, b in zip(color1, color2)
+        ) / 3.0
+        combined = 0.65 * shape_similarity + 0.35 * color_similarity
+        return int(round(max(0.0, min(1.0, combined)) * 10))
+    except Exception as exc:
+        print(f"[V3.5] Loi tinh diem chi tiet anh: {exc}")
+        return 0
+
+
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Trả về (điểm ảnh tối đa 50, độ tương đồng ảnh 0..1)."""
+    """Tra ve (diem hinh anh 0..50, cosine similarity CLIP).
+
+    40 diem: vector ngu nghia CLIP.
+    10 diem: dac trung bo tro dHash/histogram cua V3.4.
+
+    Cosine similarity khong phai xac suat hai anh la cung mot vat.
+    """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -156,47 +357,47 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
 
-        feature1 = _image_features(img1_filename)
-        feature2 = _image_features(img2_filename)
-        if feature1 is None or feature2 is None:
+        vector1 = _clip_embedding(img1_filename)
+        vector2 = _clip_embedding(img2_filename)
+
+        # Khong co vector AI thi khong gan diem tu dong bang phuong phap cu.
+        if vector1 is None or vector2 is None:
             return 0, 0.0
 
-        hash1, color1 = feature1
-        hash2, color2 = feature2
+        clip_similarity = _cosine_similarity(vector1, vector2)
 
-        # Độ giống đường nét: tỷ lệ bit giống nhau trong 64 bit.
-        hamming_distance = (hash1 ^ hash2).bit_count()
-        shape_similarity = 1.0 - (hamming_distance / 64.0)
-
-        # Độ giống màu: histogram intersection, chuẩn hóa về 0..1.
-        color_similarity = sum(min(a, b) for a, b in zip(color1, color2)) / 3.0
-        color_similarity = max(0.0, min(1.0, color_similarity))
-
-        # Kết hợp. Đây là độ tương đồng đặc trưng ảnh, không phải xác suất cùng món đồ.
-        total_similarity = (0.65 * shape_similarity) + (0.35 * color_similarity)
-
-        # Thang điểm thận trọng để tránh ảnh nền/ánh sáng gần giống được điểm quá cao.
-        if total_similarity < 0.48:
-            score = 0
-        elif total_similarity < 0.56:
-            score = 5
-        elif total_similarity < 0.64:
-            score = 10
-        elif total_similarity < 0.72:
-            score = 16
-        elif total_similarity < 0.80:
-            score = 23
-        elif total_similarity < 0.87:
-            score = 31
-        elif total_similarity < 0.93:
-            score = 39
+        # Cac moc nay la nguong khoi dau, can hieu chinh bang tap anh thuc te.
+        if clip_similarity < 0.50:
+            clip_score = 0
+        elif clip_similarity < 0.58:
+            clip_score = 5
+        elif clip_similarity < 0.64:
+            clip_score = 10
+        elif clip_similarity < 0.70:
+            clip_score = 16
+        elif clip_similarity < 0.76:
+            clip_score = 22
+        elif clip_similarity < 0.82:
+            clip_score = 28
+        elif clip_similarity < 0.88:
+            clip_score = 34
         else:
-            score = 45
+            clip_score = 40
 
-        # Chỉ cộng tối đa 50 khi hai đường dẫn thực sự trỏ tới cùng tệp đã kiểm tra ở trên.
-        return score, total_similarity
-    except Exception as e:
-        print(f"Lỗi image_score: {e}")
+        detail_score = _local_detail_similarity(
+            img1_filename, img2_filename
+        )
+        final_score = min(50, clip_score + detail_score)
+
+        print(
+            f"[V3.5] CLIP={clip_similarity:.4f}; "
+            f"AI={clip_score}/40; chi_tiet={detail_score}/10; "
+            f"anh={final_score}/50"
+        )
+        return final_score, max(0.0, min(1.0, clip_similarity))
+
+    except Exception as exc:
+        print(f"[V3.5] Loi image_score: {exc}")
         return 0, 0.0
 
 def get_core_keyword(text_name):
@@ -602,14 +803,14 @@ def found_return(id):
 def match_items():
     """
     Đối sánh theo từng nhóm dữ liệu nhỏ để giảm RAM trên Render Free.
-    Mặc định xét 100 tin mất mới nhất và 100 tin nhặt mới nhất,
+    Mặc định xét 20 tin mất mới nhất và 20 tin nhặt mới nhất,
     chỉ giữ tối đa 40 kết quả tốt nhất để hiển thị.
     Có thể điều chỉnh bằng biến môi trường MATCH_ITEM_LIMIT và MATCH_RESULT_LIMIT.
     """
     import heapq
 
     matches_heap = []
-    item_limit = max(10, min(int(os.environ.get("MATCH_ITEM_LIMIT", "100")), 300))
+    item_limit = max(10, min(int(os.environ.get("MATCH_ITEM_LIMIT", "20")), 100))
     result_limit = max(10, min(int(os.environ.get("MATCH_RESULT_LIMIT", "40")), 100))
 
     try:
@@ -775,8 +976,6 @@ def teacher_check(lost_id, found_id):
         m2 = str(found.mau_sac or "").strip().lower()
         if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
             mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-        elif is_same_key:
-            mau_score = 12
 
         vi_tri_score = 0
         v1 = str(lost.noi_mat or "").strip().lower()
@@ -794,6 +993,10 @@ def teacher_check(lost_id, found_id):
             anh_score = 0
 
         score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+
+        # Dong bo quy tac gioi han diem voi trang /match.
+        if not is_same_key and similarity(lost.ten_do, found.ten_do) < 0.60:
+            score = min(score, 32)
 
         if score >= 75:
             ket_luan = "🟢 Khả năng trùng khớp cao"
