@@ -14,7 +14,7 @@ from difflib import SequenceMatcher
 import cloudinary
 import cloudinary.uploader
 
-# Tích hợp thêm thư viện ImageHash hỗ trợ pHash
+# Tích hợp thư viện ImageHash hỗ trợ pHash
 HAS_IMAGEHASH = False
 try:
     import imagehash
@@ -105,7 +105,7 @@ def calculate_image_features(img_path):
         if str(img_path).startswith("http://") or str(img_path).startswith("https://"):
             import urllib.request
             req = urllib.request.Request(str(img_path), headers={'User-Agent': 'Mozilla/5.0'})
-            with urllib.request.urlopen(req, timeout=2.5) as response:
+            with urllib.request.urlopen(req, timeout=3.0) as response:
                 img_bytes = response.read()
         else:
             p = os.path.join(app.config["UPLOAD_FOLDER"], str(img_path)) if not os.path.isabs(str(img_path)) else str(img_path)
@@ -116,23 +116,25 @@ def calculate_image_features(img_path):
         if not img_bytes:
             return None
 
-        # 1. DÙNG PIL TÍNH PHASH (HASH CẢM NHẬN - BẮT GÓC CHỤP KHÁC NHAU)
-        pil_img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
-        
+        features = {}
+
+        # 1. TÍNH PHASH VÀ THU NHỎ KÍCH THƯỚC (BỌC TRY-EXCEPT BẢO VỆ)
         phash_val = None
-        if HAS_IMAGEHASH:
-            try:
+        try:
+            pil_img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
+            if HAS_IMAGEHASH:
                 phash_val = imagehash.phash(pil_img)
-            except Exception:
-                phash_val = None
+            
+            pil_img.thumbnail((180, 180))
+            crop_img = np.array(pil_img)[:, :, ::-1].copy()
+        except Exception as e_pil:
+            print(f"Lỗi xử lý PIL/pHash: {e_pil}")
+            crop_img = None
 
-        # 2. THU NHỎ KÍCH THƯỚC TRUYỀN SANG OPENCV (TIẾT KIỆM RAM)
-        pil_img.thumbnail((180, 180))
-        crop_img = np.array(pil_img)[:, :, ::-1].copy()
+        features["phash"] = phash_val
 
-        features = {"phash": phash_val}
-
-        if HAS_OPENCV:
+        # 2. XỬ LÝ OPENCV TÍNH ORB VÀ HSV
+        if HAS_OPENCV and crop_img is not None:
             gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
             try:
                 orb = cv2.ORB_create(nfeatures=300)
@@ -158,7 +160,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN ĐỐI SÁNH HYBRID: HYBRID (pHash + ORB + HSV) NÂNG CAO ĐỘ CHÍNH XÁC ẢNH ĐA GÓC CHỤP"""
+    """THUẬT TOÁN ĐỐI SÁNH HYBRID (pHash + ORB + HSV)"""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -170,24 +172,23 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         f2 = calculate_image_features(img2_filename)
 
         if f1 is None or f2 is None:
-            return 0, 0.0
+            return (15, 0.3) if is_same_keyword else (0, 0.0)
 
-        # NẤC 1: TÍNH ĐỘ TƯƠNG ĐỒNG THEO pHash (XỬ LÝ CHỤP ĐA GÓC/ÁNH SÁNG)
+        # NẤC 1: TÍNH ĐỘ TƯƠNG ĐỒNG THEO pHash
         phash_sim = 0.0
         p1, p2 = f1.get("phash"), f2.get("phash")
         if p1 is not None and p2 is not None:
-            # Khoảng cách Hamming càng nhỏ thì ảnh càng giống nhau
             diff = p1 - p2
             if diff <= 6:
-                phash_sim = 1.0 # Rất giống nhau
+                phash_sim = 1.0
             elif diff <= 12:
-                phash_sim = 0.8 # Khá giống nhau
+                phash_sim = 0.8
             elif diff <= 18:
-                phash_sim = 0.5 # Hơi giống nhau
+                phash_sim = 0.5
             else:
                 phash_sim = 0.2
 
-        # NẤC 2: TÍNH ĐIỂM NẾT ORB KHỚP NHAU
+        # NẤC 2: TÍNH ĐIỂM NẾT ORB
         good_count = 0
         if HAS_OPENCV:
             try:
@@ -216,7 +217,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if good_count >= 8:
             score = 50
         elif phash_sim >= 0.8:
-            # pHash nhận diện ảnh chụp đa góc có cấu trúc tương đồng
             score = 42 if good_count >= 2 else 38
         elif good_count >= 3:
             score = 35
@@ -226,12 +226,14 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             score = 22
         else:
             score = int(color_corr * 20)
+            if is_same_keyword and score < 15:
+                score = 15
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return 0, 0.0
+        return (15, 0.3) if is_same_keyword else (0, 0.0)
 
 def get_core_keyword(text_name):
     if not text_name:
@@ -646,7 +648,8 @@ def match_items():
                 ten_sim = similarity(lost.ten_do, found.ten_do)
                 is_same_key = (key1 == key2 and key1 != "")
 
-                if not is_same_key and ten_sim < 0.60:
+                # LỌC SƠ BỘ LỚP 1: TRÙNG TỪ KHÓA HOẶC TƯƠNG ĐỒNG TÊN >= 50%
+                if not is_same_key and ten_sim < 0.50:
                     continue
 
                 has1 = check_real_image(lost.hinh_anh)
