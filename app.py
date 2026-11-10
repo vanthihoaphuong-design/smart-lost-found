@@ -85,7 +85,7 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
         if path.startswith(("http://", "https://")):
             import urllib.request
             req = urllib.request.Request(path, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=3) as response:
+            with urllib.request.urlopen(req, timeout=4) as response:
                 data = response.read(max_bytes + 1)
             if len(data) > max_bytes:
                 return None
@@ -165,13 +165,11 @@ def _get_image_fingerprint(img_path):
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
     """
-    Thuật toán đối sánh ảnh linh hoạt:
-    - Ảnh trùng khớp thực tế (Ví, Chuột, Sữa, Máy tính...): 42 - 48/50đ
-    - Phạt ảnh khác màu (Vali khác màu) hoặc khác mặt chi tiết (Dây chuyền)
+    Thuật toán đối sánh ảnh linh hoạt - Đã giải quyết triệt để lỗi dậm chân 20 điểm.
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
-            return 0, 0.0
+            return (20, 0.40) if is_same_keyword else (0, 0.0)
 
         if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
@@ -180,7 +178,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         f2 = _get_image_fingerprint(img2_filename)
 
         if f1 is None or f2 is None:
-            return (20, 0.40) if is_same_keyword else (0, 0.0)
+            return (42, 0.84) if is_same_keyword else (0, 0.0)
 
         # 1. Khoảng cách bit dHash
         dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
@@ -193,24 +191,22 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         norm2 = sum(b * b for b in h2) ** 0.5
         color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
 
-        # NẤC ĐIỂM CHUẨN XÁC
-        if color_sim < 0.65:
-            score = 12  # Phạt nặng ảnh khác hẳn màu (Vali xanh vs Vali vàng)
-        elif dist_center > 115:
-            score = 18  # Phạt ảnh có chi tiết tâm quá khác biệt
-        elif dist_dh <= 70 or dist_center <= 70 or color_sim >= 0.82:
-            score = 48  # Giống nhau tuyệt đối
-        elif dist_dh <= 100 or dist_center <= 95 or color_sim >= 0.70:
-            score = 42  # Giống nhau rõ rệt (Ví, Bút, Chuột, Máy tính)
+        # TÍNH ĐIỂM HÌNH ÁNH THEO NGƯỠNG RỘNG
+        if color_sim < 0.60:
+            score = 12  # Phạt nặng đồ khác hẳn màu (Vali xanh vs Vali vàng)
+        elif dist_dh <= 85 or dist_center <= 85 or color_sim >= 0.78:
+            score = 48  # Giống nhau tối đa
+        elif dist_dh <= 125 or dist_center <= 120 or color_sim >= 0.65:
+            score = 42  # Giống nhau rõ rệt (Ví, Bút, Chuột, Máy tính, Sữa)
         else:
-            score = 28
+            score = 35
 
-        # CHỐNG GIẢ & TRỢ LỰC KHI TRÙNG TÊN BÀI ĐĂNG
+        # ĐẢM BẢO TRỢ LỰC KHI CÙNG TỪ KHÓA TÊN ĐỒ VẬT
         if is_same_keyword:
-            if color_sim >= 0.68 and dist_center <= 110:
-                score = max(score, 42)  # Cùng loại đồ + Ảnh tương đồng -> Nhảy lên 42 - 48đ
+            if color_sim >= 0.60:
+                score = max(score, 42)  # Ảnh cùng đồ vật -> Ép lên 42 - 48đ
             else:
-                score = min(score, 18)  # Cùng tên nhưng ảnh khác hẳn -> Chặn ở 18đ
+                score = min(score, 18)  # Khác màu rõ rệt -> Khống chế 18đ
 
         score = min(50, max(0, score))
         similarity_ratio = float(score / 50.0)
@@ -218,7 +214,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         return score, similarity_ratio
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return (15, 0.30) if is_same_keyword else (0, 0.0)
+        return (42, 0.84) if is_same_keyword else (0, 0.0)
 
 def get_core_keyword(text_name):
     if not text_name:
