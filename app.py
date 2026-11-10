@@ -14,6 +14,14 @@ from difflib import SequenceMatcher
 import cloudinary
 import cloudinary.uploader
 
+# Tích hợp thêm thư viện ImageHash hỗ trợ pHash
+HAS_IMAGEHASH = False
+try:
+    import imagehash
+    HAS_IMAGEHASH = True
+except Exception as e:
+    print(f"Cảnh báo ImageHash không khả dụng: {e}")
+
 VN_TZ = timezone(timedelta(hours=7))
 
 HAS_OPENCV = False
@@ -86,7 +94,7 @@ def check_real_image(img_path):
         return False
 
 def calculate_image_features(img_path):
-    if not HAS_OPENCV or not check_real_image(img_path):
+    if not check_real_image(img_path):
         return None
     
     if img_path in FEATURE_CACHE:
@@ -108,30 +116,40 @@ def calculate_image_features(img_path):
         if not img_bytes:
             return None
 
-        # DÙNG PIL THU NHỎ KÍCH THƯỚC TRƯỚC KHI CHUYỂN OPENCV (SIÊU TIẾT KIỆM RAM)
+        # 1. DÙNG PIL TÍNH PHASH (HASH CẢM NHẬN - BẮT GÓC CHỤP KHÁC NHAU)
         pil_img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
-        pil_img.thumbnail((180, 180))
-        crop_img = np.array(pil_img)[:, :, ::-1].copy() # PIL RGB -> OpenCV BGR
-
-        gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         
-        features = {}
-        try:
-            orb = cv2.ORB_create(nfeatures=300)
-            kp, des = orb.detectAndCompute(gray, None)
-            features["orb_keypoints"] = kp
-            features["orb_descriptors"] = des
-        except Exception:
-            features["orb_keypoints"], features["orb_descriptors"] = [], None
+        phash_val = None
+        if HAS_IMAGEHASH:
+            try:
+                phash_val = imagehash.phash(pil_img)
+            except Exception:
+                phash_val = None
 
-        try:
-            hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
-            hist = cv2.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256])
-            if hist is not None:
-                cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
-            features["hsv_hist"] = hist
-        except Exception:
-            features["hsv_hist"] = None
+        # 2. THU NHỎ KÍCH THƯỚC TRUYỀN SANG OPENCV (TIẾT KIỆM RAM)
+        pil_img.thumbnail((180, 180))
+        crop_img = np.array(pil_img)[:, :, ::-1].copy()
+
+        features = {"phash": phash_val}
+
+        if HAS_OPENCV:
+            gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
+            try:
+                orb = cv2.ORB_create(nfeatures=300)
+                kp, des = orb.detectAndCompute(gray, None)
+                features["orb_keypoints"] = kp
+                features["orb_descriptors"] = des
+            except Exception:
+                features["orb_keypoints"], features["orb_descriptors"] = [], None
+
+            try:
+                hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
+                hist = cv2.calcHist([hsv], [0, 1], None, [16, 16], [0, 180, 0, 256])
+                if hist is not None:
+                    cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+                features["hsv_hist"] = hist
+            except Exception:
+                features["hsv_hist"] = None
 
         FEATURE_CACHE[img_path] = features
         return features
@@ -140,8 +158,9 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
+    """THUẬT TOÁN ĐỐI SÁNH HYBRID: HYBRID (pHash + ORB + HSV) NÂNG CAO ĐỘ CHÍNH XÁC ẢNH ĐA GÓC CHỤP"""
     try:
-        if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
+        if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
 
         if str(img1_filename).strip() == str(img2_filename).strip():
@@ -153,37 +172,60 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if f1 is None or f2 is None:
             return 0, 0.0
 
+        # NẤC 1: TÍNH ĐỘ TƯƠNG ĐỒNG THEO pHash (XỬ LÝ CHỤP ĐA GÓC/ÁNH SÁNG)
+        phash_sim = 0.0
+        p1, p2 = f1.get("phash"), f2.get("phash")
+        if p1 is not None and p2 is not None:
+            # Khoảng cách Hamming càng nhỏ thì ảnh càng giống nhau
+            diff = p1 - p2
+            if diff <= 6:
+                phash_sim = 1.0 # Rất giống nhau
+            elif diff <= 12:
+                phash_sim = 0.8 # Khá giống nhau
+            elif diff <= 18:
+                phash_sim = 0.5 # Hơi giống nhau
+            else:
+                phash_sim = 0.2
+
+        # NẤC 2: TÍNH ĐIỂM NẾT ORB KHỚP NHAU
         good_count = 0
-        try:
-            kp1, des1 = f1.get("orb_keypoints", []), f1.get("orb_descriptors")
-            kp2, des2 = f2.get("orb_keypoints", []), f2.get("orb_descriptors")
-            if des1 is not None and des2 is not None and len(kp1) >= 2 and len(kp2) >= 2:
-                bf = cv2.BFMatcher(cv2.NORM_HAMMING)
-                matches = bf.knnMatch(des1, des2, k=2)
-                for m_pair in matches:
-                    if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
-                        good_count += 1
-        except Exception:
-            good_count = 0
+        if HAS_OPENCV:
+            try:
+                kp1, des1 = f1.get("orb_keypoints", []), f1.get("orb_descriptors")
+                kp2, des2 = f2.get("orb_keypoints", []), f2.get("orb_descriptors")
+                if des1 is not None and des2 is not None and len(kp1) >= 2 and len(kp2) >= 2:
+                    bf = cv2.BFMatcher(cv2.NORM_HAMMING)
+                    matches = bf.knnMatch(des1, des2, k=2)
+                    for m_pair in matches:
+                        if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
+                            good_count += 1
+            except Exception:
+                good_count = 0
 
+        # NẤC 3: TÍNH TƯƠNG ĐỒNG MÀU HSV
         color_corr = 0.0
-        try:
-            hist1, hist2 = f1.get("hsv_hist"), f2.get("hsv_hist")
-            if hist1 is not None and hist2 is not None:
-                color_corr = max(0.0, float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)))
-        except Exception:
-            color_corr = 0.0
+        if HAS_OPENCV:
+            try:
+                hist1, hist2 = f1.get("hsv_hist"), f2.get("hsv_hist")
+                if hist1 is not None and hist2 is not None:
+                    color_corr = max(0.0, float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)))
+            except Exception:
+                color_corr = 0.0
 
-        if good_count >= 10:
+        # CỘNG HỢP ĐIỂM THUẬT TOÁN ĐA TIÊU CHÍ (MAX 50Đ)
+        if good_count >= 8:
             score = 50
-        elif good_count >= 6:
-            score = 40
+        elif phash_sim >= 0.8:
+            # pHash nhận diện ảnh chụp đa góc có cấu trúc tương đồng
+            score = 42 if good_count >= 2 else 38
         elif good_count >= 3:
-            score = 30
+            score = 35
+        elif phash_sim >= 0.5:
+            score = 28
         elif good_count >= 1:
-            score = 20
+            score = 22
         else:
-            score = int(color_corr * 22)
+            score = int(color_corr * 20)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -604,7 +646,6 @@ def match_items():
                 ten_sim = similarity(lost.ten_do, found.ten_do)
                 is_same_key = (key1 == key2 and key1 != "")
 
-                # LỚP LỌC SƠ BỘ: CHỈ TÍNH ĐIỂM ẢNH CHO NGUYÊN CẶP CÓ KHẢ NĂNG TRÙNG
                 if not is_same_key and ten_sim < 0.60:
                     continue
 
