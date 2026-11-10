@@ -119,12 +119,11 @@ def calculate_image_features(img_path):
             )
             with urllib.request.urlopen(req, timeout=4) as response:
                 img_array = np.asarray(bytearray(response.read()), dtype=np.uint8)
-                # TỰ ĐỘNG THU NHỎ KÍCH THƯỚC ẢNH NGAY KHI GIẢI MÃ CHỐNG TRÀN RAM RENDER (OOM)
-                img = cv2.imdecode(img_array, cv2.IMREAD_REDUCED_COLOR_4)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR) # Đọc ảnh chuẩn màu sắc để ORB trích xuất nét chính xác
         else:
             p = os.path.join(app.config["UPLOAD_FOLDER"], str(img_path)) if not os.path.isabs(str(img_path)) else str(img_path)
             if os.path.exists(p):
-                img = cv2.imread(p, cv2.IMREAD_REDUCED_COLOR_4)
+                img = cv2.imread(p, cv2.IMREAD_COLOR)
 
         if img is None:
             return None
@@ -174,7 +173,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN CÂN BẰNG: TRỢ LỰC TỪ KHÓA TRÙNG VÀ ĐẢM BẢO CHUẨN ĐIỂM HÌNH ẢNH"""
+    """THUẬT TOÁN ĐỐI SÁNH HÌNH ẢNH THỰC TẾ: ĐÁNH GIÁ ĐÚNG ĐỘ TƯƠNG ĐỒNG NÉT VÀ MÀU"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -212,16 +211,18 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         except Exception:
             color_corr = 0.0
 
+        # PHÂN NẤC ĐIỂM HÌNH ẢNH THEO SỐ ĐIỂM NÉT KHỚP THỰC TẾ (ORB) HOẶC DẢI MÀU HSV
         if good_count >= 10:
             score = 50
         elif good_count >= 6:
-            score = 45 if is_same_keyword else 42
+            score = 42
         elif good_count >= 3:
-            score = 42 if is_same_keyword else 35
+            score = 35
         elif good_count >= 1:
-            score = 35 if is_same_keyword else 28
+            score = 25
         else:
-            score = int(color_corr * 30) if is_same_keyword else int(color_corr * 25)
+            # Nếu không tìm thấy nét trùng khớp, điểm hình ảnh chỉ dựa theo độ tương đồng dải màu HSV (tối đa 25 điểm)
+            score = int(color_corr * 25)
 
         score = min(50, max(0, score))
         return score, float(score / 50.0)
@@ -657,7 +658,7 @@ def match_items():
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
 
-                # LỚP 2: ĐIỂM OPENCV (TRUYỀN THÊM TRỢ LỰC TỪ KHÓA TRÙNG KHỚP)
+                # LỚP 2: ĐIỂM OPENCV TÍNH CHÍNH XÁC THEO HÌNH ẢNH
                 if has1 and has2:
                     anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
                 else:
