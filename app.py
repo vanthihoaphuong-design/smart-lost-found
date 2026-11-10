@@ -76,7 +76,7 @@ def check_real_image(img_path):
         return False
 
 def _read_image_bytes(img_path, max_bytes=1_500_000):
-    """Đọc ảnh có giới hạn dung lượng để tránh tải ảnh lớn vào RAM."""
+    """Đọc ảnh có giới hạn dung lượng để bảo vệ RAM Render."""
     if not check_real_image(img_path):
         return None
 
@@ -104,9 +104,11 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
         print(f"Không đọc được ảnh: {e}")
         return None
 
-
-def _average_hash(img_path):
-    """Tạo mã ảnh 64-bit từ ảnh thu nhỏ; không dùng OpenCV/NumPy."""
+def _get_image_fingerprint(img_path):
+    """
+    Trích xuất dấu vân tay ảnh (dHash + aHash + Hist màu) bằng PIL thuần.
+    Siêu nhẹ RAM nhưng bắt góc chụp lệch và dải màu cực chuẩn.
+    """
     data = _read_image_bytes(img_path)
     if not data:
         return None
@@ -114,27 +116,46 @@ def _average_hash(img_path):
     try:
         from PIL import Image
         with Image.open(io.BytesIO(data)) as im:
-            im = im.convert("L")
-            im.thumbnail((64, 64))
-            im = im.resize((8, 8))
-            pixels = list(im.getdata())
+            im_gray = im.convert("L")
+            
+            # 1. TÍNH DHASH (DIFFERENCE HASH - BẮT NÉT & KHUNG CẤU TRÚC ẢNH CHỤP NGHIÊNG)
+            im_dh = im_gray.resize((9, 8), Image.Resampling.LANCZOS)
+            pixels_dh = list(im_dh.getdata())
+            dhash_val = 0
+            for row in range(8):
+                for col in range(8):
+                    left = pixels_dh[row * 9 + col]
+                    right = pixels_dh[row * 9 + col + 1]
+                    dhash_val = (dhash_val << 1) | int(left > right)
 
-        if not pixels:
-            return None
-        avg = sum(pixels) / len(pixels)
-        value = 0
-        for pixel in pixels:
-            value = (value << 1) | int(pixel >= avg)
-        return value
+            # 2. TÍNH AHASH (AVERAGE HASH - TỔNG THỂ DẠNG MẢNG ĐỘ SÁNG)
+            im_ah = im_gray.resize((8, 8), Image.Resampling.BILINEAR)
+            pixels_ah = list(im_ah.getdata())
+            avg = sum(pixels_ah) / len(pixels_ah)
+            ahash_val = 0
+            for pixel in pixels_ah:
+                ahash_val = (ahash_val << 1) | int(pixel >= avg)
+
+            # 3. TÍNH HISTOGRAM MÀU SẮC THU NHỎ (COLOR SPECTRUM)
+            im_rgb = im.convert("RGB").resize((16, 16))
+            hist_color = im_rgb.histogram()
+
+            return {
+                "dhash": dhash_val,
+                "ahash": ahash_val,
+                "hist": hist_color
+            }
     except Exception as e:
-        print(f"Lỗi xử lý ảnh: {e}")
+        print(f"Lỗi tính đặc trưng ảnh: {e}")
         return None
     finally:
         del data
 
-
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """So sánh ảnh nhẹ RAM bằng average-hash; không lưu đặc trưng ảnh trong bộ nhớ."""
+    """
+    So sánh độ tương đồng hình ảnh chính xác theo thang điểm 50.
+    Kết hợp dHash (nét), aHash (khái quát) và Color Histogram (màu sắc).
+    """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -142,31 +163,52 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
 
-        h1 = _average_hash(img1_filename)
-        h2 = _average_hash(img2_filename)
+        f1 = _get_image_fingerprint(img1_filename)
+        f2 = _get_image_fingerprint(img2_filename)
 
-        # Không tự cộng điểm khi ảnh không đọc được.
-        if h1 is None or h2 is None:
-            return 0, 0.0
+        if f1 is None or f2 is None:
+            return (18, 0.35) if is_same_keyword else (0, 0.0)
 
-        distance = (h1 ^ h2).bit_count()
-        similarity_ratio = max(0.0, 1.0 - distance / 64.0)
+        # 1. KHOẢNG CÁCH DHASH (BẮT KHUNG HÌNH VẬT THỂ CHỤP NÓI CHUNG)
+        dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
+        sim_dh = max(0.0, 1.0 - dist_dh / 64.0)
 
-        # Điểm ảnh thận trọng: ảnh tương tự mới được điểm cao.
-        if distance <= 5:
-            score = 38
-        elif distance <= 10:
-            score = 28
-        elif distance <= 16:
-            score = 16
+        # 2. KHOẢNG CÁCH AHASH
+        dist_ah = (f1["ahash"] ^ f2["ahash"]).bit_count()
+        sim_ah = max(0.0, 1.0 - dist_ah / 64.0)
+
+        # 3. ĐỘ TƯƠNG ĐỒNG MÀU SẮC (COSINE SIMILARITY CỦA MẢNG MÀU HISTOGRAM)
+        h1, h2 = f1["hist"], f2["hist"]
+        dot = sum(a * b for a, b in zip(h1, h2))
+        norm1 = sum(a * a for a in h1) ** 0.5
+        norm2 = sum(b * b for b in h2) ** 0.5
+        color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
+
+        # PHỐI HỢP ĐIỂM CHUẨN XÁC DỰA VÀO NÉT VÀ DẢI MÀU (TỐI ĐA 50Đ)
+        if dist_dh <= 8 or dist_ah <= 6:
+            score = 48
+        elif dist_dh <= 14:
+            score = 40
+        elif dist_dh <= 20:
+            score = 32
+        elif sim_dh >= 0.6 or color_sim >= 0.85:
+            score = 26
+        elif color_sim >= 0.70:
+            score = 18
         else:
-            score = 0
+            score = int(color_sim * 15)
+
+        # Trợ lực tối thiểu nếu trùng từ khóa đồ vật (ví dụ cùng là Bút, Laptop...)
+        if is_same_keyword and score < 20:
+            score = 20
+
+        score = min(50, max(0, score))
+        similarity_ratio = float(score / 50.0)
 
         return score, similarity_ratio
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return 0, 0.0
-
+        return (18, 0.35) if is_same_keyword else (0, 0.0)
 
 def get_core_keyword(text_name):
     if not text_name:
@@ -500,7 +542,6 @@ def edit_found(item_id):
 def dashboard():
     try:
         tong_so = LostItem.query.count()
-        # Chỉ lấy số lượng theo nhóm từ CSDL, không nạp toàn bộ bản ghi vào RAM.
         all_items = db.session.query(
             LostItem.loai_do, func.count(LostItem.id)
         ).group_by(LostItem.loai_do).all()
@@ -570,10 +611,7 @@ def found_return(id):
 @app.route("/match")
 def match_items():
     """
-    Đối sánh theo từng nhóm dữ liệu nhỏ để giảm RAM trên Render Free.
-    Mặc định xét 100 tin mất mới nhất và 100 tin nhặt mới nhất,
-    chỉ giữ tối đa 40 kết quả tốt nhất để hiển thị.
-    Có thể điều chỉnh bằng biến môi trường MATCH_ITEM_LIMIT và MATCH_RESULT_LIMIT.
+    Đối sánh thông minh kết hợp lọc văn bản & so sánh ảnh nhẹ RAM.
     """
     import heapq
 
@@ -608,7 +646,6 @@ def match_items():
                 ten_sim = similarity(lost.ten_do, found.ten_do)
                 is_same_key = key1 == key2 and bool(key1)
 
-                # Loại sớm những cặp tên đồ quá khác nhau.
                 if not is_same_key and ten_sim < 0.45:
                     continue
 
@@ -630,10 +667,9 @@ def match_items():
                 ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
                 text_total = ten_score + mau_score + vi_tri_score + ngay_score
 
-                # Chỉ xử lý ảnh cho cặp đã có thông tin mô tả tương đối phù hợp.
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
-                if has1 and has2 and (is_same_key or text_total >= 20):
+                if has1 and has2 and (is_same_key or text_total >= 15):
                     anh_score, image_ratio = image_score(
                         lost.hinh_anh, found.hinh_anh,
                         is_same_keyword=is_same_key
@@ -643,7 +679,6 @@ def match_items():
 
                 score = anh_score + text_total
 
-                # Không để tên đồ khác loại được xếp thành cặp phù hợp cao.
                 if not is_same_key and ten_sim < 0.60:
                     score = min(score, 32)
 
@@ -660,7 +695,7 @@ def match_items():
                     ket_luan = "🔴 Cần kiểm tra thêm"
 
                 reasons = []
-                if anh_score >= 16:
+                if anh_score >= 18:
                     reasons.append("Hình ảnh có điểm tương đồng")
                 if ten_score >= 10:
                     reasons.append("Tên đồ tương đồng")
@@ -705,7 +740,6 @@ def match_items():
                     "ngay": ngay_score
                 }
 
-                # Chỉ giữ các kết quả tốt nhất, không tích lũy toàn bộ cặp trong RAM.
                 heapq.heappush(matches_heap, (score, int(lost.id), int(found.id), result))
                 if len(matches_heap) > result_limit:
                     heapq.heappop(matches_heap)
@@ -717,7 +751,6 @@ def match_items():
     del matches_heap, lost_items, found_items
     gc.collect()
     return render_template("match.html", matches=matches)
-
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
 def teacher_check(lost_id, found_id):
