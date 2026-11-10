@@ -76,7 +76,7 @@ def check_real_image(img_path):
         return False
 
 def _read_image_bytes(img_path, max_bytes=1_500_000):
-    """Đọc ảnh có giới hạn dung lượng để bảo vệ RAM Render."""
+    """Đọc ảnh có giới hạn dung lượng 1.5MB để tối ưu 512MB RAM Render."""
     if not check_real_image(img_path):
         return None
 
@@ -106,8 +106,7 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
 
 def _get_image_fingerprint(img_path):
     """
-    Trích xuất vân tay ảnh bằng PIL nhẹ RAM.
-    Tự động đệm viền vuông (Square Pad) để giữ chuẩn tỉ lệ hình dáng đồ vật.
+    Trích xuất đặc trưng hình học, cấu trúc và dải màu với Square Pad bảo toàn tỉ lệ.
     """
     data = _read_image_bytes(img_path)
     if not data:
@@ -118,7 +117,7 @@ def _get_image_fingerprint(img_path):
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
             
-            # Đệm viền trắng vuông cho khung hình
+            # Đệm viền trắng vuông cho khung hình để chuẩn hóa tỷ lệ vật thể
             w, h = im_rgb.size
             max_side = max(w, h)
             pad_w = (max_side - w) // 2
@@ -126,7 +125,7 @@ def _get_image_fingerprint(img_path):
             im_square = ImageOps.expand(im_rgb, (pad_w, pad_h, pad_w, pad_h), fill=(255, 255, 255))
             sw, sh = im_square.size
 
-            # 1. dHash Nét Khung Thể Toàn Cảnh (16x16 -> 256 bits)
+            # 1. dHash Khung thể toàn cảnh (16x16 -> 256 bits)
             im_gray = im_square.convert("L")
             im_dh = im_gray.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh = list(im_dh.getdata())
@@ -137,7 +136,7 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh[row * 17 + col + 1]
                     dhash_val = (dhash_val << 1) | int(left > right)
 
-            # 2. dHash VÙNG TRUNG TÂM (Cắt 50% ruột)
+            # 2. dHash VÙNG TRUNG TÂM (Cắt 50% ruột trung tâm để giảm nhiễu phông nền)
             crop_center = im_gray.crop((int(sw * 0.25), int(sh * 0.25), int(sw * 0.75), int(sh * 0.75)))
             im_dh_c = crop_center.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh_c = list(im_dh_c.getdata())
@@ -165,9 +164,11 @@ def _get_image_fingerprint(img_path):
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
     """
-    Thuật toán đối sánh ảnh phân loại thực tế:
-    - Ảnh trùng khớp màu & dáng (Ví đen - Ví đen): 42 - 48/50đ
-    - Khác màu hoặc khác loại đồ (Bút xanh - Bút đỏ, Balo - Túi xách): 12 - 15/50đ
+    HÀM ĐỐI SÁNH HÌNH ÁNH ĐỘC LẬP TÙY CHỈNH KÍCH THƯỚC/MÀU SẮC/CẤU TRÚC (Tối đa 50đ):
+    - Khung dáng toàn cảnh: 20đ
+    - Cấu trúc tâm vật thể: 15đ
+    - Tương đồng dải màu: 15đ
+    * KHÔNG cộng điểm thưởng từ tên gọi đồ vật!
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
@@ -180,47 +181,61 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         f2 = _get_image_fingerprint(img2_filename)
 
         if f1 is None or f2 is None:
-            return (15, 0.30) if is_same_keyword else (0, 0.0)
+            return 0, 0.0
 
-        # 1. Khoảng cách dHash
+        # 1. ĐÁNH GIÁ KHUNG DÁNG HÌNH HỌC (Max 20 điểm)
         dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
-        dist_center = (f1["dhash_center"] ^ f2["dhash_center"]).bit_count()
+        if dist_dh <= 50:
+            score_shape = 20
+        elif dist_dh <= 80:
+            score_shape = 16
+        elif dist_dh <= 110:
+            score_shape = 12
+        elif dist_dh <= 135:
+            score_shape = 8
+        else:
+            score_shape = 3
 
-        # 2. So sánh Cosine Histogram dải màu RGB
+        # 2. ĐÁNH GIÁ CẤU TRÚC RUỘT/TÂM VẬT THỂ (Max 15 điểm - Bỏ qua phông nền)
+        dist_center = (f1["dhash_center"] ^ f2["dhash_center"]).bit_count()
+        if dist_center <= 45:
+            score_structure = 15
+        elif dist_center <= 75:
+            score_structure = 12
+        elif dist_center <= 105:
+            score_structure = 8
+        elif dist_center <= 130:
+            score_structure = 4
+        else:
+            score_structure = 0
+
+        # 3. ĐÁNH GIÁ DẢI MÀU RGB (Max 15 điểm)
         h1, h2 = f1["hist"], f2["hist"]
         dot = sum(a * b for a, b in zip(h1, h2))
         norm1 = sum(a * a for a in h1) ** 0.5
         norm2 = sum(b * b for b in h2) ** 0.5
         color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
 
-        # PHẠT NẶNG ĐỒ KHÁC MÀU VÀ KHÁC DÁNG
-        # Nếu khác dải màu (Bút đỏ vs Bút xanh, Balo đen vs Túi xách nâu) -> Khống chế tối đa 12-15đ
-        if color_sim < 0.72:
-            score = 12
-        elif dist_center > 100:
-            score = 15
-        elif dist_dh <= 60 and dist_center <= 60 and color_sim >= 0.85:
-            score = 48  # Giống nhau tuyệt đối
-        elif dist_dh <= 90 or color_sim >= 0.78:
-            score = 40  # Giống nhau rõ rệt
+        if color_sim >= 0.85:
+            score_color = 15
+        elif color_sim >= 0.72:
+            score_color = 11
+        elif color_sim >= 0.60:
+            score_color = 7
+        elif color_sim >= 0.45:
+            score_color = 3
         else:
-            score = 20
+            score_color = 0
 
-        # TRỢ LỰC CÓ ĐIỀU KIỆN CHẶT CHẼ
-        # Chỉ trợ lực khi DẢI MÀU THỰC TẾ tương đồng (color_sim >= 0.72)
-        if is_same_keyword:
-            if color_sim >= 0.72 and dist_center <= 100:
-                score = max(score, 40)
-            else:
-                score = min(score, 15)  # Trùng tên nhưng khác màu/dáng -> Chặn điểm ở 15đ!
+        # TỔNG HỢP ĐIỂM HÌNH ÁNH THUẦN THỊ GIÁC
+        total_image_score = score_shape + score_structure + score_color
+        total_image_score = min(50, max(0, total_image_score))
+        similarity_ratio = float(total_image_score / 50.0)
 
-        score = min(50, max(0, score))
-        similarity_ratio = float(score / 50.0)
-
-        return score, similarity_ratio
+        return total_image_score, similarity_ratio
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return (15, 0.30) if is_same_keyword else (0, 0.0)
+        return 0, 0.0
 
 def get_core_keyword(text_name):
     if not text_name:
