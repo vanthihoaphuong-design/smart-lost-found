@@ -106,8 +106,7 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
 
 def _get_image_fingerprint(img_path):
     """
-    Trích xuất vân tay nét toàn cảnh, nét trung tâm và dải màu RGB phân giải cao.
-    Tự động đệm vuông viền ảnh để bảo toàn tỉ lệ đồ vật.
+    Trích xuất vân tay ảnh chuẩn hóa tỉ lệ (Square Pad) nhẹ RAM.
     """
     data = _read_image_bytes(img_path)
     if not data:
@@ -118,7 +117,7 @@ def _get_image_fingerprint(img_path):
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
             
-            # Đệm viền trắng vuông cho khung hình
+            # Đệm viền trắng vuông cho khung hình để không bị co giãn vật thể
             w, h = im_rgb.size
             max_side = max(w, h)
             pad_w = (max_side - w) // 2
@@ -137,7 +136,7 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh[row * 17 + col + 1]
                     dhash_val = (dhash_val << 1) | int(left > right)
 
-            # 2. dHash VÙNG TRUNG TÂM (Cắt 50% ruột để soi mặt dây chuyền/chi tiết)
+            # 2. dHash VÙNG TRUNG TÂM (Cắt 50% ruột)
             crop_center = im_gray.crop((int(sw * 0.25), int(sh * 0.25), int(sw * 0.75), int(sh * 0.75)))
             im_dh_c = crop_center.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh_c = list(im_dh_c.getdata())
@@ -148,7 +147,7 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh_c[row * 17 + col + 1]
                     dhash_center = (dhash_center << 1) | int(left > right)
 
-            # 3. Color Spectrum Histogram (32x32 = 1024 dải màu nhạy cao)
+            # 3. Color Spectrum Histogram (32x32)
             im_thumb = im_square.resize((32, 32))
             hist_color = im_thumb.histogram()
 
@@ -165,7 +164,9 @@ def _get_image_fingerprint(img_path):
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
     """
-    So sánh hình ảnh chuẩn xác: Phạt nặng Vali khác màu & Dây chuyền khác mặt.
+    Thuật toán đối sánh ảnh linh hoạt:
+    - Ảnh trùng khớp thực tế (Ví, Chuột, Sữa...): 42 - 48/50đ
+    - Phạt ảnh khác màu (Vali khác màu) hoặc khác mặt chi tiết (Dây chuyền)
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
@@ -180,35 +181,35 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if f1 is None or f2 is None:
             return (20, 0.40) if is_same_keyword else (0, 0.0)
 
-        # 1. Khoảng cách dHash toàn khung & dHash trung tâm
+        # 1. Khoảng cách bit dHash
         dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
         dist_center = (f1["dhash_center"] ^ f2["dhash_center"]).bit_count()
 
-        # 2. So sánh Cosine Histogram dải màu
+        # 2. So sánh Histogram dải màu RGB
         h1, h2 = f1["hist"], f2["hist"]
         dot = sum(a * b for a, b in zip(h1, h2))
         norm1 = sum(a * a for a in h1) ** 0.5
         norm2 = sum(b * b for b in h2) ** 0.5
         color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
 
-        # PHẠT NẶNG ĐỘ KHÁC BIỆT MÀU VÀ NÉT TRUNG TÂM
-        if color_sim < 0.72:
-            score = 12  # Vali khác màu (Xanh lá vs Xanh dương) bị hạ điểm
-        elif dist_center > 75:
-            score = 18  # Dây chuyền khác mặt (Chi tiết tâm ảnh khác) bị hạ điểm
-        elif dist_dh <= 55 and dist_center <= 55:
-            score = 48  # Trùng khớp hoàn hảo màu + phom + ruột
-        elif dist_dh <= 85 or color_sim >= 0.85:
-            score = 38  # Tương đồng khá
+        # PHÂN CẤP THANG ĐIỂM THỰC TẾ
+        if color_sim < 0.65:
+            score = 12  # Phạt nặng ảnh khác hẳn màu (Vali xanh vs Vali vàng)
+        elif dist_center > 115:
+            score = 18  # Phạt ảnh có chi tiết giữa quá khác biệt
+        elif dist_dh <= 70 or dist_center <= 70 or color_sim >= 0.82:
+            score = 48  # Giống nhau tuyệt đối
+        elif dist_dh <= 100 or dist_center <= 95 or color_sim >= 0.70:
+            score = 42  # Giống nhau rõ rệt (Ví, Máy tính, Sữa, Chuột)
         else:
-            score = 22
+            score = 25
 
-        # CHỐNG GIẢ MẠNH: Chỉ trợ lực tên khi ảnh không bị lệch màu hoặc lệch tâm quá nặng
+        # CHỐNG GIẢ & TRỢ LỰC CHUẨN
         if is_same_keyword:
-            if color_sim >= 0.72 and dist_center <= 75:
-                score = max(score, 42)  # Ảnh chuẩn -> Tự động đưa lên 42 - 48đ
+            if color_sim >= 0.68 and dist_center <= 110:
+                score = max(score, 42)  # Cùng loại đồ + Màu sắc & phom giống -> 42 - 48đ
             else:
-                score = min(score, 18)  # Khác màu/khác mặt -> Khống chế tối đa 18đ!
+                score = min(score, 18)  # Cùng tên nhưng ảnh lệch màu/khác hẳn -> Khống chế tối đa 18đ
 
         score = min(50, max(0, score))
         similarity_ratio = float(score / 50.0)
