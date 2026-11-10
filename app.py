@@ -106,8 +106,8 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
 
 def _get_image_fingerprint(img_path):
     """
-    Trích xuất dấu vân tay ảnh (dHash + aHash + Hist màu) bằng PIL thuần.
-    Siêu nhẹ RAM nhưng bắt góc chụp lệch và dải màu cực chuẩn.
+    Trích xuất vân tay ảnh (dHash + aHash + Hist màu) bằng PIL thuần.
+    Tự động crop xén viền trắng thừa để bắt chính xác tâm điểm đồ vật.
     """
     data = _read_image_bytes(img_path)
     if not data:
@@ -116,9 +116,16 @@ def _get_image_fingerprint(img_path):
     try:
         from PIL import Image
         with Image.open(io.BytesIO(data)) as im:
-            im_gray = im.convert("L")
+            im_rgb = im.convert("RGB")
             
-            # 1. TÍNH DHASH (DIFFERENCE HASH - BẮT NÉT & KHUNG CẤU TRÚC ẢNH CHỤP NGHIÊNG)
+            # Cắt bỏ viền trắng/viền thừa xung quanh nếu có
+            bbox = im_rgb.getbbox()
+            if bbox:
+                im_rgb = im_rgb.crop(bbox)
+
+            im_gray = im_rgb.convert("L")
+            
+            # 1. dHash (Difference Hash 8x8)
             im_dh = im_gray.resize((9, 8), Image.Resampling.LANCZOS)
             pixels_dh = list(im_dh.getdata())
             dhash_val = 0
@@ -128,17 +135,17 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh[row * 9 + col + 1]
                     dhash_val = (dhash_val << 1) | int(left > right)
 
-            # 2. TÍNH AHASH (AVERAGE HASH - TỔNG THỂ DẠNG MẢNG ĐỘ SÁNG)
+            # 2. aHash (Average Hash 8x8)
             im_ah = im_gray.resize((8, 8), Image.Resampling.BILINEAR)
             pixels_ah = list(im_ah.getdata())
-            avg = sum(pixels_ah) / len(pixels_ah)
+            avg = sum(pixels_ah) / max(1, len(pixels_ah))
             ahash_val = 0
             for pixel in pixels_ah:
                 ahash_val = (ahash_val << 1) | int(pixel >= avg)
 
-            # 3. TÍNH HISTOGRAM MÀU SẮC THU NHỎ (COLOR SPECTRUM)
-            im_rgb = im.convert("RGB").resize((16, 16))
-            hist_color = im_rgb.histogram()
+            # 3. Color Spectrum Histogram (16x16)
+            im_thumb = im_rgb.resize((16, 16))
+            hist_color = im_thumb.histogram()
 
             return {
                 "dhash": dhash_val,
@@ -153,8 +160,7 @@ def _get_image_fingerprint(img_path):
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
     """
-    So sánh độ tương đồng hình ảnh chính xác theo thang điểm 50.
-    Kết hợp dHash (nét), aHash (khái quát) và Color Histogram (màu sắc).
+    So sánh độ tương đồng hình ảnh chính xác theo thang điểm tối đa 50.
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
@@ -167,40 +173,32 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         f2 = _get_image_fingerprint(img2_filename)
 
         if f1 is None or f2 is None:
-            return (18, 0.35) if is_same_keyword else (0, 0.0)
+            return (30, 0.6) if is_same_keyword else (0, 0.0)
 
-        # 1. KHOẢNG CÁCH DHASH (BẮT KHUNG HÌNH VẬT THỂ CHỤP NÓI CHUNG)
         dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
-        sim_dh = max(0.0, 1.0 - dist_dh / 64.0)
-
-        # 2. KHOẢNG CÁCH AHASH
         dist_ah = (f1["ahash"] ^ f2["ahash"]).bit_count()
-        sim_ah = max(0.0, 1.0 - dist_ah / 64.0)
 
-        # 3. ĐỘ TƯƠNG ĐỒNG MÀU SẮC (COSINE SIMILARITY CỦA MẢNG MÀU HISTOGRAM)
         h1, h2 = f1["hist"], f2["hist"]
         dot = sum(a * b for a, b in zip(h1, h2))
         norm1 = sum(a * a for a in h1) ** 0.5
         norm2 = sum(b * b for b in h2) ** 0.5
         color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
 
-        # PHỐI HỢP ĐIỂM CHUẨN XÁC DỰA VÀO NÉT VÀ DẢI MÀU (TỐI ĐA 50Đ)
-        if dist_dh <= 8 or dist_ah <= 6:
+        # THANG ĐIỂM CHUẨN ĐỊNH HƯỚNG THEO THỰC TẾ ĐỒ VẬT TRÙNG KHỚP
+        if dist_dh <= 12 or dist_ah <= 10:
             score = 48
-        elif dist_dh <= 14:
-            score = 40
-        elif dist_dh <= 20:
-            score = 32
-        elif sim_dh >= 0.6 or color_sim >= 0.85:
-            score = 26
-        elif color_sim >= 0.70:
-            score = 18
+        elif dist_dh <= 20 or dist_ah <= 16:
+            score = 38
+        elif dist_dh <= 26 or color_sim >= 0.75:
+            score = 30
+        elif color_sim >= 0.55:
+            score = 22
         else:
-            score = int(color_sim * 15)
+            score = int(color_sim * 20)
 
-        # Trợ lực tối thiểu nếu trùng từ khóa đồ vật (ví dụ cùng là Bút, Laptop...)
-        if is_same_keyword and score < 20:
-            score = 20
+        # Trợ lực tối thiểu 32/50 điểm nếu trùng từ khóa tên đồ
+        if is_same_keyword and score < 32:
+            score = 32
 
         score = min(50, max(0, score))
         similarity_ratio = float(score / 50.0)
@@ -208,7 +206,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         return score, similarity_ratio
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return (18, 0.35) if is_same_keyword else (0, 0.0)
+        return (30, 0.6) if is_same_keyword else (0, 0.0)
 
 def get_core_keyword(text_name):
     if not text_name:
@@ -610,9 +608,6 @@ def found_return(id):
 
 @app.route("/match")
 def match_items():
-    """
-    Đối sánh thông minh kết hợp lọc văn bản & so sánh ảnh nhẹ RAM.
-    """
     import heapq
 
     matches_heap = []
