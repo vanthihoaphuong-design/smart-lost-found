@@ -15,7 +15,6 @@ import cloudinary.uploader
 
 VN_TZ = timezone(timedelta(hours=7))
 
-# Cấu hình Cloudinary an toàn
 cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
 api_key = os.environ.get("CLOUDINARY_API_KEY", "")
 api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
@@ -35,7 +34,6 @@ UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 
-# Xử lý URI Database cho Render PostgreSQL
 db_url = os.environ.get("DATABASE_URL", "sqlite:///lost_found.db")
 if db_url and db_url.startswith("postgres://"):
     db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
@@ -65,6 +63,9 @@ with app.app_context():
 
 STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
 
+# CACHE TẠM VÂN TAY ÁNH TRONG NHỚ RAM ĐỂ TRÁNH TẢI LẠI NHIỀU LẦN
+FINGERPRINT_CACHE = {}
+
 def check_real_image(img_path):
     if not img_path:
         return False
@@ -82,8 +83,8 @@ def check_real_image(img_path):
     except Exception:
         return False
 
-def _read_image_bytes(img_path, max_bytes=2_000_000):
-    """Đọc dữ liệu ảnh từ Cloudinary/Local bằng requests có timeout, chống sập/treo trên Render."""
+def _read_image_bytes(img_path, max_bytes=1_500_000):
+    """Đọc dữ liệu ảnh an toàn, có timeout 3s để tránh treo server."""
     if not check_real_image(img_path):
         return None
 
@@ -92,9 +93,9 @@ def _read_image_bytes(img_path, max_bytes=2_000_000):
         if path.startswith(("http://", "https://")):
             import requests
             headers = {
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
             }
-            resp = requests.get(path, headers=headers, timeout=5, stream=True)
+            resp = requests.get(path, headers=headers, timeout=3, stream=True)
             if resp.status_code == 200:
                 content = resp.content
                 if len(content) <= max_bytes:
@@ -115,11 +116,17 @@ def _read_image_bytes(img_path, max_bytes=2_000_000):
         return None
 
 def _get_image_fingerprint(img_path):
-    """
-    Trích xuất đặc trưng hình học, cấu trúc và dải màu với Square Pad bảo toàn tỉ lệ.
-    """
+    """Trích xuất vân tay ảnh có sử dụng Cache RAM siêu tốc."""
+    if not img_path:
+        return None
+
+    path_key = str(img_path).strip()
+    if path_key in FINGERPRINT_CACHE:
+        return FINGERPRINT_CACHE[path_key]
+
     data = _read_image_bytes(img_path)
     if not data:
+        FINGERPRINT_CACHE[path_key] = None
         return None
 
     try:
@@ -134,7 +141,7 @@ def _get_image_fingerprint(img_path):
             im_square = ImageOps.expand(im_rgb, (pad_w, pad_h, pad_w, pad_h), fill=(255, 255, 255))
             sw, sh = im_square.size
 
-            # 1. dHash Khung thể toàn cảnh (16x16 -> 256 bits)
+            # 1. dHash Khung thể (16x16)
             im_gray = im_square.convert("L")
             im_dh = im_gray.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh = list(im_dh.getdata())
@@ -145,7 +152,7 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh[row * 17 + col + 1]
                     dhash_val = (dhash_val << 1) | int(left > right)
 
-            # 2. dHash VÙNG TRUNG TÂM (Cắt 50% ruột trung tâm để giảm nhiễu phông nền)
+            # 2. dHash Tâm (50% ruột)
             crop_center = im_gray.crop((int(sw * 0.25), int(sh * 0.25), int(sw * 0.75), int(sh * 0.75)))
             im_dh_c = crop_center.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh_c = list(im_dh_c.getdata())
@@ -156,29 +163,26 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh_c[row * 17 + col + 1]
                     dhash_center = (dhash_center << 1) | int(left > right)
 
-            # 3. Color Spectrum Histogram (32x32 = 1024 dải màu nhạy cao)
+            # 3. Histogram Dải màu (32x32)
             im_thumb = im_square.resize((32, 32))
             hist_color = im_thumb.histogram()
 
-            return {
+            result = {
                 "dhash": dhash_val,
                 "dhash_center": dhash_center,
                 "hist": hist_color
             }
+            FINGERPRINT_CACHE[path_key] = result
+            return result
     except Exception as e:
         print(f"Lỗi tính fingerprint: {e}")
+        FINGERPRINT_CACHE[path_key] = None
         return None
     finally:
         del data
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """
-    HÀM ĐỐI SÁNH HÌNH ÁNH ĐỘC LẬP:
-    - Khung dáng toàn cảnh: Max 20đ
-    - Cấu trúc tâm vật thể: Max 15đ
-    - Tương đồng dải màu: Max 15đ
-    * Độc lập 100% với tên từ khóa.
-    """
+    """Đối sánh hình ảnh thuần thị giác 3 phần."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -192,7 +196,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if f1 is None or f2 is None:
             return 0, 0.0
 
-        # 1. ĐÁNH GIÁ KHUNG DÁNG HÌNH HỌC (Max 20 điểm)
+        # Khung dáng (Max 20đ)
         dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
         if dist_dh <= 70:
             score_shape = 20
@@ -207,7 +211,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         else:
             score_shape = 2
 
-        # 2. ĐÁNH GIÁ CẤU TRÚC RUỘT/TÂM VẬT THỂ (Max 15 điểm)
+        # Cấu trúc ruột (Max 15đ)
         dist_center = (f1["dhash_center"] ^ f2["dhash_center"]).bit_count()
         if dist_center <= 60:
             score_structure = 15
@@ -220,7 +224,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         else:
             score_structure = 3
 
-        # 3. ĐÁNH GIÁ DẢI MÀU RGB (Max 15 điểm)
+        # Dải màu (Max 15đ)
         h1, h2 = f1["hist"], f2["hist"]
         dot = sum(a * b for a, b in zip(h1, h2))
         norm1 = sum(a * a for a in h1) ** 0.5
@@ -649,9 +653,13 @@ def found_return(id):
 def match_items():
     import heapq
 
+    # Reset cache giữa mỗi lần bấm đối sánh
+    global FINGERPRINT_CACHE
+    FINGERPRINT_CACHE.clear()
+
     matches_heap = []
-    item_limit = max(10, min(int(os.environ.get("MATCH_ITEM_LIMIT", "100")), 300))
-    result_limit = max(10, min(int(os.environ.get("MATCH_RESULT_LIMIT", "40")), 100))
+    item_limit = max(10, min(int(os.environ.get("MATCH_ITEM_LIMIT", "50")), 100))
+    result_limit = max(10, min(int(os.environ.get("MATCH_RESULT_LIMIT", "30")), 50))
 
     try:
         lost_items = (
