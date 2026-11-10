@@ -117,9 +117,9 @@ def calculate_image_features(img_path):
                 str(img_path), 
                 headers={'User-Agent': 'Mozilla/5.0'}
             )
-            with urllib.request.urlopen(req, timeout=4) as response:
+            with urllib.request.urlopen(req, timeout=3) as response:
                 img_array = np.asarray(bytearray(response.read()), dtype=np.uint8)
-                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR) # Đọc ảnh chuẩn màu sắc để ORB trích xuất nét chính xác
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         else:
             p = os.path.join(app.config["UPLOAD_FOLDER"], str(img_path)) if not os.path.isabs(str(img_path)) else str(img_path)
             if os.path.exists(p):
@@ -128,9 +128,13 @@ def calculate_image_features(img_path):
         if img is None:
             return None
 
+        # THU NHỎ ẢNH VỀ CHUẨN 200x200 NGAY ĐỂ TIẾT KIỆM 90% RAM RENDER
+        crop_img = cv2.resize(img, (200, 200), interpolation=cv2.INTER_AREA)
+        del img # Giải phóng bộ nhớ ảnh gốc ngay lập tức
+
         # CHỈ CẮT VIỀN NẾU ẢNH CÓ NỀN TRẮNG THUẦN
         try:
-            gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            gray_temp = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
             h_img, w_img = gray_temp.shape
             corner_pixels = [gray_temp[0,0], gray_temp[0, w_img-1], gray_temp[h_img-1, 0], gray_temp[h_img-1, w_img-1]]
             if sum(c > 235 for c in corner_pixels) >= 3:
@@ -140,17 +144,17 @@ def calculate_image_features(img_path):
                     c = max(contours, key=cv2.contourArea)
                     x, y, w, h = cv2.boundingRect(c)
                     if w > 20 and h > 20:
-                        img = img[y:y+h, x:x+w]
+                        crop_img = crop_img[y:y+h, x:x+w]
+                        crop_img = cv2.resize(crop_img, (200, 200), interpolation=cv2.INTER_AREA)
         except Exception:
             pass
 
-        crop_img = cv2.resize(img, (200, 200), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         
         features = {}
 
         try:
-            orb = cv2.ORB_create(nfeatures=600)
+            orb = cv2.ORB_create(nfeatures=400) # Giới hạn 400 features để chạy siêu nhẹ
             kp, des = orb.detectAndCompute(gray, None)
             features["orb_keypoints"] = kp
             features["orb_descriptors"] = des
@@ -173,7 +177,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """THUẬT TOÁN ĐỐI SÁNH HÌNH ẢNH THỰC TẾ: ĐÁNH GIÁ ĐÚNG ĐỘ TƯƠNG ĐỒNG NÉT VÀ MÀU"""
+    """THUẬT TOÁN ĐỐI SÁNH HÌNH ẢNH: ĐÁNH GIÁ CHÍNH XÁC NÉT VÀ MÀU SẮC THỰC TẾ"""
     try:
         if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -198,7 +202,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                 matches = bf.knnMatch(des1, des2, k=2)
                 for m_pair in matches:
-                    if len(m_pair) == 2 and m_pair[0].distance < 0.78 * m_pair[1].distance:
+                    if len(m_pair) == 2 and m_pair[0].distance < 0.75 * m_pair[1].distance:
                         good_count += 1
         except Exception:
             good_count = 0
@@ -211,17 +215,17 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         except Exception:
             color_corr = 0.0
 
-        # PHÂN NẤC ĐIỂM HÌNH ẢNH THEO SỐ ĐIỂM NÉT KHỚP THỰC TẾ (ORB) HOẶC DẢI MÀU HSV
-        if good_count >= 10:
+        # TÍNH ĐIỂM ẢNH CHUẨN DỰA VÀO ĐIỂM NÉT VÀ ĐỘ TRÙNG MÀU HSV
+        if good_count >= 12:
             score = 50
-        elif good_count >= 6:
-            score = 42
-        elif good_count >= 3:
-            score = 35
+        elif good_count >= 8:
+            score = 40
+        elif good_count >= 4:
+            score = 30
         elif good_count >= 1:
-            score = 25
+            score = 20
         else:
-            # Nếu không tìm thấy nét trùng khớp, điểm hình ảnh chỉ dựa theo độ tương đồng dải màu HSV (tối đa 25 điểm)
+            # Nếu không tìm thấy nét ORB tương đồng, điểm ảnh tính theo độ trùng màu HSV (tối đa 25 điểm)
             score = int(color_corr * 25)
 
         score = min(50, max(0, score))
