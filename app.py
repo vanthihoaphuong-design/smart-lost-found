@@ -83,23 +83,23 @@ def check_real_image(img_path):
         return False
 
 def _read_image_bytes(img_path, max_bytes=2_000_000):
-    """Đọc dữ liệu ảnh từ Cloudinary/Local an toàn, chống Timeout trên Render."""
+    """Đọc dữ liệu ảnh từ Cloudinary/Local bằng requests có timeout, chống sập/treo trên Render."""
     if not check_real_image(img_path):
         return None
 
     try:
         path = str(img_path).strip()
         if path.startswith(("http://", "https://")):
-            import urllib.request
-            req = urllib.request.Request(
-                path, 
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            )
-            with urllib.request.urlopen(req, timeout=8) as response:
-                data = response.read(max_bytes + 1)
-            if len(data) > max_bytes:
-                return None
-            return data
+            import requests
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36"
+            }
+            resp = requests.get(path, headers=headers, timeout=5, stream=True)
+            if resp.status_code == 200:
+                content = resp.content
+                if len(content) <= max_bytes:
+                    return content
+            return None
 
         local_path = path if os.path.isabs(path) else os.path.join(
             app.config.get("UPLOAD_FOLDER", "static/uploads"), path
@@ -173,10 +173,11 @@ def _get_image_fingerprint(img_path):
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
     """
-    HÀM ĐỐI SÁNH HÌNH ÁNH ĐỘC LẬP MỚI (Khắc phục lỗi 0đ từ xa/gần hoặc Cloudinary):
+    HÀM ĐỐI SÁNH HÌNH ÁNH ĐỘC LẬP:
     - Khung dáng toàn cảnh: Max 20đ
     - Cấu trúc tâm vật thể: Max 15đ
     - Tương đồng dải màu: Max 15đ
+    * Độc lập 100% với tên từ khóa.
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
