@@ -105,7 +105,10 @@ def _read_image_bytes(img_path, max_bytes=1_500_000):
         return None
 
 def _get_image_fingerprint(img_path):
-    """Trích xuất ma trận màu & độ sáng chuẩn 32x32 bằng PIL thuần (Không tốn RAM Render)."""
+    """
+    Trích xuất vân tay nét 256-bit (dHash 16x16) và cắt vùng trung tâm vật thể.
+    Siêu nhẹ RAM nhưng soi cực kỹ chi tiết nhỏ (mặt dây chuyền, logo, nét bút).
+    """
     data = _read_image_bytes(img_path)
     if not data:
         return None
@@ -114,17 +117,43 @@ def _get_image_fingerprint(img_path):
         from PIL import Image
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
+            w, h = im_rgb.size
+
+            # 1. TÍNH DHASH TOÀN BỘ ẢNH (16x16 -> 256 bits bắt khung hình)
+            im_gray = im_rgb.convert("L")
+            im_dh = im_gray.resize((17, 16), Image.Resampling.LANCZOS)
+            pixels_dh = list(im_dh.getdata())
+            dhash_full = 0
+            for row in range(16):
+                for col in range(16):
+                    left = pixels_dh[row * 17 + col]
+                    right = pixels_dh[row * 17 + col + 1]
+                    dhash_full = (dhash_full << 1) | int(left > right)
+
+            # 2. CẮT VÙNG TRUNG TÂM (CENTER CROP 60%) ĐỂ SOI CHI TIẾT NHỎ (MẶT DÂY CHUYỀN, LOGO)
+            left_c = int(w * 0.2)
+            top_c = int(h * 0.2)
+            right_c = int(w * 0.8)
+            bottom_c = int(h * 0.8)
+            crop_center = im_gray.crop((left_c, top_c, right_c, bottom_c))
             
-            # 1. Thu nhỏ về 32x32 để so sánh dải pixel trực tiếp
-            im_thumb = im_rgb.resize((32, 32), Image.Resampling.BILINEAR)
-            pixels = list(im_thumb.getdata())
-            
-            # 2. Lấy Histogram dải màu RGB
-            hist = im_rgb.histogram()
+            im_dh_center = crop_center.resize((17, 16), Image.Resampling.LANCZOS)
+            pixels_center = list(im_dh_center.getdata())
+            dhash_center = 0
+            for row in range(16):
+                for col in range(16):
+                    left = pixels_center[row * 17 + col]
+                    right = pixels_center[row * 17 + col + 1]
+                    dhash_center = (dhash_center << 1) | int(left > right)
+
+            # 3. HISTOGRAM MÀU SẮC CHÍNH XÁC NÂNG CAO (PHÂN BIỆT RÕ XANH LÁ VS XANH DƯƠNG)
+            im_thumb = im_rgb.resize((24, 24))
+            hist_color = im_thumb.histogram()
 
             return {
-                "pixels": pixels,
-                "hist": hist
+                "dhash_full": dhash_full,
+                "dhash_center": dhash_center,
+                "hist": hist_color
             }
     except Exception as e:
         print(f"Lỗi tính fingerprint: {e}")
@@ -133,7 +162,10 @@ def _get_image_fingerprint(img_path):
         del data
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Chấm điểm hình ảnh thực tế linh hoạt theo độ giống nhau thực sự (Max 50đ)."""
+    """
+    Thuật toán đối sánh nét chi tiết nâng cao (Max 50đ).
+    Phân biệt rõ mặt dây chuyền khác nhau, vali khác màu và bù điểm cho góc chụp bút lệch.
+    """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -147,37 +179,34 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if f1 is None or f2 is None:
             return (20, 0.4) if is_same_keyword else (0, 0.0)
 
-        # 1. SO SÁNH MA TRẬN PIXEL (32x32 = 1024 điểm ảnh)
-        p1, p2 = f1["pixels"], f2["pixels"]
-        total_diff = sum(abs(r1-r2) + abs(g1-g2) + abs(b1-b2) for (r1,g1,b1), (r2,g2,b2) in zip(p1, p2))
-        max_possible_diff = 1024 * 255 * 3
-        pixel_sim = max(0.0, 1.0 - (total_diff / max_possible_diff))
+        # Khoảng cách Nét toàn cảnh (256 bits)
+        dist_full = (f1["dhash_full"] ^ f2["dhash_full"]).bit_count()
+        # Khoảng cách Nét trung tâm (mặt dây chuyền, hoa văn)
+        dist_center = (f1["dhash_center"] ^ f2["dhash_center"]).bit_count()
 
-        # 2. SO SÁNH HISTOGRAM MÀU SẮC (COSINE SIMILARITY)
+        # So sánh màu sắc (Cosine Similarity)
         h1, h2 = f1["hist"], f2["hist"]
         dot = sum(a * b for a, b in zip(h1, h2))
         norm1 = sum(a * a for a in h1) ** 0.5
         norm2 = sum(b * b for b in h2) ** 0.5
         color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
 
-        # KẾT HỢP ĐỘ TƯƠNG ĐỒNG (pixel_sim 60% + color_sim 40%)
-        combined_sim = (pixel_sim * 0.6) + (color_sim * 0.4)
-
-        # QUY ĐỔI SANG THANG ĐIỂM 50 CHÍNH XÁC VÀ LINH HOẠT
-        if combined_sim >= 0.85:
-            score = 48  # Ảnh gần như giống nhau hoàn hảo (Ví tiền, Chuột...)
-        elif combined_sim >= 0.75:
-            score = 42  # Giống nhau rõ rệt
-        elif combined_sim >= 0.65:
-            score = 35  # Tương đồng khá
-        elif combined_sim >= 0.55:
-            score = 28  # Tương đồng vừa phải
-        elif combined_sim >= 0.45:
-            score = 22
+        # PHÁT HIỆN SỰ KHÁC BIỆT CHI TIẾT
+        # Nếu chi tiết trung tâm (mặt dây chuyền) khác nhau nhiều -> Phạt điểm nặng
+        if dist_center > 70:
+            score = 15  # Mặt dây chuyền khác nhau sẽ bị hạ điểm
+        elif color_sim < 0.65:
+            score = 18  # Vali khác màu (xanh lá vs xanh dương) sẽ bị hạ điểm
+        elif dist_full <= 35 or dist_center <= 30:
+            score = 48  # Trùng khớp nét hoàn hảo
+        elif dist_full <= 55 or dist_center <= 45:
+            score = 40  # Cùng loại bút bi chụp góc lệch/xa gần
+        elif dist_full <= 75:
+            score = 30
         else:
-            score = int(combined_sim * 40)
+            score = 20
 
-        # Trợ lực tối thiểu 25đ nếu cùng từ khóa tên đồ
+        # Trợ lực vừa phải nếu cùng từ khóa tên đồ
         if is_same_keyword and score < 25:
             score = 25
 
