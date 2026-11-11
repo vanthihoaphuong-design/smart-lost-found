@@ -17,98 +17,128 @@
         margin-bottom: 15px;
     }
     .filter-box {
-        max-width: 400px;
+        max-width: 450px;
         margin: 0 auto 30px auto;
     }
     .match-card {
         background: #ffffff;
         border-radius: 12px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.08);
-        border: 1px solid #e0e0e0;
-        margin-bottom: 25px;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.06);
+        border: 1px solid #e2e8f0;
+        margin-bottom: 20px;
         overflow: hidden;
-        transition: transform 0.2s ease;
-    }
-    .match-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 8px 25px rgba(0,0,0,0.12);
     }
     .item-col {
         padding: 20px;
         text-align: center;
     }
     .item-col-lost {
-        background-color: #fff9f9;
-        border-right: 1px dashed #f0c2c2;
+        background-color: #fffafaf5;
+        border-right: 1px dashed #f8d7da;
     }
     .item-col-found {
-        background-color: #f6fff8;
-        border-right: 1px solid #e0e0e0;
+        background-color: #f6fff8f5;
+        border-right: 1px solid #e2e8f0;
     }
     .score-col {
-        background-color: #fafafa;
+        background-color: #f8fafc;
         padding: 20px;
         display: flex;
         flex-direction: column;
         justify-content: center;
         align-items: center;
     }
+    .item-img-box {
+        position: relative;
+        display: inline-block;
+        cursor: pointer;
+    }
     .item-img {
         width: 110px;
         height: 110px;
         object-fit: cover;
         border-radius: 8px;
-        border: 1px solid #ddd;
-        margin-bottom: 12px;
-        background-color: #f8f9fa;
+        border: 1px solid #cbd5e1;
+        margin-bottom: 8px;
+        background-color: #f1f5f9;
+        transition: transform 0.2s ease;
+    }
+    .item-img-box:hover .item-img {
+        transform: scale(1.05);
+    }
+    .zoom-badge {
+        position: absolute;
+        bottom: 12px;
+        right: 4px;
+        background: rgba(0,0,0,0.6);
+        color: white;
+        font-size: 10px;
+        padding: 2px 5px;
+        border-radius: 4px;
+    }
+    .no-img-placeholder {
+        width: 110px;
+        height: 110px;
+        border-radius: 8px;
+        border: 1px dashed #94a3b8;
+        background-color: #f1f5f9;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #64748b;
+        font-size: 0.75rem;
+        margin: 0 auto 8px auto;
     }
     .item-title {
         font-weight: 700;
-        font-size: 1.1rem;
-        color: #212529;
-        margin-bottom: 6px;
-    }
-    .badge-cat {
-        font-size: 0.75rem;
-        padding: 4px 8px;
-        border-radius: 12px;
-        margin-bottom: 8px;
-        display: inline-block;
+        font-size: 1.05rem;
+        color: #1e293b;
+        margin-bottom: 4px;
     }
     .score-number {
         font-size: 2.2rem;
         font-weight: 800;
         color: #0d6efd;
         line-height: 1;
-        margin: 8px 0;
+        margin: 6px 0;
     }
     .score-details {
-        font-size: 0.85rem;
+        font-size: 0.82rem;
         width: 100%;
-        max-width: 200px;
-        margin: 10px 0;
+        max-width: 190px;
+        margin: 8px 0;
     }
     .score-row {
         display: flex;
         justify-content: space-between;
         padding: 2px 0;
-        border-bottom: 1px stroke #eee;
+        border-bottom: 1px stroke #f1f5f9;
     }
-    .pagination-wrapper {
+    /* PHÂN TRANG GỌN ĐẸP */
+    .pagination-container {
         display: flex;
         justify-content: center;
-        margin-top: 30px;
+        margin: 30px 0;
+    }
+    .pagination .page-link {
+        color: #0d6efd;
+        border-radius: 6px;
+        margin: 0 2px;
+        font-weight: 500;
+    }
+    .pagination .page-item.active .page-link {
+        background-color: #0d6efd;
+        border-color: #0d6efd;
     }
 </style>
 
 <div class="match-container">
     <div class="match-header">
         <h2>🤖 Kết Quả Đối Sánh Thông Minh</h2>
-        <p class="text-muted">Hệ thống AI tự động phân tích độ tương đồng giữa Đồ Báo Mất và Đồ Báo Nhặt</p>
-        
         <div class="filter-box">
             <form method="GET" action="/match" id="catForm">
-                <select name="category" class="form-select form-select-lg shadow-sm" onchange="document.getElementById('catForm').submit()">
+                <select name="category" class="form-select shadow-sm" onchange="document.getElementById('catForm').submit()">
                     <option value="">-- Tất cả loại đồ vật --</option>
                     <option value="Sách vở / Dụng cụ học tập" {% if selected_category == "Sách vở / Dụng cụ học tập" %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
                     <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if selected_category == "Thiết bị điện tử (Laptop, Điện thoại...)" %}selected{% endif %}>Thiết bị điện tử</option>
@@ -124,29 +154,49 @@
         {% for m in matches %}
         <div class="match-card">
             <div class="row g-0 align-items-center">
-                <!-- ĐỒ BÁO MẤT -->
+                <!-- ĐỒ MẤT -->
                 <div class="col-md-4 item-col item-col-lost">
                     <span class="badge bg-danger mb-2">ĐỒ BỊ MẤT</span>
                     <div>
-                        <img src="{{ m.lost.hinh_anh if m.lost.hinh_anh else url_for('static', filename='uploads/no_image.png') }}" class="item-img" alt="Lost">
+                        {% if m.lost.has_image %}
+                        <div class="item-img-box" onclick="zoomImage('{{ m.lost.hinh_anh }}', '{{ m.lost.ten_do }}')">
+                            <img src="{{ m.lost.hinh_anh }}" class="item-img" alt="Lost" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
+                            <span class="zoom-badge">🔍 Zoom</span>
+                        </div>
+                        {% else %}
+                        <div class="no-img-placeholder">
+                            <span>📷</span>
+                            <span>Chưa có ảnh</span>
+                        </div>
+                        {% endif %}
                     </div>
                     <div class="item-title">{{ m.lost.ten_do }}</div>
-                    <span class="badge badge-cat bg-danger text-white">{{ m.lost.loai_do }}</span>
+                    <span class="badge bg-danger text-white mb-1">{{ m.lost.loai_do }}</span>
                     <div class="small text-muted">📍 {{ m.lost.noi_mat }} | 📅 {{ m.lost.ngay_mat }}</div>
                 </div>
 
-                <!-- ĐỒ BÁO NHẶT -->
+                <!-- ĐỒ NHẶT -->
                 <div class="col-md-4 item-col item-col-found">
                     <span class="badge bg-success mb-2">ĐỒ NHẶT ĐƯỢC</span>
                     <div>
-                        <img src="{{ m.found.hinh_anh if m.found.hinh_anh else url_for('static', filename='uploads/no_image.png') }}" class="item-img" alt="Found">
+                        {% if m.found.has_image %}
+                        <div class="item-img-box" onclick="zoomImage('{{ m.found.hinh_anh }}', '{{ m.found.ten_do }}')">
+                            <img src="{{ m.found.hinh_anh }}" class="item-img" alt="Found" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
+                            <span class="zoom-badge">🔍 Zoom</span>
+                        </div>
+                        {% else %}
+                        <div class="no-img-placeholder">
+                            <span>📷</span>
+                            <span>Chưa có ảnh</span>
+                        </div>
+                        {% endif %}
                     </div>
                     <div class="item-title">{{ m.found.ten_do }}</div>
-                    <span class="badge badge-cat bg-success text-white">{{ m.found.loai_do }}</span>
+                    <span class="badge bg-success text-white mb-1">{{ m.found.loai_do }}</span>
                     <div class="small text-muted">📍 {{ m.found.noi_nhat }} | 📅 {{ m.found.ngay_nhat }}</div>
                 </div>
 
-                <!-- ĐIỂM SỐ PHÙ HỢP -->
+                <!-- ĐIỂM SỐ -->
                 <div class="col-md-4 score-col">
                     <div class="text-uppercase small fw-bold text-secondary">🎯 ĐIỂM PHÙ HỢP</div>
                     <div class="score-number">{{ m.score }}/100</div>
@@ -168,25 +218,64 @@
         </div>
         {% endfor %}
 
-        <!-- PHÂN TRANG -->
+        <!-- PHÂN TRANG THÔNG MINH GỌN ĐẸP -->
         {% if total_pages > 1 %}
-        <div class="pagination-wrapper">
-            <nav>
-                <ul class="pagination">
-                    {% for p in range(1, total_pages + 1) %}
-                    <li class="page-item {% if p == page %}active{% endif %}">
-                        <a class="page-link" href="/match?page={{ p }}&category={{ selected_category }}">{{ p }}</a>
-                    </li>
-                    {% endfor %}
-                </ul>
-            </nav>
+        <div class="pagination-container">
+            <ul class="pagination pagination-sm shadow-sm">
+                <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                    <a class="page-link" href="/match?page=1&category={{ selected_category }}">Đầu</a>
+                </li>
+                <li class="page-item {% if page == 1 %}disabled{% endif %}">
+                    <a class="page-link" href="/match?page={{ page - 1 }}&category={{ selected_category }}">«</a>
+                </li>
+
+                {% set start_p = page - 2 if page - 2 > 0 else 1 %}
+                {% set end_p = page + 2 if page + 2 <= total_pages else total_pages %}
+
+                {% for p in range(start_p, end_p + 1) %}
+                <li class="page-item {% if p == page %}active{% endif %}">
+                    <a class="page-link" href="/match?page={{ p }}&category={{ selected_category }}">{{ p }}</a>
+                </li>
+                {% endfor %}
+
+                <li class="page-item {% if page == total_pages %}disabled{% endif %}">
+                    <a class="page-link" href="/match?page={{ page + 1 }}&category={{ selected_category }}">»</a>
+                </li>
+                <li class="page-item {% if page == total_pages %}disabled{% endif %}">
+                    <a class="page-link" href="/match?page={{ total_pages }}&category={{ selected_category }}">Cuối ({{ total_pages }})</a>
+                </li>
+            </ul>
         </div>
         {% endif %}
 
     {% else %}
         <div class="alert alert-info text-center my-5 p-4 rounded-3 shadow-sm">
-            <h5>Chưa tìm thấy cặp đồ vật nào phù hợp trong danh mục này.</h5>
+            <h5>Chưa tìm thấy cặp đồ vật nào phù hợp.</h5>
         </div>
     {% endif %}
 </div>
+
+<!-- MODAL ZOOM ẢNH TẠI TRANG MATCH -->
+<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content bg-dark">
+            <div class="modal-header border-0 text-white">
+                <h5 class="modal-title" id="zoomTitle">Xem ảnh chi tiết</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body text-center p-2">
+                <img id="zoomImg" src="" class="img-fluid rounded" style="max-height: 80vh; object-fit: contain;">
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function zoomImage(src, title) {
+    document.getElementById('zoomImg').src = src;
+    document.getElementById('zoomTitle').innerText = title;
+    var myModal = new bootstrap.Modal(document.getElementById('imageZoomModal'));
+    myModal.show();
+}
+</script>
 {% endblock %}
