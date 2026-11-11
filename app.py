@@ -16,7 +16,6 @@ import cloudinary.uploader
 
 from PIL import Image, ImageOps, ImageFile
 
-# Vô hiệu hóa cảnh báo SSL không xác thực khi tải ảnh
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -92,28 +91,22 @@ def check_real_image(img_path):
     except Exception:
         return False
 
-def _read_image_bytes(img_path, max_bytes=2_000_000):
-    """Tải ảnh an toàn tuyệt đối, tránh sập SSL/Worker trên Render."""
+def _read_image_bytes(img_path, max_bytes=1_500_000):
     if not check_real_image(img_path):
         return None
 
     path = str(img_path).strip()
     
-    # 1. Tải ảnh URL từ Cloudinary
     if path.startswith(("http://", "https://")):
         try:
             import requests
             headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(path, headers=headers, timeout=3, verify=False)
-            if resp.status_code == 200:
-                content = resp.content
-                if len(content) <= max_bytes:
-                    return content
-        except Exception as err:
-            print(f"Bỏ qua lỗi tải ảnh URL ({path}): {err}")
+            resp = requests.get(path, headers=headers, timeout=1.5, verify=False)
+            if resp.status_code == 200 and len(resp.content) <= max_bytes:
+                return resp.content
+        except Exception:
             return None
 
-    # 2. Đọc file ảnh cục bộ
     try:
         local_path = path if os.path.isabs(path) else os.path.join(
             app.config.get("UPLOAD_FOLDER", "static/uploads"), path
@@ -121,8 +114,8 @@ def _read_image_bytes(img_path, max_bytes=2_000_000):
         if os.path.isfile(local_path) and os.path.getsize(local_path) <= max_bytes:
             with open(local_path, "rb") as f:
                 return f.read()
-    except Exception as e:
-        print(f"Lỗi đọc file local ({path}): {e}")
+    except Exception:
+        pass
         
     return None
 
@@ -180,16 +173,11 @@ def _get_image_fingerprint(img_path):
             }
             FINGERPRINT_CACHE[path_key] = result
             return result
-    except Exception as e:
-        print(f"Bỏ qua ảnh lỗi ({img_path}): {e}")
+    except Exception:
         FINGERPRINT_CACHE[path_key] = None
         return None
-    finally:
-        del data
-        gc.collect()
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Giữ nguyên cách tính điểm hình ảnh (Tối đa 50 điểm)"""
     try:
         if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
@@ -249,8 +237,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         similarity_ratio = float(total_image_score / 50.0)
 
         return total_image_score, similarity_ratio
-    except Exception as e:
-        print(f"Lỗi image_score: {e}")
+    except Exception:
         fallback = 30 if is_same_keyword else 15
         return fallback, float(fallback / 50.0)
 
@@ -351,8 +338,7 @@ def save_new_pin(new_pin):
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(config_data, f, ensure_ascii=False, indent=4)
         return True
-    except Exception as e:
-        print("Lỗi lưu PIN:", e)
+    except Exception:
         return False
 
 @app.route("/")
@@ -368,7 +354,7 @@ def lost():
             try:
                 res = cloudinary.uploader.upload(file)
                 filename = res.get("secure_url", "")
-            except Exception as e:
+            except Exception:
                 filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
                 file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
         
@@ -384,7 +370,7 @@ def lost():
             )
             db.session.add(item)
             db.session.commit()
-        except Exception as e:
+        except Exception:
             try:
                 db.session.rollback()
             except Exception:
@@ -417,7 +403,7 @@ def found():
             )
             db.session.add(item)
             db.session.commit()
-        except Exception as e:
+        except Exception:
             try:
                 db.session.rollback()
             except Exception:
@@ -541,8 +527,8 @@ def edit_lost(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception as e:
-                print(f"Lỗi upload Cloudinary: {e}")
+            except Exception:
+                pass
             
         try:
             db.session.commit()
@@ -571,8 +557,8 @@ def edit_found(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception as e:
-                print(f"Lỗi upload Cloudinary: {e}")
+            except Exception:
+                pass
             
         try:
             db.session.commit()
@@ -654,16 +640,14 @@ def found_return(id):
 
 @app.route("/match")
 def match_items():
-    """Hàm đối sánh chính: Giữ nguyên 100% công thức và trọng số điểm"""
     matches_list = []
     
     try:
         global FINGERPRINT_CACHE
-        if isinstance(FINGERPRINT_CACHE, dict):
-            FINGERPRINT_CACHE.clear()
+        FINGERPRINT_CACHE = {}
 
-        lost_items = LostItem.query.order_by(LostItem.id.desc()).limit(30).all()
-        found_items = FoundItem.query.order_by(FoundItem.id.desc()).limit(30).all()
+        lost_items = LostItem.query.order_by(LostItem.id.desc()).limit(20).all()
+        found_items = FoundItem.query.order_by(FoundItem.id.desc()).limit(20).all()
 
         for lost in lost_items:
             for found in found_items:
@@ -675,11 +659,9 @@ def match_items():
                     key2 = get_core_keyword(ten2)
                     is_same_key = (key1 == key2 and bool(key1))
 
-                    # 1. Tính điểm tên (Tối đa 15đ)
                     ten_sim = similarity(ten1, ten2)
                     ten_score = 15 if is_same_key else int(ten_sim * 15)
 
-                    # 2. Tính điểm màu sắc (Tối đa 15đ)
                     m1 = str(getattr(lost, 'mau_sac', '') or '').strip().lower()
                     m2 = str(getattr(found, 'mau_sac', '') or '').strip().lower()
                     mau_score = 0
@@ -688,7 +670,6 @@ def match_items():
                     elif is_same_key:
                         mau_score = 10
 
-                    # 3. Tính điểm vị trí (Tối đa 10đ)
                     v1 = str(getattr(lost, 'noi_mat', '') or '').strip().lower()
                     v2 = str(getattr(found, 'noi_nhat', '') or '').strip().lower()
                     vi_tri_score = 0
@@ -696,12 +677,10 @@ def match_items():
                         vi_tri_sim = similarity(v1, v2)
                         vi_tri_score = 10 if vi_tri_sim > 0.8 else (5 if vi_tri_sim > 0.5 else 0)
 
-                    # 4. Tính điểm ngày tháng (Tối đa 10đ)
                     d1 = getattr(lost, 'ngay_mat', '')
                     d2 = getattr(found, 'ngay_nhat', '')
                     ngay_score = date_score(d1, d2)
 
-                    # 5. Tính điểm hình ảnh (Tối đa 50đ)
                     anh1 = getattr(lost, 'hinh_anh', '')
                     anh2 = getattr(found, 'hinh_anh', '')
                     has1 = check_real_image(anh1)
@@ -713,7 +692,6 @@ def match_items():
                         anh_score = 25 if is_same_key else 10
                         image_ratio = 0.5 if is_same_key else 0.2
 
-                    # Tổng điểm (Tối đa 100đ)
                     total_score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
                     if total_score >= 75:
@@ -747,20 +725,15 @@ def match_items():
                     }
                     matches_list.append(result)
 
-                except Exception as pair_err:
-                    print(f"Bỏ qua cặp item lỗi: {pair_err}")
+                except Exception:
                     continue
 
         matches_list.sort(key=lambda x: x["score"], reverse=True)
 
-    except Exception as route_err:
-        print(f"Lỗi tổng tại route /match: {route_err}")
-
-    try:
-        gc.collect()
     except Exception:
         pass
 
+    gc.collect()
     return render_template("match.html", matches=matches_list)
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
@@ -831,8 +804,7 @@ def teacher_check(lost_id, found_id):
             ket_luan=ket_luan,
             image_warning=image_warning
         )
-    except Exception as e:
-        print(f"Lỗi teacher check: {e}")
+    except Exception:
         return redirect(url_for("match_items"))
 
 @app.route("/confirm-return/<int:lost_id>/<int:found_id>", methods=["GET", "POST"])
@@ -948,8 +920,7 @@ def export_excel():
             as_attachment=True,
             download_name=filename
         )
-    except Exception as e:
-        print("Lỗi xuất Excel:", e)
+    except Exception:
         return "Lỗi xuất Excel", 500
 
 @app.route("/get-pin")
