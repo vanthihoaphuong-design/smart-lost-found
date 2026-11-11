@@ -21,7 +21,10 @@ Giáo viên kiểm tra
 
     <div class="row g-4">
 
+        <!-- ========================= -->
         <!-- ĐỒ BỊ MẤT -->
+        <!-- ========================= -->
+
         <div class="col-md-6">
 
             <div class="card shadow-sm h-100">
@@ -38,10 +41,8 @@ Giáo viên kiểm tra
 
                         <img
                             src="{{ lost_img }}"
-                            class="img-fluid rounded border cursor-pointer"
+                            class="img-fluid rounded border"
                             style="max-height:250px; object-fit: cover;"
-                            onclick="zoomImage('{{ lost_img }}')"
-                            title="Bấm để xem phóng to"
                             onerror="this.onerror=null; this.src='https://via.placeholder.com/250?text=Chưa+có+ảnh';"
                         >
 
@@ -82,7 +83,10 @@ Giáo viên kiểm tra
         </div>
 
 
+        <!-- ========================= -->
         <!-- ĐỒ NHẶT ĐƯỢC -->
+        <!-- ========================= -->
+
         <div class="col-md-6">
 
             <div class="card shadow-sm h-100">
@@ -99,10 +103,8 @@ Giáo viên kiểm tra
 
                         <img
                             src="{{ found_img }}"
-                            class="img-fluid rounded border cursor-pointer"
+                            class="img-fluid rounded border"
                             style="max-height:250px; object-fit: cover;"
-                            onclick="zoomImage('{{ found_img }}')"
-                            title="Bấm để xem phóng to"
                             onerror="this.onerror=null; this.src='https://via.placeholder.com/250?text=Chưa+có+ảnh';"
                         >
 
@@ -145,7 +147,10 @@ Giáo viên kiểm tra
     </div>
 
 
+    <!-- ========================= -->
     <!-- KẾT QUẢ AI -->
+    <!-- ========================= -->
+
     <div class="card shadow-sm mt-4">
 
         <div class="card-header bg-primary text-white">
@@ -183,7 +188,10 @@ Giáo viên kiểm tra
     </div>
 
 
+    <!-- ========================= -->
     <!-- XÁC NHẬN BẢO MẬT CỦA GIÁO VIÊN -->
+    <!-- ========================= -->
+
     <div class="card shadow-sm mt-4 border-success">
 
         <div class="card-header bg-success text-white fw-bold">
@@ -247,93 +255,4 @@ Giáo viên kiểm tra
 
 </div>
 
-<!-- MODAL PHÓNG TO ẢNH -->
-<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content border-0 shadow-lg" style="background-color: #000; color: #fff;">
-            <div class="modal-header border-0 pb-0 pt-2 px-3">
-                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
-                <img id="zoomModalImage" src="" 
-                     draggable="false"
-                     style="max-height: 85%; max-width: 85%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
-            </div>
-            <div class="modal-footer border-0 py-2 justify-content-center" style="background-color: #111;">
-                <small class="text-warning fw-semibold" style="font-size: 0.85rem;">
-                    💡 Cuộn chuột để Phóng ta/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem
-                </small>
-            </div>
-        </div>
-    </div>
-</div>
-
-<script>
-let scale = 1;
-let pointX = 0;
-let pointY = 0;
-let startX = 0;
-let startY = 0;
-let isDragging = false;
-
-function zoomImage(src) {
-    const imgEl = document.getElementById('zoomModalImage');
-    
-    scale = 1;
-    pointX = 0;
-    pointY = 0;
-    isDragging = false;
-    updateTransform(imgEl);
-    
-    imgEl.src = src;
-
-    const modalEl = document.getElementById('imageZoomModal');
-    const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    bsModal.show();
-}
-
-function updateTransform(img) {
-    img.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
-}
-
-document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
-    e.preventDefault();
-    const imgEl = document.getElementById('zoomModalImage');
-    const delta = e.deltaY < 0 ? 0.25 : -0.25;
-    
-    scale = Math.min(Math.max(1, scale + delta), 6);
-    
-    if (scale === 1) {
-        pointX = 0;
-        pointY = 0;
-    }
-    updateTransform(imgEl);
-}, { passive: false });
-
-const imgEl = document.getElementById('zoomModalImage');
-
-imgEl.addEventListener('mousedown', function(e) {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    isDragging = true;
-    startX = e.clientX - pointX;
-    startY = e.clientY - pointY;
-    imgEl.style.cursor = 'grabbing';
-});
-
-window.addEventListener('mousemove', function(e) {
-    if (!isDragging) return;
-    e.preventDefault();
-    pointX = e.clientX - startX;
-    pointY = e.clientY - startY;
-    updateTransform(imgEl);
-});
-
-window.addEventListener('mouseup', function() {
-    if (isDragging) {
-        isDragging = false;
-        imgEl.style.cursor = 'grab';
-    }
-});
-</script>
 {% endblock %}
