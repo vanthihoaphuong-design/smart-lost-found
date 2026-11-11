@@ -16,13 +16,13 @@ import cloudinary.uploader
 
 from PIL import Image, ImageOps, ImageFile
 
-# Vô hiệu hóa cảnh báo SSL và cho phép PIL đọc ảnh truncated từ Cloudinary
+# Vô hiệu hóa cảnh báo SSL và cho phép PIL đọc ảnh bị khuyết/truncated từ Cloudinary
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 VN_TZ = timezone(timedelta(hours=7))
 
-# Bọc kiểm tra OpenCV an toàn chống sập Worker RAM
+# Bọc an toàn OpenCV chống tràn RAM Worker trên Render
 HAS_OPENCV = False
 try:
     import cv2
@@ -115,7 +115,7 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def calculate_image_features(img_path):
-    """Tính toán Feature trích xuất từ OpenCV/PIL có hỗ trợ Cache & tối ưu RAM"""
+    """Trích xuất ma trận đặc trưng từ OpenCV / PIL với Cache và tối ưu RAM"""
     if not check_real_image(img_path):
         return None
     
@@ -127,10 +127,10 @@ def calculate_image_features(img_path):
         data = None
         path_str = str(img_path).strip()
         
-        # 1. Tải dữ liệu byte an toàn từ Cloudinary hoặc Local
+        # Tải dữ liệu Byte từ Cloudinary hoặc Local
         if path_str.startswith(("http://", "https://")):
             import requests
-            resp = requests.get(path_str, timeout=3, verify=False)
+            resp = requests.get(path_str, timeout=4, verify=False)
             if resp.status_code == 200:
                 data = resp.content
         else:
@@ -142,13 +142,13 @@ def calculate_image_features(img_path):
         if not data:
             return None
 
-        # 2. Ưu tiên xử lý OpenCV nếu thư viện khả dụng
+        # 1. Ưu tiên xử lý OpenCV
         if HAS_OPENCV:
             try:
                 arr = np.asarray(bytearray(data), dtype=np.uint8)
                 img = cv2.imdecode(arr, -1)
                 if img is not None:
-                    # Tự động crop viền trắng nếu là ảnh sản phẩm/studio
+                    # Tự động cắt viền nếu là ảnh studio/nền trắng
                     gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                     h_img, w_img = gray_temp.shape
                     corner_pixels = [gray_temp[0,0], gray_temp[0, w_img-1], gray_temp[h_img-1, 0], gray_temp[h_img-1, w_img-1]]
@@ -161,6 +161,7 @@ def calculate_image_features(img_path):
                             if w > 20 and h > 20:
                                 img = img[y:y+h, x:x+w]
 
+                    # Resize 120x120 để tiết kiệm RAM
                     crop_img = cv2.resize(img, (120, 120), interpolation=cv2.INTER_AREA)
                     gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
                     
@@ -181,9 +182,9 @@ def calculate_image_features(img_path):
                     save_feature_cache(img_path, features)
                     return features
             except Exception as cv_err:
-                print(f"Bỏ qua lỗi OpenCV, chuyển fallback PIL: {cv_err}")
+                print(f"Fallback sang PIL do OpenCV lỗi: {cv_err}")
 
-        # 3. Phương án Fallback bằng PIL siêu nhẹ RAM
+        # 2. Phương án Fallback PIL siêu nhẹ RAM
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
             im_gray = im_rgb.convert("L")
@@ -213,22 +214,23 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Tính điểm tương đồng ảnh chính xác - Tối đa 50 điểm"""
+    """TÍNH ĐIỂM HÌNH ẢNH THỰC TẾ 100% (Tối đa 50đ) - KHÔNG DÙNG ĐIỂM ẢO"""
     try:
         str1 = str(img1_filename).strip()
         str2 = str(img2_filename).strip()
 
+        # Trùng URL ảnh -> 50đ tuyệt đối
         if str1 == str2:
             return 50, 1.0
 
         f1 = calculate_image_features(img1_filename)
         f2 = calculate_image_features(img2_filename)
 
+        # Lỗi tải/không có ảnh -> 0đ thực tế
         if f1 is None or f2 is None:
-            fallback = 35 if is_same_keyword else 15
-            return fallback, float(fallback / 50.0)
+            return 0, 0.0
 
-        # Xử lý nếu cả 2 có Feature dạng OpenCV
+        # Nếu cả 2 đều dùng OpenCV
         if f1.get("type") == "opencv" and f2.get("type") == "opencv":
             good_count = 0
             try:
@@ -252,41 +254,45 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 color_corr = 0.0
 
             if good_count >= 10:
-                score = 45 if is_same_keyword else 42
+                score = 45
             elif good_count >= 5:
-                score = 42 if is_same_keyword else 38
-            elif good_count >= 3:
-                score = 38 if is_same_keyword else 32
+                score = 38
+            elif good_count >= 2:
+                score = 28
             elif good_count >= 1:
-                score = 32 if is_same_keyword else 25
+                score = 20
             else:
-                score = int(color_corr * 25)
+                score = int(color_corr * 25) if color_corr > 0.50 else 0
 
             score = min(50, max(0, score))
             return score, float(score / 50.0)
 
-        # Xử lý điểm dHash + Histogram theo dạng PIL Fallback
+        # Nếu dùng PIL (dHash + Histogram)
         dist = (f1.get("dhash", 0) ^ f2.get("dhash", 0)).bit_count()
-        s_shape = 25 if dist <= 60 else (20 if dist <= 90 else (15 if dist <= 120 else 8))
+        if dist <= 30:
+            s_shape = 25
+        elif dist <= 50:
+            s_shape = 18
+        elif dist <= 75:
+            s_shape = 10
+        else:
+            s_shape = 0
 
         h1, h2 = f1.get("hist", []), f2.get("hist", [])
         dot = sum(a * b for a, b in zip(h1, h2))
         norm1 = sum(a * a for a in h1) ** 0.5
         norm2 = sum(b * b for b in h2) ** 0.5
         c_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
-        s_color = int(c_sim * 25)
+        
+        s_color = int(c_sim * 25) if c_sim > 0.60 else 0
 
         total = s_shape + s_color
-        if is_same_keyword and total < 30:
-            total = 35
-
         total = min(50, max(0, total))
         return total, float(total / 50.0)
 
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        fallback = 35 if is_same_keyword else 15
-        return fallback, float(fallback / 50.0)
+        return 0, 0.0
 
 def get_core_keyword(text_name):
     if not text_name:
@@ -699,7 +705,7 @@ def found_return(id):
 def match_items():
     matches = []
     try:
-        # Lấy tối đa 25 bài chưa hoàn trả mới nhất
+        # Lấy các bài chưa tìm thấy/chưa hoàn trả mới nhất
         lost_items = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").order_by(LostItem.id.desc()).limit(25).all()
         found_items = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA").order_by(FoundItem.id.desc()).limit(25).all()
     except Exception:
@@ -716,7 +722,7 @@ def match_items():
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
 
-                # 1. ĐIỂM HÌNH ẢNH (Tối đa 50đ)
+                # 1. ĐIỂM HÌNH ẢNH THẬT (Tối đa 50đ)
                 if has1 and has2:
                     anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
                 else:
@@ -732,7 +738,7 @@ def match_items():
                 if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
                     mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
                 elif is_same_key:
-                    mau_score = 12
+                    mau_score = 10
 
                 # 4. ĐIỂM VỊ TRÍ (Tối đa 10đ)
                 vi_tri_score = 0
@@ -751,13 +757,10 @@ def match_items():
                 if not (has1 and has2):
                     anh_score = 0
 
-                # TỔNG ĐIỂM
+                # TỔNG ĐIỂM CỘNG DỒN KHÁCH QUAN THỰC TẾ
                 score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-                
-                # BỘ LỌC HIỂN THỊ: Chỉ hiển thị các cặp có điểm tổng từ 25/100 trở lên
-                if score < 25:
-                    continue
 
+                # HIỂN THỊ TẤT CẢ CÁC CẶP BÀI ĐĂNG (Đã xóa bỏ hoàn toàn bộ lọc score < 10)
                 image_confidence = int(min(100, image_ratio * 100))
 
                 reasons = []
@@ -819,6 +822,7 @@ def match_items():
     matches.sort(key=lambda x: x["score"], reverse=True)
     gc.collect()
     return render_template("match.html", matches=matches)
+
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
 def teacher_check(lost_id, found_id):
     try:
@@ -847,7 +851,7 @@ def teacher_check(lost_id, found_id):
     if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
         mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
     elif is_same_key:
-        mau_score = 12
+        mau_score = 10
 
     vi_tri_score = 0
     v1 = str(lost.noi_mat or "").strip().lower()
@@ -942,101 +946,4 @@ def export_excel():
 
         status_label = "Tat_Ca"
         if status == "completed":
-            lost_query = lost_query.filter(LostItem.trang_thai.in_(["DA_TIM", "Đã tìm thấy"]))
-            found_query = found_query.filter(FoundItem.trang_thai.in_(["DA_TRA", "Đã hoàn trả"]))
-            status_label = "Da_Hoan_Tra"
-        elif status == "pending":
-            lost_query = lost_query.filter(LostItem.trang_thai.in_(["DANG_TIM", "Đang tìm"]))
-            found_query = found_query.filter(FoundItem.trang_thai.in_(["DANG_LUU_GIU", "Đang lưu giữ"]))
-            status_label = "Dang_Luu_Giu"
-
-        time_label = "Toan_Thoi_Gian"
-        if year:
-            lost_query = lost_query.filter(LostItem.ngay_mat.like(f"{year}-%"))
-            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"{year}-%"))
-            time_label = f"Nam_{year}"
-
-        if month:
-            m_str = f"{int(month):02d}"
-            lost_query = lost_query.filter(LostItem.ngay_mat.like(f"%-{m_str}-%"))
-            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"%-{m_str}-%"))
-            time_label = f"Thang_{m_str}_{year if year else ''}".strip("_")
-
-        lost_items = lost_query.all()
-        found_items = found_query.all()
-
-        lost_data = [{
-            "STT": i + 1,
-            "Tên đồ vật": item.ten_do,
-            "Loại đồ": item.loai_do,
-            "Màu sắc": item.mau_sac,
-            "Nơi mất": item.noi_mat,
-            "Ngày mất": item.ngay_mat,
-            "Trạng thái": "Đã tìm thấy" if item.trang_thai in ["DA_TIM", "Đã tìm thấy"] else "Đang tìm"
-        } for i, item in enumerate(lost_items)]
-
-        found_data = [{
-            "STT": i + 1,
-            "Tên đồ vật": item.ten_do,
-            "Loại đồ": item.loai_do,
-            "Màu sắc": item.mau_sac,
-            "Nơi nhặt": item.noi_nhat,
-            "Ngày nhặt": item.ngay_nhat,
-            "Trạng thái": "Đã hoàn trả" if item.trang_thai in ["DA_TRA", "Đã hoàn trả"] else "Đang lưu giữ"
-        } for i, item in enumerate(found_items)]
-
-        df_lost = pd.DataFrame(lost_data)
-        df_found = pd.DataFrame(found_data)
-
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_lost.to_excel(writer, sheet_name="Đồ báo mất", index=False)
-            df_found.to_excel(writer, sheet_name="Đồ báo nhặt", index=False)
-        
-        output.seek(0)
-
-        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"BaoCao_DoThatLac_{status_label}_{time_label}_{now_str}.xlsx"
-
-        return send_file(
-            output,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name=filename
-        )
-    except Exception as e:
-        print("Lỗi xuất Excel:", e)
-        return "Lỗi xuất Excel", 500
-
-@app.route("/get-pin")
-def get_pin():
-    return jsonify({"pin": get_current_pin()})
-
-@app.route("/change-pin", methods=["GET", "POST"])
-def change_pin():
-    if request.method == "POST":
-        old_pin = request.form.get("old_pin", "").strip()
-        new_pin = request.form.get("new_pin", "").strip()
-        confirm_pin = request.form.get("confirm_pin", "").strip()
-
-        current_pin = get_current_pin()
-
-        if old_pin != current_pin:
-            return render_template("change_pin.html", error="Mã PIN cũ không chính xác!")
-
-        if new_pin != confirm_pin:
-            return render_template("change_pin.html", error="Mã PIN mới và Xác nhận PIN không trùng khớp!")
-
-        if len(new_pin) < 4:
-            return render_template("change_pin.html", error="Mã PIN mới phải có ít nhất 4 ký tự!")
-
-        if save_new_pin(new_pin):
-            return render_template("change_pin.html", success=f"Đổi Mã PIN thành công! Mã PIN mới là: {new_pin}")
-        else:
-            return render_template("change_pin.html", error="Lỗi không thể lưu mã PIN mới. Vui lòng thử lại!")
-
-    return render_template("change_pin.html")
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+            lost_query = lost_query.filter(LostItem.
