@@ -665,7 +665,7 @@ def match_items():
         lost_items = LostItem.query.order_by(LostItem.id.desc()).limit(item_limit).all()
         found_items = FoundItem.query.order_by(FoundItem.id.desc()).limit(item_limit).all()
     except Exception as e:
-        print(f"Lỗi tải dữ liệu đối sánh: {e}")
+        print(f"Lỗi database /match: {e}")
         lost_items, found_items = [], []
 
     for lost in lost_items:
@@ -730,6 +730,7 @@ def match_items():
                     reasons.append("Màu sắc tương đồng")
 
                 image_confidence = int(min(100, image_ratio * 100))
+                
                 details = {
                     "hinh_anh": anh_score,
                     "ten_do": ten_score,
