@@ -69,7 +69,6 @@ STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "q
 FINGERPRINT_CACHE = {}
 
 def check_real_image(img_path):
-    """Kiểm tra đường dẫn ảnh hợp lệ (Web URL hoặc File cục bộ)."""
     if not img_path:
         return False
     try:
@@ -87,13 +86,11 @@ def check_real_image(img_path):
         return False
 
 def _read_image_bytes(img_path, max_bytes=2_000_000):
-    """Tải ảnh Siêu Bền: Chống timeout, bỏ qua lỗi SSL Certificate trên Render."""
     if not check_real_image(img_path):
         return None
 
     path = str(img_path).strip()
     
-    # 1. Tải từ URL (Cloudinary)
     if path.startswith(("http://", "https://")):
         try:
             import requests
@@ -119,7 +116,6 @@ def _read_image_bytes(img_path, max_bytes=2_000_000):
             print(f"Urllib lỗi URL ({path}): {err}")
             return None
 
-    # 2. Đọc file cục bộ
     try:
         local_path = path if os.path.isabs(path) else os.path.join(
             app.config.get("UPLOAD_FOLDER", "static/uploads"), path
@@ -157,7 +153,6 @@ def _get_image_fingerprint(img_path):
             im_square = ImageOps.expand(im_rgb, (pad_w, pad_h, pad_w, pad_h), fill=(255, 255, 255))
             sw, sh = im_square.size
 
-            # dHash Khung
             im_gray = im_square.convert("L")
             im_dh = im_gray.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh = list(im_dh.getdata())
@@ -168,7 +163,6 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh[row * 17 + col + 1]
                     dhash_val = (dhash_val << 1) | int(left > right)
 
-            # dHash Tâm
             crop_center = im_gray.crop((int(sw * 0.25), int(sh * 0.25), int(sw * 0.75), int(sh * 0.75)))
             im_dh_c = crop_center.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh_c = list(im_dh_c.getdata())
@@ -179,7 +173,6 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh_c[row * 17 + col + 1]
                     dhash_center = (dhash_center << 1) | int(left > right)
 
-            # Histogram màu
             im_thumb = im_square.resize((32, 32))
             hist_color = im_thumb.histogram()
 
@@ -198,7 +191,6 @@ def _get_image_fingerprint(img_path):
         del data
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Tính điểm ảnh mịn 3 phần. Ngừa rớt 0đ khi lỗi mạng."""
     try:
         if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
@@ -493,7 +485,7 @@ def search():
         if location:
             found_query = found_query.filter(FoundItem.noi_nhat == location)
         if color:
-            found_query = found_color = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
+            found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
 
         if status in ("DANG_LUU_GIU", "DA_TRA"):
             found_query = found_query.filter(FoundItem.trang_thai == status)
@@ -672,7 +664,6 @@ def match_items():
     item_limit = 50
 
     try:
-        # Tải tất cả các bài đăng đang có trong CSDL (không lọc trang_thai cứng)
         lost_items = LostItem.query.order_by(LostItem.id.desc()).limit(item_limit).all()
         found_items = FoundItem.query.order_by(FoundItem.id.desc()).limit(item_limit).all()
     except Exception as e:
@@ -687,13 +678,8 @@ def match_items():
                 ten_sim = similarity(lost.ten_do, found.ten_do)
                 is_same_key = (key1 == key2 and bool(key1))
 
-                # 1. Điểm Tên đồ
-                if is_same_key:
-                    ten_score = 15
-                else:
-                    ten_score = int(ten_sim * 15)
+                ten_score = 15 if is_same_key else int(ten_sim * 15)
 
-                # 2. Điểm Màu sắc
                 m1 = str(lost.mau_sac or "").strip().lower()
                 m2 = str(found.mau_sac or "").strip().lower()
                 mau_score = 0
@@ -702,7 +688,6 @@ def match_items():
                 elif is_same_key:
                     mau_score = 10
 
-                # 3. Điểm Vị trí
                 v1 = str(lost.noi_mat or "").strip().lower()
                 v2 = str(found.noi_nhat or "").strip().lower()
                 vi_tri_score = 0
@@ -710,11 +695,9 @@ def match_items():
                     vi_tri = similarity(v1, v2)
                     vi_tri_score = 10 if vi_tri > 0.8 else (5 if vi_tri > 0.5 else 0)
 
-                # 4. Điểm Ngày tháng
                 ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
                 text_total = ten_score + mau_score + vi_tri_score + ngay_score
 
-                # 5. Điểm Hình ảnh
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
 
