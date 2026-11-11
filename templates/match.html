@@ -115,22 +115,20 @@
 </div>
 {% endif %}
 
-<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT (CHUẨN GIAO DIỆN HÌNH MẪU) -->
+<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT -->
 <div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content border-0 shadow-lg" style="background-color: #000; color: #fff;">
-            <div class="modal-header border-0 pb-0 pt-2 px-3">
+        <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
+            <div class="modal-header border-0 pb-0 pt-2 pe-3">
                 <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
                 <img id="zoomModalImage" src="" 
                      draggable="false"
-                     style="max-height: 85%; max-width: 85%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
+                     style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
             </div>
-            <div class="modal-footer border-0 py-2 justify-content-center" style="background-color: #111;">
-                <small class="text-warning fw-semibold" style="font-size: 0.85rem;">
-                    💡 Cuộn chuột để Phóng ta/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem
-                </small>
+            <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem</small>
             </div>
         </div>
     </div>
