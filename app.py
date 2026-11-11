@@ -4,6 +4,7 @@ import uuid
 import json
 import re
 import gc
+import urllib3
 from datetime import datetime, timezone, timedelta
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
@@ -14,7 +15,9 @@ import cloudinary
 import cloudinary.uploader
 
 from PIL import Image, ImageOps, ImageFile
-# Cho phép PIL đọc và xử lý các ảnh bị thiếu dữ liệu/truncated từ URL
+
+# Vô hiệu hóa cảnh báo SSL không xác thực khi tải ảnh
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 VN_TZ = timezone(timedelta(hours=7))
@@ -90,36 +93,27 @@ def check_real_image(img_path):
         return False
 
 def _read_image_bytes(img_path, max_bytes=2_000_000):
+    """Tải ảnh an toàn tuyệt đối, tránh sập SSL/Worker trên Render."""
     if not check_real_image(img_path):
         return None
 
     path = str(img_path).strip()
     
+    # 1. Tải ảnh URL từ Cloudinary
     if path.startswith(("http://", "https://")):
         try:
             import requests
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-            resp = requests.get(path, headers=headers, timeout=4, verify=False, stream=True)
+            headers = {"User-Agent": "Mozilla/5.0"}
+            resp = requests.get(path, headers=headers, timeout=3, verify=False)
             if resp.status_code == 200:
                 content = resp.content
                 if len(content) <= max_bytes:
                     return content
         except Exception as err:
-            print(f"Requests lỗi URL ({path}): {err}")
-            
-        try:
-            import urllib.request
-            import ssl
-            ctx = ssl.create_default_context()
-            ctx.check_hostname = False
-            ctx.verify_mode = ssl.CERT_NONE
-            req = urllib.request.Request(path, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=4, context=ctx) as response:
-                return response.read(max_bytes + 1)
-        except Exception as err:
-            print(f"Urllib lỗi URL ({path}): {err}")
+            print(f"Bỏ qua lỗi tải ảnh URL ({path}): {err}")
             return None
 
+    # 2. Đọc file ảnh cục bộ
     try:
         local_path = path if os.path.isabs(path) else os.path.join(
             app.config.get("UPLOAD_FOLDER", "static/uploads"), path
@@ -146,11 +140,6 @@ def _get_image_fingerprint(img_path):
         return None
 
     try:
-        # 1. Kiểm tra tính toàn vẹn của file ảnh
-        with Image.open(io.BytesIO(data)) as im:
-            im.verify()
-
-        # 2. Xử lý fingerprint
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
             
@@ -192,7 +181,7 @@ def _get_image_fingerprint(img_path):
             FINGERPRINT_CACHE[path_key] = result
             return result
     except Exception as e:
-        print(f"Bỏ qua ảnh lỗi Truncated/Hỏng ({img_path}): {e}")
+        print(f"Bỏ qua ảnh lỗi ({img_path}): {e}")
         FINGERPRINT_CACHE[path_key] = None
         return None
     finally:
@@ -200,6 +189,7 @@ def _get_image_fingerprint(img_path):
         gc.collect()
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
+    """Giữ nguyên cách tính điểm hình ảnh (Tối đa 50 điểm)"""
     try:
         if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
@@ -664,6 +654,7 @@ def found_return(id):
 
 @app.route("/match")
 def match_items():
+    """Hàm đối sánh chính: Giữ nguyên 100% công thức và trọng số điểm"""
     matches_list = []
     
     try:
@@ -684,9 +675,11 @@ def match_items():
                     key2 = get_core_keyword(ten2)
                     is_same_key = (key1 == key2 and bool(key1))
 
+                    # 1. Tính điểm tên (Tối đa 15đ)
                     ten_sim = similarity(ten1, ten2)
                     ten_score = 15 if is_same_key else int(ten_sim * 15)
 
+                    # 2. Tính điểm màu sắc (Tối đa 15đ)
                     m1 = str(getattr(lost, 'mau_sac', '') or '').strip().lower()
                     m2 = str(getattr(found, 'mau_sac', '') or '').strip().lower()
                     mau_score = 0
@@ -695,6 +688,7 @@ def match_items():
                     elif is_same_key:
                         mau_score = 10
 
+                    # 3. Tính điểm vị trí (Tối đa 10đ)
                     v1 = str(getattr(lost, 'noi_mat', '') or '').strip().lower()
                     v2 = str(getattr(found, 'noi_nhat', '') or '').strip().lower()
                     vi_tri_score = 0
@@ -702,10 +696,12 @@ def match_items():
                         vi_tri_sim = similarity(v1, v2)
                         vi_tri_score = 10 if vi_tri_sim > 0.8 else (5 if vi_tri_sim > 0.5 else 0)
 
+                    # 4. Tính điểm ngày tháng (Tối đa 10đ)
                     d1 = getattr(lost, 'ngay_mat', '')
                     d2 = getattr(found, 'ngay_nhat', '')
                     ngay_score = date_score(d1, d2)
 
+                    # 5. Tính điểm hình ảnh (Tối đa 50đ)
                     anh1 = getattr(lost, 'hinh_anh', '')
                     anh2 = getattr(found, 'hinh_anh', '')
                     has1 = check_real_image(anh1)
@@ -717,6 +713,7 @@ def match_items():
                         anh_score = 25 if is_same_key else 10
                         image_ratio = 0.5 if is_same_key else 0.2
 
+                    # Tổng điểm (Tối đa 100đ)
                     total_score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
                     if total_score >= 75:
