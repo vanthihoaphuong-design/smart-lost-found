@@ -708,14 +708,14 @@ def match_items():
             lost_query = lost_query.filter(LostItem.loai_do == cat_filter)
             found_query = found_query.filter(FoundItem.loai_do == cat_filter)
 
-        # Lấy tối đa 15 bài mới nhất từ DB để bảo vệ bộ nhớ RAM
-        lost_items = lost_query.order_by(LostItem.id.desc()).limit(15).all()
-        found_items = found_query.order_by(FoundItem.id.desc()).limit(15).all()
+        # Giới hạn lấy 10 bài mới nhất mỗi bên để an toàn RAM
+        lost_items = lost_query.order_by(LostItem.id.desc()).limit(10).all()
+        found_items = found_query.order_by(FoundItem.id.desc()).limit(10).all()
 
         for lost in lost_items:
             for found in found_items:
                 try:
-                    # Bỏ qua bài không cùng loại đồ
+                    # 1. Bỏ qua nếu không cùng loại đồ
                     if lost.loai_do and found.loai_do and str(lost.loai_do).strip().lower() != str(found.loai_do).strip().lower():
                         continue
 
@@ -746,14 +746,13 @@ def match_items():
 
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-                    # TÍNH ĐIỂM ẢNH THỰC TẾ:
-                    # Chỉ tải & tính điểm ảnh thực tế nếu tên/từ khóa trùng khớp hoặc tương đồng > 30%
+                    # 2. BẢO VỆ TẢI ẢNH AN TOÀN: Chỉ xử lý ảnh khi TRÙNG TỪ KHÓA CHÍNH
                     has1 = check_real_image(lost.hinh_anh)
                     has2 = check_real_image(found.hinh_anh)
 
-                    if has1 and has2 and (is_same_key or ten_sim > 0.30):
+                    if has1 and has2 and is_same_key:
                         try:
-                            anh_score, _ = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
+                            anh_score, _ = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=True)
                         except Exception:
                             anh_score = 0
                     else:
@@ -781,8 +780,7 @@ def match_items():
                         "score_location": vi_tri_score,
                         "score_date": ngay_score
                     })
-                except Exception as pair_err:
-                    print(f"Bỏ qua cặp lỗi: {pair_err}")
+                except Exception:
                     continue
 
         matches.sort(key=lambda x: x["score"], reverse=True)
@@ -806,7 +804,7 @@ def match_items():
             selected_category=cat_filter
         )
     except Exception as route_err:
-        print(f"Lỗi toàn cục route /match: {route_err}")
+        print(f"Lỗi Route Match: {route_err}")
         return render_template("match.html", matches=[], page=1, total_pages=1, total_matches=0, selected_category=cat_filter)
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
