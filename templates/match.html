@@ -6,9 +6,25 @@
 
 {% block content %}
 
-<h2 class="mb-4 text-primary text-center fw-bold">
+<h2 class="mb-3 text-primary text-center fw-bold">
     🤖 Kết quả đối sánh thông minh
 </h2>
+
+<!-- Thanh lọc loại đồ nhanh -->
+<div class="row justify-content-center mb-4">
+    <div class="col-md-6">
+        <form method="GET" action="/match" class="d-flex shadow-sm rounded">
+            <select name="category" class="form-select border-primary" onchange="this.form.submit()">
+                <option value="">-- Tất cả loại đồ vật --</option>
+                <option value="Sách vở / Dụng cụ học tập" {% if selected_category == 'Sách vở / Dụng cụ học tập' %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
+                <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if selected_category == 'Thiết bị điện tử (Laptop, Điện thoại...)' %}selected{% endif %}>Thiết bị điện tử (Laptop, Điện thoại...)</option>
+                <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if selected_category == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' %}selected{% endif %}>Trang phục / Phụ kiện (Áo khoác, Ví...)</option>
+                <option value="Giấy tờ / Thẻ học sinh" {% if selected_category == 'Giấy tờ / Thẻ học sinh' %}selected{% endif %}>Giấy tờ / Thẻ học sinh</option>
+                <option value="Khác" {% if selected_category == 'Khác' %}selected{% endif %}>Khác</option>
+            </select>
+        </form>
+    </div>
+</div>
 
 {% if matches %}
 <div class="table-responsive shadow-sm rounded">
@@ -109,9 +125,29 @@
         </tbody>
     </table>
 </div>
+
+<!-- Nút chuyển trang (Pagination) -->
+{% if total_pages > 1 %}
+<nav class="mt-4">
+    <ul class="pagination justify-content-center">
+        <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+            <a class="page-link" href="/match?page={{ page - 1 }}&category={{ selected_category }}">« Trang trước</a>
+        </li>
+        {% for p in range(1, total_pages + 1) %}
+        <li class="page-item {% if p == page %}active{% endif %}">
+            <a class="page-link" href="/match?page={{ p }}&category={{ selected_category }}">{{ p }}</a>
+        </li>
+        {% endfor %}
+        <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+            <a class="page-link" href="/match?page={{ page + 1 }}&category={{ selected_category }}">Trang sau »</a>
+        </li>
+    </ul>
+</nav>
+{% endif %}
+
 {% else %}
 <div class="alert alert-warning text-center">
-    Chưa tìm thấy cặp đồ nào phù hợp.
+    Chưa tìm thấy cặp đồ nào phù hợp trong danh mục này.
 </div>
 {% endif %}
 
