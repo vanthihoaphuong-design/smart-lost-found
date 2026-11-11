@@ -699,9 +699,10 @@ def match_items():
     matches = []
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
-    per_page = 10  # An toàn 100% RAM cho gói Render Free
+    per_page = 8  # Mỗi trang chỉ xử lý tối đa 8 cặp bài mới nhất để bảo vệ RAM Render Free
 
     try:
+        # Lấy danh sách bài đăng từ Database
         lost_query = LostItem.query.filter(LostItem.trang_thai != "DA_TIM")
         found_query = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA")
 
@@ -709,15 +710,16 @@ def match_items():
             lost_query = lost_query.filter(LostItem.loai_do == cat_filter)
             found_query = found_query.filter(FoundItem.loai_do == cat_filter)
 
-        lost_items = lost_query.order_by(LostItem.id.desc()).all()
-        found_items = found_query.order_by(FoundItem.id.desc()).all()
+        # CHỈ LẤY CÁC BÀI ĐĂNG GẦN ĐÂY NHẤT (Chống quá tải RAM khi dữ liệu lớn)
+        lost_items = lost_query.order_by(LostItem.id.desc()).limit(20).all()
+        found_items = found_query.order_by(FoundItem.id.desc()).limit(20).all()
     except Exception:
         lost_items, found_items = [], []
 
     for lost in lost_items:
         for found in found_items:
             try:
-                # Bỏ qua các bài không cùng Loại đồ để tiết kiệm RAM
+                # 1. LỌC SƠ BỘ TẠI BỘ NHỚ: Bỏ qua các bài khác loại đồ vật
                 if lost.loai_do and found.loai_do and str(lost.loai_do).strip().lower() != str(found.loai_do).strip().lower():
                     continue
 
@@ -729,7 +731,8 @@ def match_items():
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
 
-                if has1 and has2:
+                # 2. BẢO VỆ TẢI ẢNH: Chỉ tính toán ảnh nếu tên đồ/từ khóa có độ liên quan > 30% hoặc cùng từ khóa
+                if has1 and has2 and (is_same_key or ten_sim > 0.30):
                     anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
                 else:
                     anh_score, image_ratio = 0, 0.0
@@ -769,10 +772,6 @@ def match_items():
                     reasons.append("Tên đồ tương đồng")
                 if mau_score >= 10:
                     reasons.append("Màu sắc tương đồng")
-                if vi_tri_score >= 5:
-                    reasons.append("Vị trí liên quan")
-                if ngay_score >= 6:
-                    reasons.append("Thời gian khớp/gần nhau")
 
                 if score >= 75:
                     ket_luan = "🟢 Khả năng trùng khớp cao"
@@ -818,9 +817,10 @@ def match_items():
             except Exception:
                 continue
 
+    # Sắp xếp điểm số
     matches.sort(key=lambda x: x["score"], reverse=True)
 
-    # Phân trang thông minh
+    # Cắt phân trang kết quả
     total_matches = len(matches)
     total_pages = max(1, (total_matches + per_page - 1) // per_page)
     page = max(1, min(page, total_pages))
@@ -829,7 +829,9 @@ def match_items():
     end_idx = start_idx + per_page
     paginated_matches = matches[start_idx:end_idx]
 
+    # Dọn dẹp RAM ngay sau khi tính toán xong
     gc.collect()
+
     return render_template(
         "match.html",
         matches=paginated_matches,
