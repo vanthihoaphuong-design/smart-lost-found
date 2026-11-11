@@ -688,7 +688,10 @@ def match_items():
         found_items = found_query.order_by(FoundItem.id.desc()).all()
 
         for lost in lost_items:
+            # Gán cờ kiểm tra ảnh thực tế
+            lost.has_image = check_real_image(lost.hinh_anh)
             for found in found_items:
+                found.has_image = check_real_image(found.hinh_anh)
                 try:
                     if lost.loai_do and found.loai_do and str(lost.loai_do).strip().lower() != str(found.loai_do).strip().lower():
                         continue
@@ -720,11 +723,8 @@ def match_items():
 
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-                    # TÍNH ĐIỂM ẢNH ĐỘNG DỰA TRÊN ĐỘ KHỚP THÔNG TIN (TRÁNH LỖI GÁN CỨNG 25/50)
-                    has1 = check_real_image(lost.hinh_anh)
-                    has2 = check_real_image(found.hinh_anh)
-                    
-                    if has1 and has2:
+                    # Tính điểm ảnh chính xác
+                    if lost.has_image and found.has_image:
                         if is_same_key and mau_score >= 10:
                             anh_score = 45
                         elif is_same_key:
