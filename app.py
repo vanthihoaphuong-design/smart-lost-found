@@ -493,7 +493,7 @@ def search():
         if location:
             found_query = found_query.filter(FoundItem.noi_nhat == location)
         if color:
-            found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
+            found_query = found_color = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
 
         if status in ("DANG_LUU_GIU", "DA_TRA"):
             found_query = found_query.filter(FoundItem.trang_thai == status)
@@ -669,24 +669,12 @@ def match_items():
     FINGERPRINT_CACHE.clear()
 
     matches_heap = []
-    item_limit = max(10, min(int(os.environ.get("MATCH_ITEM_LIMIT", "50")), 100))
-    result_limit = max(10, min(int(os.environ.get("MATCH_RESULT_LIMIT", "30")), 50))
+    item_limit = 50
 
     try:
-        lost_items = (
-            LostItem.query
-            .filter(LostItem.trang_thai != "DA_TIM")
-            .order_by(LostItem.id.desc())
-            .limit(item_limit)
-            .all()
-        )
-        found_items = (
-            FoundItem.query
-            .filter(FoundItem.trang_thai != "DA_TRA")
-            .order_by(FoundItem.id.desc())
-            .limit(item_limit)
-            .all()
-        )
+        # Tải tất cả các bài đăng đang có trong CSDL (không lọc trang_thai cứng)
+        lost_items = LostItem.query.order_by(LostItem.id.desc()).limit(item_limit).all()
+        found_items = FoundItem.query.order_by(FoundItem.id.desc()).limit(item_limit).all()
     except Exception as e:
         print(f"Lỗi tải dữ liệu đối sánh: {e}")
         lost_items, found_items = [], []
@@ -738,18 +726,10 @@ def match_items():
                     if anh_score == 0 and is_same_key:
                         anh_score, image_ratio = 25, 0.5
                 else:
-                    anh_score = 25 if is_same_key else 0
-                    image_ratio = 0.5 if is_same_key else 0.0
+                    anh_score = 25 if is_same_key else 10
+                    image_ratio = 0.5 if is_same_key else 0.2
 
                 score = anh_score + text_total
-
-                # Nếu là cùng tên loại đồ vật, điểm sàn tối thiểu luôn là 40đ
-                if is_same_key and score < 40:
-                    score = 40
-
-                # Bỏ qua nếu điểm quá thấp (dưới 10đ)
-                if score < 10:
-                    continue
 
                 if score >= 75:
                     ket_luan = "🟢 Khả năng trùng khớp cao"
@@ -760,17 +740,13 @@ def match_items():
                 else:
                     ket_luan = "🔴 Cần kiểm tra thêm"
 
-                reasons = []
+                reasons = ["Đối sánh hệ thống"]
                 if anh_score >= 18:
-                    reasons.append("Hình ảnh có điểm tương đồng")
+                    reasons.append("Hình ảnh tương đồng")
                 if ten_score >= 10:
                     reasons.append("Tên đồ tương đồng")
                 if mau_score >= 10:
                     reasons.append("Màu sắc tương đồng")
-                if vi_tri_score >= 5:
-                    reasons.append("Vị trí liên quan")
-                if ngay_score >= 6:
-                    reasons.append("Thời gian khớp/gần nhau")
 
                 image_confidence = int(min(100, image_ratio * 100))
                 details = {
@@ -807,11 +783,9 @@ def match_items():
                 }
 
                 heapq.heappush(matches_heap, (score, int(lost.id), int(found.id), result))
-                if len(matches_heap) > result_limit:
-                    heapq.heappop(matches_heap)
 
             except Exception as err:
-                print(f"Bỏ qua cặp bài lỗi ({lost.id} - {found.id}): {err}")
+                print(f"Bỏ qua cặp bài lỗi: {err}")
 
     matches = [entry[3] for entry in sorted(matches_heap, reverse=True)]
     del matches_heap, lost_items, found_items
