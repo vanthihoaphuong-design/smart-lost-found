@@ -17,7 +17,6 @@ import cloudinary.uploader
 
 from PIL import Image, ImageOps, ImageFile
 
-# Vô hiệu hóa cảnh báo SSL và cho phép PIL đọc ảnh truncated từ Cloudinary
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -61,6 +60,13 @@ elif db_url and db_url.startswith("postgresql://"):
 
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+# CHỐNG ĐỨT SSL DATABASE TRÊN RENDER
+app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
+    "pool_pre_ping": True,
+    "pool_recycle": 300,
+    "pool_timeout": 30
+}
 
 try:
     from database import db
@@ -140,7 +146,6 @@ def calculate_image_features(img_path):
         if not data:
             return None
 
-        # 1. Ưu tiên xử lý OpenCV
         if HAS_OPENCV:
             try:
                 arr = np.asarray(bytearray(data), dtype=np.uint8)
@@ -180,7 +185,6 @@ def calculate_image_features(img_path):
             except Exception as cv_err:
                 print(f"Fallback sang PIL: {cv_err}")
 
-        # 2. Phương án Fallback PIL siêu nhẹ RAM
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
             im_gray = im_rgb.convert("L")
@@ -708,14 +712,12 @@ def match_items():
             lost_query = lost_query.filter(LostItem.loai_do == cat_filter)
             found_query = found_query.filter(FoundItem.loai_do == cat_filter)
 
-        # Giới hạn lấy 10 bài mới nhất mỗi bên để an toàn RAM
-        lost_items = lost_query.order_by(LostItem.id.desc()).limit(10).all()
-        found_items = found_query.order_by(FoundItem.id.desc()).limit(10).all()
+        lost_items = lost_query.order_by(LostItem.id.desc()).limit(15).all()
+        found_items = found_query.order_by(FoundItem.id.desc()).limit(15).all()
 
         for lost in lost_items:
             for found in found_items:
                 try:
-                    # 1. Bỏ qua nếu không cùng loại đồ
                     if lost.loai_do and found.loai_do and str(lost.loai_do).strip().lower() != str(found.loai_do).strip().lower():
                         continue
 
@@ -746,7 +748,6 @@ def match_items():
 
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-                    # 2. BẢO VỆ TẢI ẢNH AN TOÀN: Chỉ xử lý ảnh khi TRÙNG TỪ KHÓA CHÍNH
                     has1 = check_real_image(lost.hinh_anh)
                     has2 = check_real_image(found.hinh_anh)
 
@@ -780,7 +781,8 @@ def match_items():
                         "score_location": vi_tri_score,
                         "score_date": ngay_score
                     })
-                except Exception:
+                except Exception as pair_err:
+                    print(f"Bỏ qua cặp lỗi: {pair_err}")
                     continue
 
         matches.sort(key=lambda x: x["score"], reverse=True)
@@ -804,7 +806,7 @@ def match_items():
             selected_category=cat_filter
         )
     except Exception as route_err:
-        print(f"Lỗi Route Match: {route_err}")
+        print(f"Lỗi toàn cục route /match: {route_err}")
         return render_template("match.html", matches=[], page=1, total_pages=1, total_matches=0, selected_category=cat_filter)
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
