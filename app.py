@@ -6,6 +6,7 @@ import re
 import gc
 import urllib3
 from datetime import datetime, timezone, timedelta
+import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 from sqlalchemy import func
@@ -16,13 +17,12 @@ import cloudinary.uploader
 
 from PIL import Image, ImageOps, ImageFile
 
-# Vô hiệu hóa cảnh báo SSL và cho phép PIL đọc ảnh bị khuyết/truncated từ Cloudinary
+# Vô hiệu hóa cảnh báo SSL và cho phép PIL đọc ảnh truncated từ Cloudinary
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 VN_TZ = timezone(timedelta(hours=7))
 
-# Bọc an toàn OpenCV chống tràn RAM Worker trên Render
 HAS_OPENCV = False
 try:
     import cv2
@@ -115,7 +115,6 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def calculate_image_features(img_path):
-    """Trích xuất ma trận đặc trưng từ OpenCV / PIL với Cache và tối ưu RAM"""
     if not check_real_image(img_path):
         return None
     
@@ -127,10 +126,9 @@ def calculate_image_features(img_path):
         data = None
         path_str = str(img_path).strip()
         
-        # Tải dữ liệu Byte từ Cloudinary hoặc Local
         if path_str.startswith(("http://", "https://")):
             import requests
-            resp = requests.get(path_str, timeout=4, verify=False)
+            resp = requests.get(path_str, timeout=3, verify=False)
             if resp.status_code == 200:
                 data = resp.content
         else:
@@ -142,13 +140,11 @@ def calculate_image_features(img_path):
         if not data:
             return None
 
-        # 1. Ưu tiên xử lý OpenCV
         if HAS_OPENCV:
             try:
                 arr = np.asarray(bytearray(data), dtype=np.uint8)
                 img = cv2.imdecode(arr, -1)
                 if img is not None:
-                    # Tự động cắt viền nếu là ảnh studio/nền trắng
                     gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
                     h_img, w_img = gray_temp.shape
                     corner_pixels = [gray_temp[0,0], gray_temp[0, w_img-1], gray_temp[h_img-1, 0], gray_temp[h_img-1, w_img-1]]
@@ -161,15 +157,14 @@ def calculate_image_features(img_path):
                             if w > 20 and h > 20:
                                 img = img[y:y+h, x:x+w]
 
-                    # Resize 120x120 để tiết kiệm RAM
-                    crop_img = cv2.resize(img, (120, 120), interpolation=cv2.INTER_AREA)
+                    crop_img = cv2.resize(img, (100, 100), interpolation=cv2.INTER_AREA)
                     gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
                     
-                    orb = cv2.ORB_create(nfeatures=300)
+                    orb = cv2.ORB_create(nfeatures=200)
                     kp, des = orb.detectAndCompute(gray, None)
 
                     hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
-                    hist = cv2.calcHist([hsv], [0, 1], None, [12, 12], [0, 180, 0, 256])
+                    hist = cv2.calcHist([hsv], [0, 1], None, [8, 8], [0, 180, 0, 256])
                     if hist is not None:
                         cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
 
@@ -182,9 +177,8 @@ def calculate_image_features(img_path):
                     save_feature_cache(img_path, features)
                     return features
             except Exception as cv_err:
-                print(f"Fallback sang PIL do OpenCV lỗi: {cv_err}")
+                print(f"Fallback sang PIL: {cv_err}")
 
-        # 2. Phương án Fallback PIL siêu nhẹ RAM
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
             im_gray = im_rgb.convert("L")
@@ -198,7 +192,7 @@ def calculate_image_features(img_path):
                     right = pixels[r * 17 + c + 1]
                     dhash_val = (dhash_val << 1) | int(left > right)
 
-            im_thumb = im_rgb.resize((32, 32))
+            im_thumb = im_rgb.resize((24, 24))
             hist = im_thumb.histogram()
 
             features = {
@@ -214,23 +208,19 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """TÍNH ĐIỂM HÌNH ẢNH THỰC TẾ 100% (Tối đa 50đ) - KHÔNG DÙNG ĐIỂM ẢO"""
     try:
         str1 = str(img1_filename).strip()
         str2 = str(img2_filename).strip()
 
-        # Trùng URL ảnh -> 50đ tuyệt đối
         if str1 == str2:
             return 50, 1.0
 
         f1 = calculate_image_features(img1_filename)
         f2 = calculate_image_features(img2_filename)
 
-        # Lỗi tải/không có ảnh -> 0đ thực tế
         if f1 is None or f2 is None:
             return 0, 0.0
 
-        # Nếu cả 2 đều dùng OpenCV
         if f1.get("type") == "opencv" and f2.get("type") == "opencv":
             good_count = 0
             try:
@@ -267,7 +257,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             score = min(50, max(0, score))
             return score, float(score / 50.0)
 
-        # Nếu dùng PIL (dHash + Histogram)
         dist = (f1.get("dhash", 0) ^ f2.get("dhash", 0)).bit_count()
         if dist <= 30:
             s_shape = 25
@@ -704,16 +693,30 @@ def found_return(id):
 @app.route("/match")
 def match_items():
     matches = []
+    page = request.args.get("page", 1, type=int)
+    cat_filter = request.args.get("category", "").strip()
+    per_page = 10  # An toàn 100% RAM cho gói Render Free
+
     try:
-        # Lấy các bài chưa tìm thấy/chưa hoàn trả mới nhất
-        lost_items = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").order_by(LostItem.id.desc()).limit(25).all()
-        found_items = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA").order_by(FoundItem.id.desc()).limit(25).all()
+        lost_query = LostItem.query.filter(LostItem.trang_thai != "DA_TIM")
+        found_query = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA")
+
+        if cat_filter:
+            lost_query = lost_query.filter(LostItem.loai_do == cat_filter)
+            found_query = found_query.filter(FoundItem.loai_do == cat_filter)
+
+        lost_items = lost_query.order_by(LostItem.id.desc()).all()
+        found_items = found_query.order_by(FoundItem.id.desc()).all()
     except Exception:
         lost_items, found_items = [], []
 
     for lost in lost_items:
         for found in found_items:
             try:
+                # Bỏ qua các bài không cùng Loại đồ để tiết kiệm RAM
+                if lost.loai_do and found.loai_do and str(lost.loai_do).strip().lower() != str(found.loai_do).strip().lower():
+                    continue
+
                 key1 = get_core_keyword(lost.ten_do)
                 key2 = get_core_keyword(found.ten_do)
                 ten_sim = similarity(lost.ten_do, found.ten_do)
@@ -722,16 +725,13 @@ def match_items():
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
 
-                # 1. ĐIỂM HÌNH ẢNH THẬT (Tối đa 50đ)
                 if has1 and has2:
                     anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
                 else:
                     anh_score, image_ratio = 0, 0.0
 
-                # 2. ĐIỂM TÊN ĐỒ (Tối đa 15đ)
                 ten_score = 15 if is_same_key else int(ten_sim * 15)
 
-                # 3. ĐIỂM MÀU SẮC (Tối đa 15đ)
                 mau_score = 0
                 m1 = str(lost.mau_sac or "").strip().lower()
                 m2 = str(found.mau_sac or "").strip().lower()
@@ -740,7 +740,6 @@ def match_items():
                 elif is_same_key:
                     mau_score = 10
 
-                # 4. ĐIỂM VỊ TRÍ (Tối đa 10đ)
                 vi_tri_score = 0
                 v1 = str(lost.noi_mat or "").strip().lower()
                 v2 = str(found.noi_nhat or "").strip().lower()
@@ -751,16 +750,12 @@ def match_items():
                     elif vi_tri > 0.5:
                         vi_tri_score = 5
 
-                # 5. ĐIỂM NGÀY THÁNG (Tối đa 10đ)
                 ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
                 if not (has1 and has2):
                     anh_score = 0
 
-                # TỔNG ĐIỂM CỘNG DỒN KHÁCH QUAN THỰC TẾ
                 score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-
-                # HIỂN THỊ TẤT CẢ CÁC CẶP BÀI ĐĂNG (Đã xóa bỏ hoàn toàn bộ lọc score < 10)
                 image_confidence = int(min(100, image_ratio * 100))
 
                 reasons = []
@@ -820,8 +815,25 @@ def match_items():
                 continue
 
     matches.sort(key=lambda x: x["score"], reverse=True)
+
+    # Phân trang thông minh
+    total_matches = len(matches)
+    total_pages = max(1, (total_matches + per_page - 1) // per_page)
+    page = max(1, min(page, total_pages))
+
+    start_idx = (page - 1) * per_page
+    end_idx = start_idx + per_page
+    paginated_matches = matches[start_idx:end_idx]
+
     gc.collect()
-    return render_template("match.html", matches=matches)
+    return render_template(
+        "match.html",
+        matches=paginated_matches,
+        page=page,
+        total_pages=total_pages,
+        total_matches=total_matches,
+        selected_category=cat_filter
+    )
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
 def teacher_check(lost_id, found_id):
@@ -936,7 +948,6 @@ def confirm_return(lost_id, found_id):
 @app.route("/export-excel", methods=["GET"])
 def export_excel():
     try:
-        import pandas as pd
         status = request.args.get("status", "all")
         month = request.args.get("month", "")
         year = request.args.get("year", "")
