@@ -17,7 +17,6 @@ import cloudinary.uploader
 
 from PIL import Image, ImageOps, ImageFile
 
-# Vô hiệu hóa cảnh báo SSL và cho phép PIL đọc ảnh truncated từ Cloudinary
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -62,7 +61,6 @@ elif db_url and db_url.startswith("postgresql://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# BẢO VỆ KẾT NỐI DATABASE SSL TỰ KHÔI PHỤC
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_pre_ping": True,
     "pool_recycle": 300,
@@ -88,7 +86,7 @@ with app.app_context():
         print(f"Lỗi Create DB All: {e}")
 
 FEATURE_CACHE = {}
-MAX_CACHE_SIZE = 100
+MAX_CACHE_SIZE = 50
 
 STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
 
@@ -133,12 +131,11 @@ def calculate_image_features(img_path):
         data = None
         path_str = str(img_path).strip()
         
-        # Tải ảnh qua Stream Bytes (giới hạn 100KB) để bảo vệ bộ nhớ RAM Render
         if path_str.startswith(("http://", "https://")):
             import requests
-            resp = requests.get(path_str, timeout=1.5, stream=True, verify=False)
+            resp = requests.get(path_str, timeout=2, stream=True, verify=False)
             if resp.status_code == 200:
-                data = resp.raw.read(102400)
+                data = resp.raw.read(102400) # Chỉ đọc 100KB đầu để tiết kiệm RAM
         else:
             p = os.path.join(app.config["UPLOAD_FOLDER"], path_str) if not os.path.isabs(path_str) else path_str
             if os.path.exists(p):
@@ -148,7 +145,6 @@ def calculate_image_features(img_path):
         if not data:
             return None
 
-        # 1. Tối ưu xử lý OpenCV
         if HAS_OPENCV:
             try:
                 arr = np.asarray(bytearray(data), dtype=np.uint8)
@@ -157,7 +153,7 @@ def calculate_image_features(img_path):
                     crop_img = cv2.resize(img, (60, 60), interpolation=cv2.INTER_AREA)
                     gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
                     
-                    orb = cv2.ORB_create(nfeatures=150)
+                    orb = cv2.ORB_create(nfeatures=120)
                     kp, des = orb.detectAndCompute(gray, None)
 
                     hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
@@ -167,7 +163,6 @@ def calculate_image_features(img_path):
 
                     features = {
                         "type": "opencv",
-                        "orb_keypoints": kp,
                         "orb_descriptors": des,
                         "hsv_hist": hist
                     }
@@ -176,10 +171,8 @@ def calculate_image_features(img_path):
             except Exception:
                 pass
 
-        # 2. Xử lý dự phòng bằng PIL siêu nhẹ
         with Image.open(io.BytesIO(data)) as im:
             im_tiny = im.convert("RGB").resize((32, 32))
-            
             im_gray = im_tiny.convert("L").resize((9, 8))
             pixels = list(im_gray.getdata())
             dhash_val = 0
@@ -188,12 +181,7 @@ def calculate_image_features(img_path):
                     dhash_val = (dhash_val << 1) | int(pixels[r * 9 + c] > pixels[r * 9 + c + 1])
 
             hist = im_tiny.histogram()
-
-            features = {
-                "type": "pil",
-                "dhash": dhash_val,
-                "hist": hist
-            }
+            features = {"type": "pil", "dhash": dhash_val, "hist": hist}
             save_feature_cache(img_path, features)
             return features
 
@@ -217,8 +205,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if f1.get("type") == "opencv" and f2.get("type") == "opencv":
             good_count = 0
             try:
-                des1 = f1.get("orb_descriptors")
-                des2 = f2.get("orb_descriptors")
+                des1, des2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
                 if des1 is not None and des2 is not None and len(des1) >= 2 and len(des2) >= 2:
                     bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                     matches = bf.knnMatch(des1, des2, k=2)
@@ -269,7 +256,6 @@ def get_core_keyword(text_name):
         return ""
     t = str(text_name).lower().strip()
     
-    # Từ điển từ khóa phân loại chính xác, tránh gộp chung lung tung
     synonyms_map = {
         "máy tính casio": ["casio", "fx580", "fx 580", "máy tính bỏ túi", "casio580"],
         "laptop": ["laptop", "macbook", "máy tính xách tay"],
@@ -673,7 +659,7 @@ def found_return(id):
 
 @app.route("/match")
 def match_items():
-    matches = []
+    raw_matches = []
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10 
@@ -689,6 +675,7 @@ def match_items():
         lost_items = lost_query.order_by(LostItem.id.desc()).all()
         found_items = found_query.order_by(FoundItem.id.desc()).all()
 
+        # BƯỚC 1: LỌC DỮ LIỆU BẰNG CHỮ CỰC NHANH TRONG BỘ NHỚ (KHÔNG TẢI HÌNH ẢNH)
         for lost in lost_items:
             lost.has_image = check_real_image(lost.hinh_anh)
             for found in found_items:
@@ -724,29 +711,14 @@ def match_items():
 
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-                    # TÍNH ĐIỂM ẢNH AI THỰC TẾ (SỬ DỤNG CACHE & STREAM BYTES SIÊU AN TOÀN RAM):
-                    if lost.has_image and found.has_image:
-                        anh_score, _ = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
-                    else:
-                        anh_score = 0
+                    base_score = ten_score + mau_score + vi_tri_score + ngay_score
 
-                    score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-
-                    if score >= 75:
-                        ket_luan = "🟢 Khả năng trùng khớp cao"
-                    elif score >= 55:
-                        ket_luan = "🟡 Có khả năng trùng khớp"
-                    elif score >= 38:
-                        ket_luan = "🟠 Có một số điểm tương đồng"
-                    else:
-                        ket_luan = "🔴 Khả năng trùng khớp thấp"
-
-                    matches.append({
+                    raw_matches.append({
                         "lost": lost,
                         "found": found,
-                        "score": score,
-                        "ket_luan": ket_luan,
-                        "score_image": anh_score,
+                        "base_score": base_score,
+                        "is_same_key": is_same_key,
+                        "ten_sim": ten_sim,
                         "score_name": ten_score,
                         "score_color": mau_score,
                         "score_location": vi_tri_score,
@@ -755,21 +727,64 @@ def match_items():
                 except Exception:
                     continue
 
-        matches.sort(key=lambda x: x["score"], reverse=True)
+        # Sắp xếp các cặp theo mức độ liên quan về chữ trước
+        raw_matches.sort(key=lambda x: x["base_score"], reverse=True)
 
-        total_matches = len(matches)
+        total_matches = len(raw_matches)
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
+        # BƯỚC 2: CẮT PHÂN TRANG LẤY ĐÚNG 10 CẶP CỦA TRANG HIỆN TẠI
         start_idx = (page - 1) * per_page
         end_idx = start_idx + per_page
-        paginated_matches = matches[start_idx:end_idx]
+        paginated_raw = raw_matches[start_idx:end_idx]
+
+        final_matches = []
+
+        # BƯỚC 3: CHỈ CHẠY AI TÍNH ĐIỂM ẢNH CHO ĐÚNG 10 CẶP ĐƯỢC HIỂN THỊ
+        for item in paginated_raw:
+            lost = item["lost"]
+            found = item["found"]
+            
+            if lost.has_image and found.has_image:
+                if item["is_same_key"] or item["ten_sim"] >= 0.35:
+                    anh_score, _ = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=item["is_same_key"])
+                else:
+                    anh_score = 0
+            else:
+                anh_score = 0
+
+            total_score = item["base_score"] + anh_score
+
+            if total_score >= 75:
+                ket_luan = "🟢 Khả năng trùng khớp cao"
+            elif total_score >= 55:
+                ket_luan = "🟡 Có khả năng trùng khớp"
+            elif total_score >= 38:
+                ket_luan = "🟠 Có một số điểm tương đồng"
+            else:
+                ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+            final_matches.append({
+                "lost": lost,
+                "found": found,
+                "score": total_score,
+                "ket_luan": ket_luan,
+                "score_image": anh_score,
+                "score_name": item["score_name"],
+                "score_color": item["score_color"],
+                "score_location": item["score_location"],
+                "score_date": item["score_date"]
+            })
+
+        # Sắp xếp 10 cặp của trang theo tổng điểm chính xác
+        final_matches.sort(key=lambda x: x["score"], reverse=True)
 
         gc.collect()
 
         return render_template(
             "match.html",
-            matches=paginated_matches,
+            matches=final_matches,
             page=page,
             total_pages=total_pages,
             total_matches=total_matches,
