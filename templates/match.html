@@ -1,205 +1,55 @@
-{% extends "base.html" %}
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>Đối Sánh Thông Minh</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+<body class="bg-light">
+    <div class="container mt-4">
+        <h2 class="text-center text-primary mb-4">🤖 Kết quả đối sánh thông minh</h2>
 
-{% block title %}
-Đối sánh thông minh
-{% endblock %}
-
-{% block content %}
-
-<h2 class="mb-4 text-primary text-center fw-bold">
-    🤖 Kết quả đối sánh thông minh
-</h2>
-
-{% if matches %}
-<div class="table-responsive shadow-sm rounded">
-    <table class="table table-bordered table-hover align-middle bg-white mb-0">
-        <thead class="table-primary text-center">
-            <tr>
-                <th style="width: 35%;">Đồ bị mất</th>
-                <th style="width: 35%;">Đồ nhặt được</th>
-                <th style="width: 30%;">Điểm phù hợp</th>
-            </tr>
-        </thead>
-        <tbody>
-        {% for m in matches %}
-            <tr>
-                <!-- Đồ bị mất -->
-                <td class="text-center p-3">
-                    {% if m.lost.hinh_anh and m.lost.hinh_anh not in ['', 'None', 'null', 'Chưa có ảnh', 'chua co anh'] %}
-                        {% set lost_img = m.lost.hinh_anh if m.lost.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.lost.hinh_anh) %}
-                        <div class="d-flex justify-content-center mb-2">
-                            <img src="{{ lost_img }}" 
-                                 class="rounded shadow-sm cursor-pointer border" 
-                                 style="max-height: 110px; object-fit: cover;" 
-                                 onclick="zoomImage('{{ lost_img }}')"
-                                 title="Bấm để xem phóng to"
-                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
+        {% if matches %}
+            <div class="row">
+                {% for item in matches %}
+                <div class="col-md-6 mb-4">
+                    <div class="card shadow-sm h-100">
+                        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
+                            <span>ĐIỂM PHÙ HỢP: {{ item.score }}/100</span>
+                            <span class="badge bg-light text-dark">{{ item.ket_luan }}</span>
                         </div>
-                    {% else %}
-                        <div class="p-3 bg-light rounded text-muted mb-2 small border d-flex align-items-center justify-content-center" style="height: 110px;">Chưa có ảnh</div>
-                    {% endif %}
-                    <h5 class="fw-bold mb-1">{{ m.lost.ten_do }}</h5>
-                    <span class="badge bg-danger mb-1">{{ m.lost.loai_do }}</span><br>
-                    <small class="text-muted">
-                        📍 {{ m.lost.noi_mat }}<br>
-                        📅 {{ m.lost.ngay_mat }}
-                    </small>
-                </td>
-
-                <!-- Đồ nhặt được -->
-                <td class="text-center p-3">
-                    {% if m.found.hinh_anh and m.found.hinh_anh not in ['', 'None', 'null', 'Chưa có ảnh', 'chua co anh'] %}
-                        {% set found_img = m.found.hinh_anh if m.found.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.found.hinh_anh) %}
-                        <div class="d-flex justify-content-center mb-2">
-                            <img src="{{ found_img }}" 
-                                 class="rounded shadow-sm cursor-pointer border" 
-                                 style="max-height: 110px; object-fit: cover;" 
-                                 onclick="zoomImage('{{ found_img }}')"
-                                 title="Bấm để xem phóng to"
-                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/120?text=Chưa+có+ảnh';">
-                        </div>
-                    {% else %}
-                        <div class="p-3 bg-light rounded text-muted mb-2 small border d-flex align-items-center justify-content-center" style="height: 110px;">Chưa có ảnh</div>
-                    {% endif %}
-                    <h5 class="fw-bold mb-1">{{ m.found.ten_do }}</h5>
-                    <span class="badge bg-success mb-1">{{ m.found.loai_do }}</span><br>
-                    <small class="text-muted">
-                        📍 {{ m.found.noi_nhat }}<br>
-                        📅 {{ m.found.ngay_nhat }}
-                    </small>
-                </td>
-
-                <!-- Điểm phù hợp -->
-                <td class="text-center p-3">
-                    <div class="text-muted small">🎯 ĐIỂM PHÙ HỢP</div>
-                    <div class="display-6 fw-bold text-primary mb-2">{{ m.score }}/100</div>
-
-                    <div class="bg-light p-2 rounded text-start d-inline-block w-100 mb-2 border" style="max-width: 240px;">
-                        <div class="d-flex justify-content-between small mb-1">
-                            <span>🖼️ Hình ảnh</span><strong>{{ m.score_image }}/50</strong>
-                        </div>
-                        <div class="d-flex justify-content-between small mb-1">
-                            <span>📝 Tên đồ</span><strong>{{ m.score_name }}/15</strong>
-                        </div>
-                        <div class="d-flex justify-content-between small mb-1">
-                            <span>🎨 Màu sắc</span><strong>{{ m.score_color }}/15</strong>
-                        </div>
-                        <div class="d-flex justify-content-between small mb-1">
-                            <span>📍 Vị trí</span><strong>{{ m.score_location }}/10</strong>
-                        </div>
-                        <div class="d-flex justify-content-between small">
-                            <span>📅 Ngày</span><strong>{{ m.score_date }}/10</strong>
+                        <div class="card-body">
+                            <div class="row text-center mb-3">
+                                <div class="col-6 border-end">
+                                    <h6 class="text-danger">🔴 Đồ báo mất</h6>
+                                    {% if item.lost.hinh_anh %}
+                                        <img src="{{ item.lost.hinh_anh }}" class="img-fluid rounded mb-2" style="height: 120px; object-fit: cover;">
+                                    {% endif %}
+                                    <p class="fw-bold mb-1">{{ item.lost.ten_do }}</p>
+                                    <small class="text-muted">📍 {{ item.lost.noi_mat }}</small>
+                                </div>
+                                <div class="col-6">
+                                    <h6 class="text-success">🟢 Đồ nhặt được</h6>
+                                    {% if item.found.hinh_anh %}
+                                        <img src="{{ item.found.hinh_anh }}" class="img-fluid rounded mb-2" style="height: 120px; object-fit: cover;">
+                                    {% endif %}
+                                    <p class="fw-bold mb-1">{{ item.found.ten_do }}</p>
+                                    <small class="text-muted">📍 {{ item.found.noi_nhat }}</small>
+                                </div>
+                            </div>
+                            <div class="text-center">
+                                <a href="/teacher-check/{{ item.lost.id }}/{{ item.found.id }}" class="btn btn-sm btn-outline-primary">🔍 Giáo viên kiểm tra</a>
+                            </div>
                         </div>
                     </div>
-
-                    {% if m.ket_luan %}
-                        <div class="mb-2 fw-bold small">
-                            {{ m.ket_luan }}
-                        </div>
-                    {% endif %}
-
-                    {% if m.score >= 40 %}
-                        <a href="/teacher-check/{{ m.lost.id }}/{{ m.found.id }}" class="btn btn-primary btn-sm rounded-pill px-3 shadow-sm">
-                            👨‍🏫 Giáo viên kiểm tra
-                        </a>
-                    {% endif %}
-                </td>
-            </tr>
-        {% endfor %}
-        </tbody>
-    </table>
-</div>
-{% else %}
-<div class="alert alert-warning text-center">
-    Chưa tìm thấy cặp đồ nào phù hợp.
-</div>
-{% endif %}
-
-<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT -->
-<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
-            <div class="modal-header border-0 pb-0 pt-2 pe-3">
-                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                {% endfor %}
             </div>
-            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
-                <img id="zoomModalImage" src="" 
-                     draggable="false"
-                     style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
+        {% else %}
+            <div class="alert alert-warning text-center">
+                Chưa tìm thấy cặp đồ nào phù hợp.
             </div>
-            <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
-                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem</small>
-            </div>
-        </div>
+        {% endif %}
     </div>
-</div>
-
-<script>
-let scale = 1;
-let pointX = 0;
-let pointY = 0;
-let startX = 0;
-let startY = 0;
-let isDragging = false;
-
-function zoomImage(src) {
-    const imgEl = document.getElementById('zoomModalImage');
-    
-    scale = 1;
-    pointX = 0;
-    pointY = 0;
-    isDragging = false;
-    updateTransform(imgEl);
-    
-    imgEl.src = src;
-
-    const modalEl = document.getElementById('imageZoomModal');
-    const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    bsModal.show();
-}
-
-function updateTransform(img) {
-    img.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
-}
-
-document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
-    e.preventDefault();
-    const imgEl = document.getElementById('zoomModalImage');
-    const delta = e.deltaY < 0 ? 0.25 : -0.25;
-    
-    scale = Math.min(Math.max(1, scale + delta), 6);
-    
-    if (scale === 1) {
-        pointX = 0;
-        pointY = 0;
-    }
-    updateTransform(imgEl);
-}, { passive: false });
-
-const imgEl = document.getElementById('zoomModalImage');
-
-imgEl.addEventListener('mousedown', function(e) {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    isDragging = true;
-    startX = e.clientX - pointX;
-    startY = e.clientY - pointY;
-    imgEl.style.cursor = 'grabbing';
-});
-
-window.addEventListener('mousemove', function(e) {
-    if (!isDragging) return;
-    e.preventDefault();
-    pointX = e.clientX - startX;
-    pointY = e.clientY - startY;
-    updateTransform(imgEl);
-});
-
-window.addEventListener('mouseup', function() {
-    if (isDragging) {
-        isDragging = false;
-        imgEl.style.cursor = 'grab';
-    }
-});
-</script>
-{% endblock %}
+</body>
+</html>
