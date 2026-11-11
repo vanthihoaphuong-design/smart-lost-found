@@ -69,14 +69,15 @@ STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "q
 FINGERPRINT_CACHE = {}
 
 def check_real_image(img_path):
+    """Kiểm tra đường dẫn ảnh hợp lệ (Web URL hoặc File cục bộ)."""
     if not img_path:
         return False
     try:
-        str_path = str(img_path).strip().lower()
-        if str_path in ["", "none", "null", "undefined"]:
+        str_path = str(img_path).strip()
+        if not str_path or str_path.lower() in ["none", "null", "undefined", ""]:
             return False
-        invalid_keywords = ["chua co anh", "chưa có ảnh", "no_image", "default", "placeholder", "120?text="]
-        if any(k in str_path for k in invalid_keywords):
+        invalid_keywords = ["chua co anh", "chưa có ảnh", "no_image", "default", "placeholder"]
+        if any(k in str_path.lower() for k in invalid_keywords):
             return False
         if str_path.startswith("http://") or str_path.startswith("https://"):
             return True
@@ -85,40 +86,51 @@ def check_real_image(img_path):
     except Exception:
         return False
 
-def _read_image_bytes(img_path, max_bytes=1_500_000):
+def _read_image_bytes(img_path, max_bytes=2_000_000):
+    """Tải ảnh Siêu Bền: Chống timeout, bỏ qua lỗi SSL Certificate trên Render."""
     if not check_real_image(img_path):
         return None
 
-    try:
-        path = str(img_path).strip()
-        if path.startswith(("http://", "https://")):
-            try:
-                import requests
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                resp = requests.get(path, headers=headers, timeout=3, stream=True)
-                if resp.status_code == 200:
-                    content = resp.content
-                    if len(content) <= max_bytes:
-                        return content
-                return None
-            except Exception:
-                import urllib.request
-                req = urllib.request.Request(path, headers={"User-Agent": "Mozilla/5.0"})
-                with urllib.request.urlopen(req, timeout=3) as response:
-                    return response.read(max_bytes + 1)
+    path = str(img_path).strip()
+    
+    # 1. Tải từ URL (Cloudinary)
+    if path.startswith(("http://", "https://")):
+        try:
+            import requests
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            resp = requests.get(path, headers=headers, timeout=4, verify=False, stream=True)
+            if resp.status_code == 200:
+                content = resp.content
+                if len(content) <= max_bytes:
+                    return content
+        except Exception as err:
+            print(f"Requests lỗi URL ({path}): {err}")
+            
+        try:
+            import urllib.request
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            req = urllib.request.Request(path, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=4, context=ctx) as response:
+                return response.read(max_bytes + 1)
+        except Exception as err:
+            print(f"Urllib lỗi URL ({path}): {err}")
+            return None
 
+    # 2. Đọc file cục bộ
+    try:
         local_path = path if os.path.isabs(path) else os.path.join(
             app.config.get("UPLOAD_FOLDER", "static/uploads"), path
         )
-        if not os.path.isfile(local_path):
-            return None
-        if os.path.getsize(local_path) > max_bytes:
-            return None
-        with open(local_path, "rb") as f:
-            return f.read(max_bytes + 1)
+        if os.path.isfile(local_path) and os.path.getsize(local_path) <= max_bytes:
+            with open(local_path, "rb") as f:
+                return f.read()
     except Exception as e:
-        print(f"Lỗi đọc ảnh ({img_path}): {e}")
-        return None
+        print(f"Lỗi đọc file local ({path}): {e}")
+        
+    return None
 
 def _get_image_fingerprint(img_path):
     if not img_path:
@@ -145,6 +157,7 @@ def _get_image_fingerprint(img_path):
             im_square = ImageOps.expand(im_rgb, (pad_w, pad_h, pad_w, pad_h), fill=(255, 255, 255))
             sw, sh = im_square.size
 
+            # dHash Khung
             im_gray = im_square.convert("L")
             im_dh = im_gray.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh = list(im_dh.getdata())
@@ -155,6 +168,7 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh[row * 17 + col + 1]
                     dhash_val = (dhash_val << 1) | int(left > right)
 
+            # dHash Tâm
             crop_center = im_gray.crop((int(sw * 0.25), int(sh * 0.25), int(sw * 0.75), int(sh * 0.75)))
             im_dh_c = crop_center.resize((17, 16), Image.Resampling.LANCZOS)
             pixels_dh_c = list(im_dh_c.getdata())
@@ -165,6 +179,7 @@ def _get_image_fingerprint(img_path):
                     right = pixels_dh_c[row * 17 + col + 1]
                     dhash_center = (dhash_center << 1) | int(left > right)
 
+            # Histogram màu
             im_thumb = im_square.resize((32, 32))
             hist_color = im_thumb.histogram()
 
@@ -176,25 +191,25 @@ def _get_image_fingerprint(img_path):
             FINGERPRINT_CACHE[path_key] = result
             return result
     except Exception as e:
-        print(f"Lỗi tính fingerprint: {e}")
+        print(f"Lỗi PIL Fingerprint ({img_path}): {e}")
         FINGERPRINT_CACHE[path_key] = None
         return None
     finally:
         del data
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
+    """Tính điểm ảnh mịn 3 phần. Ngừa rớt 0đ khi lỗi mạng."""
     try:
-        if not check_real_image(img1_filename) or not check_real_image(img2_filename):
-            return 0, 0.0
-
         if str(img1_filename).strip() == str(img2_filename).strip():
             return 50, 1.0
 
         f1 = _get_image_fingerprint(img1_filename)
         f2 = _get_image_fingerprint(img2_filename)
 
+        # TỰ ĐỘNG CỨU ĐIỂM: Nếu ảnh bị nghẽn mạng không tải về được nhưng là 2 sản phẩm đối sánh
         if f1 is None or f2 is None:
-            return 0, 0.0
+            fallback = 30 if is_same_keyword else 15
+            return fallback, float(fallback / 50.0)
 
         dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
         if dist_dh <= 70:
@@ -246,7 +261,8 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         return total_image_score, similarity_ratio
     except Exception as e:
         print(f"Lỗi image_score: {e}")
-        return 0, 0.0
+        fallback = 30 if is_same_keyword else 15
+        return fallback, float(fallback / 50.0)
 
 def get_core_keyword(text_name):
     if not text_name:
@@ -262,7 +278,7 @@ def get_core_keyword(text_name):
         "sách tin học": ["tin học", "tin 11", "tin 9", "tin 10"],
         "sách lý": ["vật lý", "lý"],
         "sách hóa": ["hóa học", "hóa"],
-        "bút": ["bút", "viết", "bút bi", "bút chì", "bút xóa"],
+        "bút": ["bút", "viết", "bút bi", "bút chì", "bút xóa", "bút chì kim"],
         "điện thoại": ["điện thoại", "phone", "iphone", "samsung"],
         "balo": ["balo", "ba lô", "túi", "túi xách", "cặp"],
         "ví": ["ví", "bóp", "ví tiền", "bóp tiền"],
@@ -682,8 +698,9 @@ def match_items():
                 key1 = get_core_keyword(lost.ten_do)
                 key2 = get_core_keyword(found.ten_do)
                 ten_sim = similarity(lost.ten_do, found.ten_do)
-                is_same_key = key1 == key2 and bool(key1)
+                is_same_key = (key1 == key2 and bool(key1))
 
+                # Lọc cặp không liên quan
                 if not is_same_key and ten_sim < 0.35:
                     continue
 
@@ -709,15 +726,16 @@ def match_items():
 
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
+
+                # ÉP TÍNH ĐIỂM ÁNH - BẮT BUỘC KHI CÓ ẢNH
                 if has1 and has2:
                     anh_score, image_ratio = image_score(
                         lost.hinh_anh, found.hinh_anh,
                         is_same_keyword=is_same_key
                     )
-                    if anh_score == 0 and is_same_key:
-                        anh_score, image_ratio = 25, 0.5
                 else:
-                    anh_score, image_ratio = 0, 0.0
+                    anh_score = 30 if is_same_key else 0
+                    image_ratio = 0.6 if is_same_key else 0.0
 
                 score = anh_score + text_total
 
@@ -810,7 +828,8 @@ def teacher_check(lost_id, found_id):
         if has1 and has2:
             anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
         else:
-            anh_score, image_ratio = 0, 0.0
+            anh_score = 30 if is_same_key else 0
+            image_ratio = 0.6 if is_same_key else 0.0
 
         ten_score = 15 if is_same_key else int(similarity(lost.ten_do, found.ten_do) * 15)
         
@@ -833,9 +852,6 @@ def teacher_check(lost_id, found_id):
                 vi_tri_score = 5
 
         ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-        if not (has1 and has2):
-            anh_score = 0
 
         score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
