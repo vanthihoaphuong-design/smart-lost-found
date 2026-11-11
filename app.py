@@ -115,6 +115,7 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[img_path] = features
 
 def calculate_image_features(img_path):
+    """Trích xuất ma trận đặc trưng từ OpenCV / PIL với Cache và tối ưu RAM"""
     if not check_real_image(img_path):
         return None
     
@@ -140,6 +141,7 @@ def calculate_image_features(img_path):
         if not data:
             return None
 
+        # 1. Ưu tiên xử lý OpenCV
         if HAS_OPENCV:
             try:
                 arr = np.asarray(bytearray(data), dtype=np.uint8)
@@ -179,6 +181,7 @@ def calculate_image_features(img_path):
             except Exception as cv_err:
                 print(f"Fallback sang PIL: {cv_err}")
 
+        # 2. Phương án Fallback PIL siêu nhẹ RAM
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
             im_gray = im_rgb.convert("L")
@@ -208,6 +211,7 @@ def calculate_image_features(img_path):
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
+    """TÍNH ĐIỂM HÌNH ẢNH THỰC TẾ 100% - KHÔNG DÙNG ĐIỂM GIẢ"""
     try:
         str1 = str(img1_filename).strip()
         str2 = str(img2_filename).strip()
