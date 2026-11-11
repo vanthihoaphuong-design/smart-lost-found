@@ -643,11 +643,9 @@ def match_items():
     matches_list = []
     
     try:
-        global FINGERPRINT_CACHE
-        FINGERPRINT_CACHE = {}
-
-        lost_items = LostItem.query.order_by(LostItem.id.desc()).limit(20).all()
-        found_items = FoundItem.query.order_by(FoundItem.id.desc()).limit(20).all()
+        # Lấy tối đa 15 bài mới nhất mỗi bên để tối ưu thời gian phản hồi
+        lost_items = LostItem.query.order_by(LostItem.id.desc()).limit(15).all()
+        found_items = FoundItem.query.order_by(FoundItem.id.desc()).limit(15).all()
 
         for lost in lost_items:
             for found in found_items:
@@ -681,16 +679,16 @@ def match_items():
                     d2 = getattr(found, 'ngay_nhat', '')
                     ngay_score = date_score(d1, d2)
 
+                    # Tối ưu: Điểm ảnh dựa trên từ khóa khớp để tránh gọi HTTP chậm
                     anh1 = getattr(lost, 'hinh_anh', '')
                     anh2 = getattr(found, 'hinh_anh', '')
                     has1 = check_real_image(anh1)
                     has2 = check_real_image(anh2)
 
                     if has1 and has2:
-                        anh_score, image_ratio = image_score(anh1, anh2, is_same_keyword=is_same_key)
+                        anh_score = 40 if is_same_key else 20
                     else:
                         anh_score = 25 if is_same_key else 10
-                        image_ratio = 0.5 if is_same_key else 0.2
 
                     total_score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
@@ -703,18 +701,11 @@ def match_items():
                     else:
                         ket_luan = "🔴 Cần kiểm tra thêm"
 
-                    reasons = ["Đối sánh tự động"]
-                    if anh_score >= 18:
-                        reasons.append("Hình ảnh tương đồng")
-                    if ten_score >= 10:
-                        reasons.append("Tên đồ tương đồng")
-
                     result = {
                         "lost": lost,
                         "found": found,
                         "score": total_score,
                         "ket_luan": ket_luan,
-                        "reason": reasons,
                         "details": {
                             "hinh_anh": anh_score,
                             "ten_do": ten_score,
@@ -733,7 +724,6 @@ def match_items():
     except Exception:
         pass
 
-    gc.collect()
     return render_template("match.html", matches=matches_list)
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
