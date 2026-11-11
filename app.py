@@ -720,11 +720,21 @@ def match_items():
 
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-                    # TẢI TRANG ĐỐI SÁNH SIÊU TỐC (0.1 giây): 
-                    # Không gọi hàm tải ảnh từ Cloudinary qua mạng trong vòng lặp tổng quan để tránh Timeout.
+                    # TÍNH ĐIỂM ẢNH ĐỘNG DỰA TRÊN ĐỘ KHỚP THÔNG TIN (TRÁNH LỖI GÁN CỨNG 25/50)
                     has1 = check_real_image(lost.hinh_anh)
                     has2 = check_real_image(found.hinh_anh)
-                    anh_score = 25 if (has1 and has2 and (is_same_key or ten_sim > 0.3)) else 0
+                    
+                    if has1 and has2:
+                        if is_same_key and mau_score >= 10:
+                            anh_score = 45
+                        elif is_same_key:
+                            anh_score = 35
+                        elif ten_sim > 0.4:
+                            anh_score = 20
+                        else:
+                            anh_score = 10
+                    else:
+                        anh_score = 0
 
                     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
