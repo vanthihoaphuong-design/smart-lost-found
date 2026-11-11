@@ -3,9 +3,9 @@ import io
 import uuid
 import json
 import re
-import gc
-import urllib3
 from datetime import datetime, timezone, timedelta
+from PIL import Image
+import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 from sqlalchemy import func
@@ -14,27 +14,23 @@ from difflib import SequenceMatcher
 import cloudinary
 import cloudinary.uploader
 
-from PIL import Image, ImageOps, ImageFile
-
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-ImageFile.LOAD_TRUNCATED_IMAGES = True
-
 VN_TZ = timezone(timedelta(hours=7))
 
-cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
-api_key = os.environ.get("CLOUDINARY_API_KEY", "")
-api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
+# Bọc an toàn OpenCV chống crash trên môi trường Render / Server
+HAS_OPENCV = False
+try:
+    import cv2
+    import numpy as np
+    HAS_OPENCV = True
+except Exception as e:
+    print(f"Cảnh báo OpenCV không khả dụng: {e}")
 
-if cloud_name and api_key and api_secret:
-    try:
-        cloudinary.config(
-            cloud_name = cloud_name,
-            api_key = api_key,
-            api_secret = api_secret,
-            secure = True
-        )
-    except Exception as e:
-        print(f"Lỗi config Cloudinary: {e}")
+cloudinary.config(
+    cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", ""),
+    api_key = os.environ.get("CLOUDINARY_API_KEY", ""),
+    api_secret = os.environ.get("CLOUDINARY_API_SECRET", ""),
+    secure = True
+)
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "smart_lost_found_secret_key_123")
@@ -70,181 +66,170 @@ with app.app_context():
     except Exception as e:
         print(f"Lỗi Create DB All: {e}")
 
-STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
+FEATURE_CACHE = {}
 
-FINGERPRINT_CACHE = {}
+# Tập hợp các từ phụ / từ chỉ số lượng tiếng Việt cần bỏ khi xử lý từ lạ
+STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
 
 def check_real_image(img_path):
     if not img_path:
         return False
     try:
-        str_path = str(img_path).strip()
-        if not str_path or str_path.lower() in ["none", "null", "undefined", ""]:
+        str_path = str(img_path).strip().lower()
+        if str_path in ["", "none", "null", "undefined"]:
             return False
-        invalid_keywords = ["chua co anh", "chưa có ảnh", "no_image", "default", "placeholder"]
-        if any(k in str_path.lower() for k in invalid_keywords):
+            
+        invalid_keywords = [
+            "chua co anh", "chưa có ảnh", "no_image", "default", 
+            "placeholder", "120?text="
+        ]
+        if any(k in str_path for k in invalid_keywords):
             return False
+
         if str_path.startswith("http://") or str_path.startswith("https://"):
             return True
+
         p = os.path.join(app.config.get("UPLOAD_FOLDER", "static/uploads"), str_path) if not os.path.isabs(str_path) else str_path
         return os.path.exists(p)
     except Exception:
         return False
 
-def _read_image_bytes(img_path, max_bytes=1_500_000):
-    if not check_real_image(img_path):
-        return None
+def get_feature_cache(img_path):
+    return FEATURE_CACHE.get(img_path) if img_path else None
 
-    path = str(img_path).strip()
+def save_feature_cache(img_path, features):
+    if img_path:
+        FEATURE_CACHE[img_path] = features
+
+def calculate_image_features(img_path):
+    if not HAS_OPENCV or not check_real_image(img_path):
+        return None
     
-    if path.startswith(("http://", "https://")):
-        try:
-            import requests
-            headers = {"User-Agent": "Mozilla/5.0"}
-            resp = requests.get(path, headers=headers, timeout=1.5, verify=False)
-            if resp.status_code == 200 and len(resp.content) <= max_bytes:
-                return resp.content
-        except Exception:
+    cached = get_feature_cache(img_path)
+    if cached is not None:
+        return cached
+
+    try:
+        img = None
+        if str(img_path).startswith("http://") or str(img_path).startswith("https://"):
+            import urllib.request
+            req = urllib.request.urlopen(str(img_path), timeout=5)
+            arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
+            img = cv2.imdecode(arr, -1)
+        else:
+            p = os.path.join(app.config["UPLOAD_FOLDER"], str(img_path)) if not os.path.isabs(str(img_path)) else str(img_path)
+            if os.path.exists(p):
+                img = cv2.imread(p)
+
+        if img is None:
             return None
 
-    try:
-        local_path = path if os.path.isabs(path) else os.path.join(
-            app.config.get("UPLOAD_FOLDER", "static/uploads"), path
-        )
-        if os.path.isfile(local_path) and os.path.getsize(local_path) <= max_bytes:
-            with open(local_path, "rb") as f:
-                return f.read()
-    except Exception:
-        pass
+        # CHỈ CẮT VIỀN NẾU ẢNH CÓ NỀN TRẮNG THUẦN (ẢNH STUDIO/CATALOG/MẶT DÂY CHUYỀN)
+        try:
+            gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            h_img, w_img = gray_temp.shape
+            corner_pixels = [gray_temp[0,0], gray_temp[0, w_img-1], gray_temp[h_img-1, 0], gray_temp[h_img-1, w_img-1]]
+            if sum(c > 235 for c in corner_pixels) >= 3:
+                _, thresh = cv2.threshold(gray_temp, 240, 255, cv2.THRESH_BINARY_INV)
+                contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                if contours:
+                    c = max(contours, key=cv2.contourArea)
+                    x, y, w, h = cv2.boundingRect(c)
+                    if w > 20 and h > 20:
+                        img = img[y:y+h, x:x+w]
+        except Exception:
+            pass
+
+        crop_img = cv2.resize(img, (200, 200), interpolation=cv2.INTER_AREA)
+        gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
         
-    return None
+        features = {}
 
-def _get_image_fingerprint(img_path):
-    if not img_path:
-        return None
+        try:
+            orb = cv2.ORB_create(nfeatures=600)
+            kp, des = orb.detectAndCompute(gray, None)
+            features["orb_keypoints"] = kp
+            features["orb_descriptors"] = des
+        except Exception:
+            features["orb_keypoints"], features["orb_descriptors"] = [], None
 
-    path_key = str(img_path).strip()
-    if path_key in FINGERPRINT_CACHE:
-        return FINGERPRINT_CACHE[path_key]
+        try:
+            hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
+            hist = cv2.calcHist([hsv], [0, 1], None, [18, 20], [0, 180, 0, 256])
+            if hist is not None:
+                cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+            features["hsv_hist"] = hist
+        except Exception:
+            features["hsv_hist"] = None
 
-    data = _read_image_bytes(img_path)
-    if not data:
-        FINGERPRINT_CACHE[path_key] = None
-        return None
-
-    try:
-        with Image.open(io.BytesIO(data)) as im:
-            im_rgb = im.convert("RGB")
-            
-            w, h = im_rgb.size
-            max_side = max(w, h)
-            pad_w = (max_side - w) // 2
-            pad_h = (max_side - h) // 2
-            im_square = ImageOps.expand(im_rgb, (pad_w, pad_h, pad_w, pad_h), fill=(255, 255, 255))
-            sw, sh = im_square.size
-
-            im_gray = im_square.convert("L")
-            im_dh = im_gray.resize((17, 16), Image.Resampling.LANCZOS)
-            pixels_dh = list(im_dh.getdata())
-            dhash_val = 0
-            for row in range(16):
-                for col in range(16):
-                    left = pixels_dh[row * 17 + col]
-                    right = pixels_dh[row * 17 + col + 1]
-                    dhash_val = (dhash_val << 1) | int(left > right)
-
-            crop_center = im_gray.crop((int(sw * 0.25), int(sh * 0.25), int(sw * 0.75), int(sh * 0.75)))
-            im_dh_c = crop_center.resize((17, 16), Image.Resampling.LANCZOS)
-            pixels_dh_c = list(im_dh_c.getdata())
-            dhash_center = 0
-            for row in range(16):
-                for col in range(16):
-                    left = pixels_dh_c[row * 17 + col]
-                    right = pixels_dh_c[row * 17 + col + 1]
-                    dhash_center = (dhash_center << 1) | int(left > right)
-
-            im_thumb = im_square.resize((32, 32))
-            hist_color = im_thumb.histogram()
-
-            result = {
-                "dhash": dhash_val,
-                "dhash_center": dhash_center,
-                "hist": hist_color
-            }
-            FINGERPRINT_CACHE[path_key] = result
-            return result
-    except Exception:
-        FINGERPRINT_CACHE[path_key] = None
+        save_feature_cache(img_path, features)
+        return features
+    except Exception as e:
+        print(f"Lỗi tính feature: {e}")
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
+    """THUẬT TOÁN CHUẨN HÓA ĐIỂM HÌNH ẢNH: GIỚI HẠN MỐC THƯỞNG 45Đ CHO ẢNH BÌA SÁCH/ẢNH CHỤP LẠI"""
     try:
-        if str(img1_filename).strip() == str(img2_filename).strip():
+        if not HAS_OPENCV or not check_real_image(img1_filename) or not check_real_image(img2_filename):
+            return 0, 0.0
+
+        str1 = str(img1_filename).strip()
+        str2 = str(img2_filename).strip()
+
+        if str1 == str2:
             return 50, 1.0
 
-        f1 = _get_image_fingerprint(img1_filename)
-        f2 = _get_image_fingerprint(img2_filename)
+        features1 = calculate_image_features(img1_filename)
+        features2 = calculate_image_features(img2_filename)
 
-        if f1 is None or f2 is None:
-            fallback = 30 if is_same_keyword else 15
-            return fallback, float(fallback / 50.0)
+        if features1 is None or features2 is None:
+            return 0, 0.0
 
-        dist_dh = (f1["dhash"] ^ f2["dhash"]).bit_count()
-        if dist_dh <= 70:
-            score_shape = 20
-        elif dist_dh <= 100:
-            score_shape = 16
-        elif dist_dh <= 130:
-            score_shape = 12
-        elif dist_dh <= 165:
-            score_shape = 8
-        elif dist_dh <= 190:
-            score_shape = 5
+        good_count = 0
+        try:
+            kp1, des1 = features1.get("orb_keypoints", []), features1.get("orb_descriptors")
+            kp2, des2 = features2.get("orb_keypoints", []), features2.get("orb_descriptors")
+            if des1 is not None and des2 is not None and len(kp1) >= 2 and len(kp2) >= 2:
+                bf = cv2.BFMatcher(cv2.NORM_HAMMING)
+                matches = bf.knnMatch(des1, des2, k=2)
+                for m_pair in matches:
+                    if len(m_pair) == 2 and m_pair[0].distance < 0.78 * m_pair[1].distance:
+                        good_count += 1
+        except Exception:
+            good_count = 0
+
+        color_corr = 0.0
+        try:
+            hist1, hist2 = features1.get("hsv_hist"), features2.get("hsv_hist")
+            if hist1 is not None and hist2 is not None:
+                color_corr = max(0.0, float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)))
+        except Exception:
+            color_corr = 0.0
+
+        if good_count >= 12:
+            score = 45 if is_same_keyword else 42
+        elif good_count >= 6:
+            score = 42 if is_same_keyword else 38
+        elif good_count >= 3:
+            score = 38 if is_same_keyword else 32
+        elif good_count >= 1:
+            score = 32 if is_same_keyword else 25
         else:
-            score_shape = 2
+            score = int(color_corr * 25)
 
-        dist_center = (f1["dhash_center"] ^ f2["dhash_center"]).bit_count()
-        if dist_center <= 60:
-            score_structure = 15
-        elif dist_center <= 90:
-            score_structure = 12
-        elif dist_center <= 120:
-            score_structure = 9
-        elif dist_center <= 155:
-            score_structure = 6
-        else:
-            score_structure = 3
-
-        h1, h2 = f1["hist"], f2["hist"]
-        dot = sum(a * b for a, b in zip(h1, h2))
-        norm1 = sum(a * a for a in h1) ** 0.5
-        norm2 = sum(b * b for b in h2) ** 0.5
-        color_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
-
-        if color_sim >= 0.75:
-            score_color = 15
-        elif color_sim >= 0.60:
-            score_color = 12
-        elif color_sim >= 0.45:
-            score_color = 8
-        elif color_sim >= 0.30:
-            score_color = 5
-        else:
-            score_color = 2
-
-        total_image_score = score_shape + score_structure + score_color
-        total_image_score = min(50, max(0, total_image_score))
-        similarity_ratio = float(total_image_score / 50.0)
-
-        return total_image_score, similarity_ratio
-    except Exception:
-        fallback = 30 if is_same_keyword else 15
-        return fallback, float(fallback / 50.0)
+        score = min(50, max(0, score))
+        return score, float(score / 50.0)
+    except Exception as e:
+        print(f"Lỗi image_score: {e}")
+        return 0, 0.0
 
 def get_core_keyword(text_name):
+    """TRÍCH XUẤT TỪ KHÓA CỨNG - TỰ ĐỘNG LỌC TỪ PHỤ VÀ TỪ LẠ"""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
+    
     synonyms_map = {
         "máy tính casio": ["casio", "fx580", "fx 580", "máy tính bỏ túi", "casio580"],
         "laptop": ["laptop", "macbook", "máy tính xách tay"],
@@ -255,7 +240,7 @@ def get_core_keyword(text_name):
         "sách tin học": ["tin học", "tin 11", "tin 9", "tin 10"],
         "sách lý": ["vật lý", "lý"],
         "sách hóa": ["hóa học", "hóa"],
-        "bút": ["bút", "viết", "bút bi", "bút chì", "bút xóa", "bút chì kim"],
+        "bút": ["bút", "viết", "bút bi", "bút chì", "bút xóa"],
         "điện thoại": ["điện thoại", "phone", "iphone", "samsung"],
         "balo": ["balo", "ba lô", "túi", "túi xách", "cặp"],
         "ví": ["ví", "bóp", "ví tiền", "bóp tiền"],
@@ -273,6 +258,7 @@ def get_core_keyword(text_name):
         if any(re.search(r'\b' + re.escape(w) + r'\b', t) for w in words):
             return core_key
             
+    # Tự động lọc các từ phụ tiếng Việt (con, cái, chiếc...) đối với từ lạ
     tokens = [w for w in t.split() if w not in STOP_WORDS_VN]
     return tokens[0] if tokens else t
 
@@ -280,14 +266,25 @@ def similarity(text1, text2):
     if not text1 or not text2:
         return 0.0
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
+    
     if t1 == t2:
         return 1.0
+
+    # LỌC SỐ PHÒNG/SỐ LỚP CHÍNH XÁC (Phòng Tin 1 vs Phòng Tin 2 -> Trả về độ tương đồng cực thấp)
+    nums1 = re.findall(r'\d+', t1)
+    nums2 = re.findall(r'\d+', t2)
+    if nums1 and nums2 and nums1 != nums2:
+        return 0.1
+
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
+
     if k1 == k2 and k1 != "":
         return 0.90
+
     if t1 in t2 or t2 in t1:
         return 0.85
+
     return SequenceMatcher(None, t1, t2).ratio()
 
 def parse_date_flexible(date_str):
@@ -338,7 +335,8 @@ def save_new_pin(new_pin):
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(config_data, f, ensure_ascii=False, indent=4)
         return True
-    except Exception:
+    except Exception as e:
+        print("Lỗi lưu PIN:", e)
         return False
 
 @app.route("/")
@@ -354,7 +352,7 @@ def lost():
             try:
                 res = cloudinary.uploader.upload(file)
                 filename = res.get("secure_url", "")
-            except Exception:
+            except Exception as e:
                 filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
                 file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
         
@@ -370,7 +368,7 @@ def lost():
             )
             db.session.add(item)
             db.session.commit()
-        except Exception:
+        except Exception as e:
             try:
                 db.session.rollback()
             except Exception:
@@ -403,7 +401,7 @@ def found():
             )
             db.session.add(item)
             db.session.commit()
-        except Exception:
+        except Exception as e:
             try:
                 db.session.rollback()
             except Exception:
@@ -527,8 +525,8 @@ def edit_lost(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
             
         try:
             db.session.commit()
@@ -557,8 +555,8 @@ def edit_found(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
             
         try:
             db.session.commit()
@@ -572,9 +570,7 @@ def edit_found(item_id):
 def dashboard():
     try:
         tong_so = LostItem.query.count()
-        all_items = db.session.query(
-            LostItem.loai_do, func.count(LostItem.id)
-        ).group_by(LostItem.loai_do).all()
+        all_items = LostItem.query.all()
     except Exception:
         tong_so = 0
         all_items = []
@@ -589,16 +585,16 @@ def dashboard():
 
     category_counts = {cat: 0 for cat in CATEGORIES_MAP.keys()}
 
-    for raw_value, item_count in all_items:
-        raw_cat = str(raw_value).strip() if raw_value else "Khác"
+    for item in all_items:
+        raw_cat = str(item.loai_do).strip() if item.loai_do else "Khác"
         mapped = False
         for new_cat, old_list in CATEGORIES_MAP.items():
             if any(old.lower() in raw_cat.lower() or raw_cat.lower() in old.lower() for old in old_list):
-                category_counts[new_cat] += int(item_count)
+                category_counts[new_cat] += 1
                 mapped = True
                 break
         if not mapped:
-            category_counts["Khác"] += int(item_count)
+            category_counts["Khác"] += 1
 
     thong_ke = [(cat, count) for cat, count in category_counts.items()]
     return render_template("dashboard.html", tong_so=tong_so, thong_ke=thong_ke)
@@ -640,162 +636,194 @@ def found_return(id):
 
 @app.route("/match")
 def match_items():
-    matches_list = []
-    
+    matches = []
     try:
-        # Lấy tối đa 15 bài mới nhất mỗi bên để tối ưu thời gian phản hồi
-        lost_items = LostItem.query.order_by(LostItem.id.desc()).limit(15).all()
-        found_items = FoundItem.query.order_by(FoundItem.id.desc()).limit(15).all()
-
-        for lost in lost_items:
-            for found in found_items:
-                try:
-                    ten1 = getattr(lost, 'ten_do', '') or ''
-                    ten2 = getattr(found, 'ten_do', '') or ''
-                    
-                    key1 = get_core_keyword(ten1)
-                    key2 = get_core_keyword(ten2)
-                    is_same_key = (key1 == key2 and bool(key1))
-
-                    ten_sim = similarity(ten1, ten2)
-                    ten_score = 15 if is_same_key else int(ten_sim * 15)
-
-                    m1 = str(getattr(lost, 'mau_sac', '') or '').strip().lower()
-                    m2 = str(getattr(found, 'mau_sac', '') or '').strip().lower()
-                    mau_score = 0
-                    if m1 not in ("", "none", "null") and m2 not in ("", "none", "null"):
-                        mau_score = int(similarity(m1, m2) * 15)
-                    elif is_same_key:
-                        mau_score = 10
-
-                    v1 = str(getattr(lost, 'noi_mat', '') or '').strip().lower()
-                    v2 = str(getattr(found, 'noi_nhat', '') or '').strip().lower()
-                    vi_tri_score = 0
-                    if v1 not in ("", "none", "null") and v2 not in ("", "none", "null"):
-                        vi_tri_sim = similarity(v1, v2)
-                        vi_tri_score = 10 if vi_tri_sim > 0.8 else (5 if vi_tri_sim > 0.5 else 0)
-
-                    d1 = getattr(lost, 'ngay_mat', '')
-                    d2 = getattr(found, 'ngay_nhat', '')
-                    ngay_score = date_score(d1, d2)
-
-                    # Tối ưu: Điểm ảnh dựa trên từ khóa khớp để tránh gọi HTTP chậm
-                    anh1 = getattr(lost, 'hinh_anh', '')
-                    anh2 = getattr(found, 'hinh_anh', '')
-                    has1 = check_real_image(anh1)
-                    has2 = check_real_image(anh2)
-
-                    if has1 and has2:
-                        anh_score = 40 if is_same_key else 20
-                    else:
-                        anh_score = 25 if is_same_key else 10
-
-                    total_score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-
-                    if total_score >= 75:
-                        ket_luan = "🟢 Khả năng trùng khớp cao"
-                    elif total_score >= 55:
-                        ket_luan = "🟡 Có khả năng trùng khớp"
-                    elif total_score >= 38:
-                        ket_luan = "🟠 Có một số điểm tương đồng"
-                    else:
-                        ket_luan = "🔴 Cần kiểm tra thêm"
-
-                    result = {
-                        "lost": lost,
-                        "found": found,
-                        "score": total_score,
-                        "ket_luan": ket_luan,
-                        "details": {
-                            "hinh_anh": anh_score,
-                            "ten_do": ten_score,
-                            "mau_sac": mau_score,
-                            "vi_tri": vi_tri_score,
-                            "ngay": ngay_score
-                        }
-                    }
-                    matches_list.append(result)
-
-                except Exception:
-                    continue
-
-        matches_list.sort(key=lambda x: x["score"], reverse=True)
-
+        lost_items = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").all()
+        found_items = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA").all()
     except Exception:
-        pass
+        lost_items, found_items = [], []
 
-    return render_template("match.html", matches=matches_list)
+    for lost in lost_items:
+        for found in found_items:
+            key1 = get_core_keyword(lost.ten_do)
+            key2 = get_core_keyword(found.ten_do)
+            ten_sim = similarity(lost.ten_do, found.ten_do)
+            is_same_key = (key1 == key2 and key1 != "")
+
+            # LỚP 1: LỌC THÔNG MINH (TRÙNG TỪ KHÓA GỐC HOẶC ĐỘ TƯƠNG ĐỒNG TÊN > 60%)
+            if not is_same_key and ten_sim < 0.60:
+                continue
+
+            has1 = check_real_image(lost.hinh_anh)
+            has2 = check_real_image(found.hinh_anh)
+
+            # LỚP 2: ĐIỂM OPENCV
+            if has1 and has2:
+                anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
+            else:
+                anh_score, image_ratio = 0, 0.0
+
+            # LỚP 3: CHUẨN HÓA THANG ĐIỂM TỔNG CỐ ĐỊNH 100Đ
+            if is_same_key:
+                ten_score = 15
+            else:
+                ten_score = int(ten_sim * 15)
+
+            mau_score = 0
+            m1 = str(lost.mau_sac or "").strip().lower()
+            m2 = str(found.mau_sac or "").strip().lower()
+            if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
+                mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+            elif is_same_key:
+                mau_score = 12
+
+            vi_tri_score = 0
+            v1 = str(lost.noi_mat or "").strip().lower()
+            v2 = str(found.noi_nhat or "").strip().lower()
+            if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
+                vi_tri = similarity(lost.noi_mat, found.noi_nhat)
+                if vi_tri > 0.8:
+                    vi_tri_score = 10
+                elif vi_tri > 0.5:
+                    vi_tri_score = 5
+
+            ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+            if not (has1 and has2):
+                anh_score = 0
+
+            # ĐẢM BẢO TỔNG BẰNG ĐÚNG PHÉP CỘNG THỰC TẾ
+            score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+
+            image_confidence = int(min(100, image_ratio * 100))
+
+            reasons = []
+            if has1 and has2 and anh_score >= 20:
+                reasons.append("Hình ảnh có điểm tương đồng")
+            if ten_score >= 10:
+                reasons.append("Tên đồ tương đồng")
+            if mau_score >= 10:
+                reasons.append("Màu sắc tương đồng")
+            if vi_tri_score >= 5:
+                reasons.append("Vị trí liên quan")
+            if ngay_score >= 6:
+                reasons.append("Thời gian khớp/gần nhau")
+
+            if score >= 75:
+                ket_luan = "🟢 Khả năng trùng khớp cao"
+            elif score >= 55:
+                ket_luan = "🟡 Có khả năng trùng khớp"
+            elif score >= 38:
+                ket_luan = "🟠 Có một số điểm tương đồng"
+            else:
+                ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+            details = {
+                "hinh_anh": anh_score,
+                "ten_do": ten_score,
+                "mau_sac": mau_score,
+                "vi_tri": vi_tri_score,
+                "ngay": ngay_score,
+                "score_image": anh_score,
+                "score_name": ten_score,
+                "score_color": mau_score,
+                "score_location": vi_tri_score,
+                "score_date": ngay_score,
+                "image_confidence": image_confidence
+            }
+
+            matches.append({
+                "lost": lost,
+                "found": found,
+                "score": score,
+                "ket_luan": ket_luan,
+                "reason": reasons,
+                "details": details,
+                "score_image": anh_score,
+                "score_name": ten_score,
+                "score_color": mau_score,
+                "score_location": vi_tri_score,
+                "score_date": ngay_score,
+                "hinh_anh": anh_score,
+                "ten_do": ten_score,
+                "mau_sac": mau_score,
+                "vi_tri": vi_tri_score,
+                "ngay": ngay_score
+            })
+
+    matches.sort(key=lambda x: x["score"], reverse=True)
+    return render_template("match.html", matches=matches)
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
 def teacher_check(lost_id, found_id):
     try:
         lost = LostItem.query.get_or_404(lost_id)
         found = FoundItem.query.get_or_404(found_id)
-
-        has1 = check_real_image(lost.hinh_anh)
-        has2 = check_real_image(found.hinh_anh)
-
-        key1 = get_core_keyword(lost.ten_do)
-        key2 = get_core_keyword(found.ten_do)
-        is_same_key = (key1 == key2 and key1 != "")
-
-        if has1 and has2:
-            anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
-        else:
-            anh_score = 30 if is_same_key else 0
-            image_ratio = 0.6 if is_same_key else 0.0
-
-        ten_score = 15 if is_same_key else int(similarity(lost.ten_do, found.ten_do) * 15)
-        
-        mau_score = 0
-        m1 = str(lost.mau_sac or "").strip().lower()
-        m2 = str(found.mau_sac or "").strip().lower()
-        if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-            mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-        elif is_same_key:
-            mau_score = 12
-
-        vi_tri_score = 0
-        v1 = str(lost.noi_mat or "").strip().lower()
-        v2 = str(found.noi_nhat or "").strip().lower()
-        if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-            vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-            if vi_tri > 0.8:
-                vi_tri_score = 10
-            elif vi_tri > 0.5:
-                vi_tri_score = 5
-
-        ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-        score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
-
-        if score >= 75:
-            ket_luan = "🟢 Khả năng trùng khớp cao"
-        elif score >= 55:
-            ket_luan = "🟡 Có khả năng trùng khớp"
-        elif score >= 38:
-            ket_luan = "🟠 Có một số điểm tương đồng"
-        else:
-            ket_luan = "🔴 Khả năng trùng khớp thấp"
-
-        image_warning = None
-        if has1 and has2 and image_ratio < 0.20:
-            image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
-        elif not (has1 and has2):
-            image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
-
-        gc.collect()
-
-        return render_template(
-            "teacher_check.html",
-            lost=lost,
-            found=found,
-            score=score,
-            ket_luan=ket_luan,
-            image_warning=image_warning
-        )
     except Exception:
         return redirect(url_for("match_items"))
+
+    has1 = check_real_image(lost.hinh_anh)
+    has2 = check_real_image(found.hinh_anh)
+
+    key1 = get_core_keyword(lost.ten_do)
+    key2 = get_core_keyword(found.ten_do)
+    is_same_key = (key1 == key2 and key1 != "")
+
+    if has1 and has2:
+        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
+    else:
+        anh_score, image_ratio = 0, 0.0
+
+    ten_score = 15 if is_same_key else int(similarity(lost.ten_do, found.ten_do) * 15)
+    
+    mau_score = 0
+    m1 = str(lost.mau_sac or "").strip().lower()
+    m2 = str(found.mau_sac or "").strip().lower()
+    if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
+        mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
+    elif is_same_key:
+        mau_score = 12
+
+    vi_tri_score = 0
+    v1 = str(lost.noi_mat or "").strip().lower()
+    v2 = str(found.noi_nhat or "").strip().lower()
+    if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
+        vi_tri = similarity(lost.noi_mat, found.noi_nhat)
+        if vi_tri > 0.8:
+            vi_tri_score = 10
+        elif vi_tri > 0.5:
+            vi_tri_score = 5
+
+    ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+    if not (has1 and has2):
+        anh_score = 0
+
+    score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+
+    if score >= 75:
+        ket_luan = "🟢 Khả năng trùng khớp cao"
+    elif score >= 55:
+        ket_luan = "🟡 Có khả năng trùng khớp"
+    elif score >= 38:
+        ket_luan = "🟠 Có một số điểm tương đồng"
+    else:
+        ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+    image_warning = None
+    if has1 and has2 and image_ratio < 0.20:
+        image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
+    elif not (has1 and has2):
+        image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
+
+    return render_template(
+        "teacher_check.html",
+        lost=lost,
+        found=found,
+        score=score,
+        ket_luan=ket_luan,
+        image_warning=image_warning
+    )
 
 @app.route("/confirm-return/<int:lost_id>/<int:found_id>", methods=["GET", "POST"])
 def confirm_return(lost_id, found_id):
@@ -838,7 +866,6 @@ def confirm_return(lost_id, found_id):
 @app.route("/export-excel", methods=["GET"])
 def export_excel():
     try:
-        import pandas as pd
         status = request.args.get("status", "all")
         month = request.args.get("month", "")
         year = request.args.get("year", "")
@@ -910,7 +937,8 @@ def export_excel():
             as_attachment=True,
             download_name=filename
         )
-    except Exception:
+    except Exception as e:
+        print("Lỗi xuất Excel:", e)
         return "Lỗi xuất Excel", 500
 
 @app.route("/get-pin")
@@ -943,5 +971,4 @@ def change_pin():
     return render_template("change_pin.html")
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    app.run(host="0.0.0.0", port=5000, debug=True)
