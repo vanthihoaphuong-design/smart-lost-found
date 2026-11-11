@@ -206,7 +206,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         f1 = _get_image_fingerprint(img1_filename)
         f2 = _get_image_fingerprint(img2_filename)
 
-        # TỰ ĐỘNG CỨU ĐIỂM: Nếu ảnh bị nghẽn mạng không tải về được nhưng là 2 sản phẩm đối sánh
         if f1 is None or f2 is None:
             fallback = 30 if is_same_keyword else 15
             return fallback, float(fallback / 50.0)
@@ -700,12 +699,13 @@ def match_items():
                 ten_sim = similarity(lost.ten_do, found.ten_do)
                 is_same_key = (key1 == key2 and bool(key1))
 
-                # Lọc cặp không liên quan
-                if not is_same_key and ten_sim < 0.35:
-                    continue
+                # 1. Điểm Tên đồ
+                if is_same_key:
+                    ten_score = 15
+                else:
+                    ten_score = int(ten_sim * 15)
 
-                ten_score = 15 if is_same_key else int(ten_sim * 15)
-
+                # 2. Điểm Màu sắc
                 m1 = str(lost.mau_sac or "").strip().lower()
                 m2 = str(found.mau_sac or "").strip().lower()
                 mau_score = 0
@@ -714,6 +714,7 @@ def match_items():
                 elif is_same_key:
                     mau_score = 10
 
+                # 3. Điểm Vị trí
                 v1 = str(lost.noi_mat or "").strip().lower()
                 v2 = str(found.noi_nhat or "").strip().lower()
                 vi_tri_score = 0
@@ -721,28 +722,33 @@ def match_items():
                     vi_tri = similarity(v1, v2)
                     vi_tri_score = 10 if vi_tri > 0.8 else (5 if vi_tri > 0.5 else 0)
 
+                # 4. Điểm Ngày tháng
                 ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
                 text_total = ten_score + mau_score + vi_tri_score + ngay_score
 
+                # 5. Điểm Hình ảnh
                 has1 = check_real_image(lost.hinh_anh)
                 has2 = check_real_image(found.hinh_anh)
 
-                # ÉP TÍNH ĐIỂM ÁNH - BẮT BUỘC KHI CÓ ẢNH
                 if has1 and has2:
                     anh_score, image_ratio = image_score(
                         lost.hinh_anh, found.hinh_anh,
                         is_same_keyword=is_same_key
                     )
+                    if anh_score == 0 and is_same_key:
+                        anh_score, image_ratio = 25, 0.5
                 else:
-                    anh_score = 30 if is_same_key else 0
-                    image_ratio = 0.6 if is_same_key else 0.0
+                    anh_score = 25 if is_same_key else 0
+                    image_ratio = 0.5 if is_same_key else 0.0
 
                 score = anh_score + text_total
 
-                if not is_same_key and ten_sim < 0.60:
-                    score = min(score, 35)
+                # Nếu là cùng tên loại đồ vật, điểm sàn tối thiểu luôn là 40đ
+                if is_same_key and score < 40:
+                    score = 40
 
-                if score < 20:
+                # Bỏ qua nếu điểm quá thấp (dưới 10đ)
+                if score < 10:
                     continue
 
                 if score >= 75:
