@@ -7,29 +7,42 @@
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body { background-color: #f8f9fa; }
-        .img-preview { height: 160px; object-fit: cover; border-radius: 8px; cursor: pointer; transition: transform 0.2s; }
-        .img-preview:hover { transform: scale(1.03); }
-        .card-match-row { border-radius: 10px; border: 1px solid #e0e0e0; }
+        body { background-color: #f4f6f9; font-family: system-ui, -apple-system, sans-serif; }
+        .match-card { border: 1px solid #d0d7de; border-radius: 8px; background: #fff; overflow: hidden; margin-bottom: 24px; }
+        .match-header { background: #e7f1ff; border-bottom: 1px solid #c0d8ff; padding: 8px 16px; text-align: center; font-weight: bold; }
+        .item-box { padding: 16px; text-align: center; }
+        .item-img { width: 140px; height: 140px; object-fit: cover; border-radius: 6px; border: 1px solid #e0e0e0; cursor: pointer; transition: transform 0.2s; }
+        .item-img:hover { transform: scale(1.05); }
+        .cat-badge { font-size: 0.75rem; background-color: #198754; color: #fff; border-radius: 12px; padding: 3px 10px; display: inline-block; margin: 4px 0; }
+        .cat-badge-lost { background-color: #dc3545; }
+        .score-box { background: #f8f9fa; padding: 16px; height: 100%; display: flex; flex-direction: column; justify-content: center; align-items: center; border-left: 1px solid #eee; }
+        .score-number { font-size: 2.2rem; font-weight: 800; color: #0d6efd; line-height: 1; margin-bottom: 12px; }
+        .score-table { font-size: 0.85rem; width: 100%; max-width: 180px; margin-bottom: 12px; }
+        .score-table td { padding: 2px 0; }
     </style>
 </head>
 <body>
 
-    <!-- NAVBAR CHUẨN ĐỒNG BỘ NGUYÊN BẢN -->
-    <nav class="navbar navbar-expand-lg navbar-dark bg-primary mb-4">
+    <!-- NAVBAR NGUYÊN BẢN -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm mb-4">
         <div class="container">
-            <a class="navbar-brand fw-bold" href="/">Smart Lost & Found</a>
+            <a class="navbar-brand fw-bold" href="/"><i class="fa-solid fa-robot me-2"></i>Smart Lost & Found</a>
             <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
                 <span class="navbar-toggler-icon"></span>
             </button>
             <div class="collapse navbar-collapse" id="navbarNav">
                 <ul class="navbar-nav ms-auto">
-                    <li class="nav-item"><a class="nav-link" href="/">Trang chủ</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/lost-list">Đồ báo mất</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/found-list">Đồ nhặt được</a></li>
-                    <li class="nav-item"><a class="nav-link active fw-bold" href="/match">Đối sánh AI</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/search">Tìm kiếm</a></li>
-                    <li class="nav-item"><a class="nav-link" href="/dashboard">Thống kê</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/"><i class="fa-solid fa-house me-1"></i>Trang chủ</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/search"><i class="fa-solid fa-magnifying-glass me-1"></i>Tìm kiếm</a></li>
+                    <li class="nav-item dropdown">
+                        <a class="nav-link dropdown-toggle" href="#" id="manageDropdown" role="button" data-bs-toggle="dropdown"><i class="fa-solid fa-list-check me-1"></i>Quản lý đồ</a>
+                        <ul class="dropdown-menu">
+                            <li><a class="dropdown-item" href="/lost-list">Đồ báo mất</a></li>
+                            <li><a class="dropdown-item" href="/found-list">Đồ nhặt được</a></li>
+                        </ul>
+                    </li>
+                    <li class="nav-item"><a class="nav-link active fw-bold" href="/match"><i class="fa-solid fa-chart-pie me-1"></i>Thống kê & AI</a></li>
+                    <li class="nav-item"><a class="nav-link" href="/change-pin"><i class="fa-solid fa-key me-1"></i>Đổi PIN</a></li>
                 </ul>
             </div>
         </div>
@@ -37,87 +50,83 @@
 
     <div class="container mb-5">
         <div class="text-center mb-4">
-            <h3 class="fw-bold text-primary">🤖 Kết quả đối sánh thông minh</h3>
-            <p class="text-muted">Mỗi hàng hiển thị 1 cặp đồ vật kèm phân tích thang điểm chi tiết</p>
+            <h2 class="fw-bold text-primary"><i class="fa-solid fa-robot me-2"></i>Kết quả đối sánh thông minh</h2>
         </div>
 
         {% if matches %}
-            <div class="row">
-                {% for item in matches %}
-                <!-- MỖI CẶP ĐỒ DÙNG HẲN 1 HÀNG TOÀN MAN HÌNH (COL-12) -->
-                <div class="col-12 mb-4">
-                    <div class="card card-match-row shadow-sm">
-                        <div class="card-header bg-primary text-white d-flex justify-content-between align-items-center">
-                            <span class="fw-bold">⭐ ĐIỂM PHÙ HỢP: {{ item.score }}/100</span>
-                            <span class="badge bg-light text-dark fs-6">{{ item.ket_luan }}</span>
-                        </div>
-                        <div class="card-body">
-                            <div class="row align-items-center">
-                                <!-- ĐỒ BÁO MẤT -->
-                                <div class="col-md-5 border-end text-center">
-                                    <span class="badge bg-danger mb-2">🔴 Đồ báo mất</span>
-                                    <div class="mb-2">
-                                        {% if item.lost.hinh_anh %}
-                                            <img src="{{ item.lost.hinh_anh }}" class="img-fluid img-preview border" onclick="showModalImage('{{ item.lost.hinh_anh }}', '{{ item.lost.ten_do }}')" title="Bấm để phóng to">
-                                        {% else %}
-                                            <div class="p-3 bg-light text-muted border rounded">Chưa có ảnh</div>
-                                        {% endif %}
-                                    </div>
-                                    <h5 class="fw-bold mb-1">{{ item.lost.ten_do }}</h5>
-                                    <small class="text-muted d-block">Màu sắc: {{ item.lost.mau_sac or 'Chưa rõ' }}</small>
-                                    <small class="text-muted d-block">Vị trí mất: {{ item.lost.noi_mat or 'Chưa rõ' }}</small>
-                                </div>
+            {% for item in matches %}
+            <div class="match-card shadow-sm">
+                <!-- TIÊU ĐỀ 3 CỘT -->
+                <div class="row g-0 match-header">
+                    <div class="col-4 border-end">Đồ bị mất</div>
+                    <div class="col-4 border-end">Đồ nhặt được</div>
+                    <div class="col-4">Điểm phù hợp</div>
+                </div>
 
-                                <!-- ĐỒ NHẶT ĐƯỢC -->
-                                <div class="col-md-5 text-center">
-                                    <span class="badge bg-success mb-2">🟢 Đồ nhặt được</span>
-                                    <div class="mb-2">
-                                        {% if item.found.hinh_anh %}
-                                            <img src="{{ item.found.hinh_anh }}" class="img-fluid img-preview border" onclick="showModalImage('{{ item.found.hinh_anh }}', '{{ item.found.ten_do }}')" title="Bấm để phóng to">
-                                        {% else %}
-                                            <div class="p-3 bg-light text-muted border rounded">Chưa có ảnh</div>
-                                        {% endif %}
-                                    </div>
-                                    <h5 class="fw-bold mb-1">{{ item.found.ten_do }}</h5>
-                                    <small class="text-muted d-block">Màu sắc: {{ item.found.mau_sac or 'Chưa rõ' }}</small>
-                                    <small class="text-muted d-block">Vị trí nhặt: {{ item.found.noi_nhat or 'Chưa rõ' }}</small>
-                                </div>
+                <div class="row g-0 align-items-center">
+                    <!-- CỘT 1: ĐỒ MẤT -->
+                    <div class="col-md-4 border-end item-box">
+                        {% if item.lost.hinh_anh %}
+                            <img src="{{ item.lost.hinh_anh }}" class="item-img mb-2" onclick="zoomImage('{{ item.lost.hinh_anh }}', '{{ item.lost.ten_do }}')" title="Bấm để phóng to">
+                        {% else %}
+                            <div class="item-img d-flex align-items-center justify-content-center bg-light text-muted mx-auto mb-2">Không có ảnh</div>
+                        {% endif %}
+                        <h6 class="fw-bold mb-1">{{ item.lost.ten_do }}</h6>
+                        <div><span class="cat-badge cat-badge-lost">{{ item.lost.loai_do or 'Khác' }}</span></div>
+                        <small class="text-muted d-block"><i class="fa-solid fa-location-dot me-1"></i>{{ item.lost.noi_mat or 'Chưa rõ' }}</small>
+                        <small class="text-muted d-block"><i class="fa-solid fa-calendar me-1"></i>{{ item.lost.ngay_mat or 'Chưa rõ' }}</small>
+                    </div>
 
-                                <!-- THÔNG TIN THANG ĐIỂM & NÚT HÀNH ĐỘNG -->
-                                <div class="col-md-2 text-center border-start pt-3 pt-md-0">
-                                    <div class="p-2 bg-light rounded border mb-3">
-                                        <small class="fw-bold d-block mb-1 text-secondary">Chi tiết điểm:</small>
-                                        <small class="d-block text-start">🖼️ Ảnh: <b>{{ item.details.hinh_anh }}/50</b></small>
-                                        <small class="d-block text-start">🏷️ Tên: <b>{{ item.details.ten_do }}/15</b></small>
-                                        <small class="d-block text-start">🎨 Màu: <b>{{ item.details.mau_sac }}/15</b></small>
-                                        <small class="d-block text-start">📍 Vị trí: <b>{{ item.details.vi_tri }}/10</b></small>
-                                        <small class="d-block text-start">📅 Ngày: <b>{{ item.details.ngay }}/10</b></small>
-                                    </div>
-                                    <a href="/teacher-check/{{ item.lost.id }}/{{ item.found.id }}" class="btn btn-outline-primary btn-sm w-100">
-                                        <i class="fa-solid fa-magnifying-glass me-1"></i> Xác minh
-                                    </a>
-                                </div>
-                            </div>
-                        </div>
+                    <!-- CỘT 2: ĐỒ NHẶT -->
+                    <div class="col-md-4 border-end item-box">
+                        {% if item.found.hinh_anh %}
+                            <img src="{{ item.found.hinh_anh }}" class="item-img mb-2" onclick="zoomImage('{{ item.found.hinh_anh }}', '{{ item.found.ten_do }}')" title="Bấm để phóng to">
+                        {% else %}
+                            <div class="item-img d-flex align-items-center justify-content-center bg-light text-muted mx-auto mb-2">Không có ảnh</div>
+                        {% endif %}
+                        <h6 class="fw-bold mb-1">{{ item.found.ten_do }}</h6>
+                        <div><span class="cat-badge">{{ item.found.loai_do or 'Khác' }}</span></div>
+                        <small class="text-muted d-block"><i class="fa-solid fa-location-dot me-1"></i>{{ item.found.noi_nhat or 'Chưa rõ' }}</small>
+                        <small class="text-muted d-block"><i class="fa-solid fa-calendar me-1"></i>{{ item.found.ngay_nhat or 'Chưa rõ' }}</small>
+                    </div>
+
+                    <!-- CỘT 3: ĐIỂM PHÙ HỢP -->
+                    <div class="col-md-4 score-box">
+                        <small class="text-uppercase fw-bold text-muted mb-1"><i class="fa-solid fa-bullseye me-1"></i>ĐIỂM PHÙ HỢP</small>
+                        <div class="score-number">{{ item.score }}/100</div>
+
+                        <table class="score-table">
+                            <tr><td>🖼️ Hình ảnh</td><td class="text-end fw-bold">{{ item.details.hinh_anh }}/50</td></tr>
+                            <tr><td>📝 Tên đồ</td><td class="text-end fw-bold">{{ item.details.ten_do }}/15</td></tr>
+                            <tr><td>🎨 Màu sắc</td><td class="text-end fw-bold">{{ item.details.mau_sac }}/15</td></tr>
+                            <tr><td>📍 Vị trí</td><td class="text-end fw-bold">{{ item.details.vi_tri }}/10</td></tr>
+                            <tr><td>📅 Ngày</td><td class="text-end fw-bold">{{ item.details.ngay }}/10</td></tr>
+                        </table>
+
+                        <div class="mb-2"><span class="badge bg-success-subtle text-success border border-success px-2 py-1">{{ item.ket_luan }}</span></div>
+
+                        <a href="/teacher-check/{{ item.lost.id }}/{{ item.found.id }}" class="btn btn-primary btn-sm rounded-pill px-3">
+                            <i class="fa-solid fa-user-check me-1"></i> Giáo viên kiểm tra
+                        </a>
                     </div>
                 </div>
-                {% endfor %}
             </div>
+            {% endfor %}
         {% else %}
-            <div class="alert alert-warning text-center">Chưa có cặp đồ nào phù hợp.</div>
+            <div class="alert alert-warning text-center">Chưa tìm thấy cặp đồ nào phù hợp.</div>
         {% endif %}
     </div>
 
-    <!-- MODAL PHÓNG TO ẢNH -->
-    <div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
+    <!-- MODAL PHÓNG TO ẢNH (ZOOM) -->
+    <div class="modal fade" id="zoomModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content">
-                <div class="modal-header">
-                    <h5 class="modal-title" id="imageModalTitle">Xem ảnh chi tiết</h5>
+                <div class="modal-header py-2">
+                    <h6 class="modal-title fw-bold" id="zoomTitle">Xem ảnh phóng to</h6>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <div class="modal-body text-center bg-dark">
-                    <img id="modalImageSrc" src="" class="img-fluid rounded" style="max-height: 80vh;">
+                <div class="modal-body text-center bg-dark p-2">
+                    <img id="zoomImgSrc" src="" class="img-fluid rounded" style="max-height: 80vh;">
                 </div>
             </div>
         </div>
@@ -125,11 +134,10 @@
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script>
-        function showModalImage(src, title) {
-            document.getElementById('modalImageSrc').src = src;
-            document.getElementById('imageModalTitle').innerText = title;
-            var myModal = new bootstrap.Modal(document.getElementById('imageModal'));
-            myModal.show();
+        function zoomImage(src, title) {
+            document.getElementById('zoomImgSrc').src = src;
+            document.getElementById('zoomTitle').innerText = title;
+            new bootstrap.Modal(document.getElementById('zoomModal')).show();
         }
     </script>
 </body>
