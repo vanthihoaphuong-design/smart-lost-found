@@ -2,134 +2,45 @@
 
 {% block content %}
 <style>
-    .match-container {
-        max-width: 1200px;
-        margin: 0 auto;
-        padding: 20px 15px;
-    }
-    .match-header {
-        text-align: center;
-        margin-bottom: 25px;
-    }
-    .match-header h2 {
-        color: #0d6efd;
-        font-weight: 700;
-        margin-bottom: 15px;
-    }
-    .filter-box {
-        max-width: 450px;
-        margin: 0 auto 30px auto;
-    }
-    .match-card {
-        background: #ffffff;
-        border-radius: 12px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.06);
-        border: 1px solid #e2e8f0;
-        margin-bottom: 20px;
+    .match-container { max-width: 1200px; margin: 0 auto; padding: 20px 15px; }
+    .match-header { text-align: center; margin-bottom: 25px; }
+    .match-header h2 { color: #0d6efd; font-weight: 700; margin-bottom: 15px; }
+    .filter-box { max-width: 450px; margin: 0 auto 30px auto; }
+    .match-card { background: #ffffff; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.06); border: 1px solid #e2e8f0; margin-bottom: 20px; overflow: hidden; }
+    .item-col { padding: 20px; text-align: center; }
+    .item-col-lost { background-color: #fffafaf5; border-right: 1px dashed #f8d7da; }
+    .item-col-found { background-color: #f6fff8f5; border-right: 1px solid #e2e8f0; }
+    .score-col { background-color: #f8fafc; padding: 20px; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+    .item-img-box { position: relative; display: inline-block; cursor: zoom-in; }
+    .item-img { width: 110px; height: 110px; object-fit: cover; border-radius: 8px; border: 1px solid #cbd5e1; margin-bottom: 8px; background-color: #f1f5f9; transition: transform 0.2s ease; }
+    .item-img-box:hover .item-img { transform: scale(1.05); }
+    .zoom-badge { position: absolute; bottom: 12px; right: 4px; background: rgba(0,0,0,0.65); color: white; font-size: 10px; padding: 2px 6px; border-radius: 4px; pointer-events: none; }
+    .no-img-placeholder { width: 110px; height: 110px; border-radius: 8px; border: 1px dashed #94a3b8; background-color: #f1f5f9; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #64748b; font-size: 0.75rem; margin: 0 auto 8px auto; }
+    .item-title { font-weight: 700; font-size: 1.05rem; color: #1e293b; margin-bottom: 4px; }
+    .score-number { font-size: 2.2rem; font-weight: 800; color: #0d6efd; line-height: 1; margin: 6px 0; }
+    .score-details { font-size: 0.82rem; width: 100%; max-width: 190px; margin: 8px 0; }
+    .score-row { display: flex; justify-content: space-between; padding: 2px 0; }
+    .pagination-container { display: flex; justify-content: center; margin: 30px 0; }
+
+    /* Khung Viewer Zoom Ảnh */
+    .zoom-viewport {
         overflow: hidden;
-    }
-    .item-col {
-        padding: 20px;
-        text-align: center;
-    }
-    .item-col-lost {
-        background-color: #fffafaf5;
-        border-right: 1px dashed #f8d7da;
-    }
-    .item-col-found {
-        background-color: #f6fff8f5;
-        border-right: 1px solid #e2e8f0;
-    }
-    .score-col {
-        background-color: #f8fafc;
-        padding: 20px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-    }
-    .item-img-box {
         position: relative;
-        display: inline-block;
-        cursor: pointer;
-    }
-    .item-img {
-        width: 110px;
-        height: 110px;
-        object-fit: cover;
+        cursor: grab;
+        background-color: #000;
         border-radius: 8px;
-        border: 1px solid #cbd5e1;
-        margin-bottom: 8px;
-        background-color: #f1f5f9;
-        transition: transform 0.2s ease;
-    }
-    .item-img-box:hover .item-img {
-        transform: scale(1.05);
-    }
-    .zoom-badge {
-        position: absolute;
-        bottom: 12px;
-        right: 4px;
-        background: rgba(0,0,0,0.6);
-        color: white;
-        font-size: 10px;
-        padding: 2px 5px;
-        border-radius: 4px;
-    }
-    .no-img-placeholder {
-        width: 110px;
-        height: 110px;
-        border-radius: 8px;
-        border: 1px dashed #94a3b8;
-        background-color: #f1f5f9;
+        min-height: 400px;
+        max-height: 75vh;
         display: flex;
-        flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: #64748b;
-        font-size: 0.75rem;
-        margin: 0 auto 8px auto;
     }
-    .item-title {
-        font-weight: 700;
-        font-size: 1.05rem;
-        color: #1e293b;
-        margin-bottom: 4px;
-    }
-    .score-number {
-        font-size: 2.2rem;
-        font-weight: 800;
-        color: #0d6efd;
-        line-height: 1;
-        margin: 6px 0;
-    }
-    .score-details {
-        font-size: 0.82rem;
-        width: 100%;
-        max-width: 190px;
-        margin: 8px 0;
-    }
-    .score-row {
-        display: flex;
-        justify-content: space-between;
-        padding: 2px 0;
-        border-bottom: 1px stroke #f1f5f9;
-    }
-    /* PHÂN TRANG GỌN ĐẸP */
-    .pagination-container {
-        display: flex;
-        justify-content: center;
-        margin: 30px 0;
-    }
-    .pagination .page-link {
-        color: #0d6efd;
-        border-radius: 6px;
-        margin: 0 2px;
-        font-weight: 500;
-    }
-    .pagination .page-item.active .page-link {
-        background-color: #0d6efd;
-        border-color: #0d6efd;
+    .zoom-viewport:active { cursor: grabbing; }
+    .zoom-viewport img {
+        transition: transform 0.1s ease-out;
+        max-width: 100%;
+        max-height: 75vh;
+        user-select: none;
     }
 </style>
 
@@ -159,14 +70,13 @@
                     <span class="badge bg-danger mb-2">ĐỒ BỊ MẤT</span>
                     <div>
                         {% if m.lost.has_image %}
-                        <div class="item-img-box" onclick="zoomImage('{{ m.lost.hinh_anh }}', '{{ m.lost.ten_do }}')">
+                        <div class="item-img-box" onclick="openInteractiveZoom('{{ m.lost.hinh_anh }}', '{{ m.lost.ten_do }}')">
                             <img src="{{ m.lost.hinh_anh }}" class="item-img" alt="Lost" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
                             <span class="zoom-badge">🔍 Zoom</span>
                         </div>
                         {% else %}
                         <div class="no-img-placeholder">
-                            <span>📷</span>
-                            <span>Chưa có ảnh</span>
+                            <span>📷</span><span>Chưa có ảnh</span>
                         </div>
                         {% endif %}
                     </div>
@@ -180,14 +90,13 @@
                     <span class="badge bg-success mb-2">ĐỒ NHẶT ĐƯỢC</span>
                     <div>
                         {% if m.found.has_image %}
-                        <div class="item-img-box" onclick="zoomImage('{{ m.found.hinh_anh }}', '{{ m.found.ten_do }}')">
+                        <div class="item-img-box" onclick="openInteractiveZoom('{{ m.found.hinh_anh }}', '{{ m.found.ten_do }}')">
                             <img src="{{ m.found.hinh_anh }}" class="item-img" alt="Found" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
                             <span class="zoom-badge">🔍 Zoom</span>
                         </div>
                         {% else %}
                         <div class="no-img-placeholder">
-                            <span>📷</span>
-                            <span>Chưa có ảnh</span>
+                            <span>📷</span><span>Chưa có ảnh</span>
                         </div>
                         {% endif %}
                     </div>
@@ -218,36 +127,22 @@
         </div>
         {% endfor %}
 
-        <!-- PHÂN TRANG THÔNG MINH GỌN ĐẸP -->
+        <!-- PHÂN TRANG -->
         {% if total_pages > 1 %}
         <div class="pagination-container">
             <ul class="pagination pagination-sm shadow-sm">
-                <li class="page-item {% if page == 1 %}disabled{% endif %}">
-                    <a class="page-link" href="/match?page=1&category={{ selected_category }}">Đầu</a>
-                </li>
-                <li class="page-item {% if page == 1 %}disabled{% endif %}">
-                    <a class="page-link" href="/match?page={{ page - 1 }}&category={{ selected_category }}">«</a>
-                </li>
-
+                <li class="page-item {% if page == 1 %}disabled{% endif %}"><a class="page-link" href="/match?page=1&category={{ selected_category }}">Đầu</a></li>
+                <li class="page-item {% if page == 1 %}disabled{% endif %}"><a class="page-link" href="/match?page={{ page - 1 }}&category={{ selected_category }}">«</a></li>
                 {% set start_p = page - 2 if page - 2 > 0 else 1 %}
                 {% set end_p = page + 2 if page + 2 <= total_pages else total_pages %}
-
                 {% for p in range(start_p, end_p + 1) %}
-                <li class="page-item {% if p == page %}active{% endif %}">
-                    <a class="page-link" href="/match?page={{ p }}&category={{ selected_category }}">{{ p }}</a>
-                </li>
+                <li class="page-item {% if p == page %}active{% endif %}"><a class="page-link" href="/match?page={{ p }}&category={{ selected_category }}">{{ p }}</a></li>
                 {% endfor %}
-
-                <li class="page-item {% if page == total_pages %}disabled{% endif %}">
-                    <a class="page-link" href="/match?page={{ page + 1 }}&category={{ selected_category }}">»</a>
-                </li>
-                <li class="page-item {% if page == total_pages %}disabled{% endif %}">
-                    <a class="page-link" href="/match?page={{ total_pages }}&category={{ selected_category }}">Cuối ({{ total_pages }})</a>
-                </li>
+                <li class="page-item {% if page == total_pages %}disabled{% endif %}"><a class="page-link" href="/match?page={{ page + 1 }}&category={{ selected_category }}">»</a></li>
+                <li class="page-item {% if page == total_pages %}disabled{% endif %}"><a class="page-link" href="/match?page={{ total_pages }}&category={{ selected_category }}">Cuối ({{ total_pages }})</a></li>
             </ul>
         </div>
         {% endif %}
-
     {% else %}
         <div class="alert alert-info text-center my-5 p-4 rounded-3 shadow-sm">
             <h5>Chưa tìm thấy cặp đồ vật nào phù hợp.</h5>
@@ -255,27 +150,97 @@
     {% endif %}
 </div>
 
-<!-- MODAL ZOOM ẢNH TẠI TRANG MATCH -->
-<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
+<!-- MODAL PHÓNG TO THU NHỎ KÈM CON LĂN CHUỘT -->
+<div class="modal fade" id="zoomInteractiveModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content bg-dark">
-            <div class="modal-header border-0 text-white">
-                <h5 class="modal-title" id="zoomTitle">Xem ảnh chi tiết</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+        <div class="modal-content bg-dark text-white">
+            <div class="modal-header border-secondary py-2">
+                <h6 class="modal-title" id="zoomModalTitle">Chi tiết ảnh</h6>
+                <div class="ms-auto d-flex gap-2 align-items-center">
+                    <button class="btn btn-sm btn-outline-light" onclick="adjustZoom(0.2)">➕ Phóng to</button>
+                    <button class="btn btn-sm btn-outline-light" onclick="adjustZoom(-0.2)">➖ Thu nhỏ</button>
+                    <button class="btn btn-sm btn-outline-warning" onclick="resetZoom()">🔄 Đặt lại</button>
+                    <button type="button" class="btn-close btn-close-white ms-2" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
             </div>
-            <div class="modal-body text-center p-2">
-                <img id="zoomImg" src="" class="img-fluid rounded" style="max-height: 80vh; object-fit: contain;">
+            <div class="modal-body p-0">
+                <div class="zoom-viewport" id="zoomViewport">
+                    <img id="zoomTargetImg" src="" alt="Zoom Image">
+                </div>
+            </div>
+            <div class="modal-footer border-secondary py-1 justify-content-center text-muted small">
+                💡 💡 Cuộn con lăn chuột để Phóng to/Thu nhỏ | Bấm giữ chuột trái & Kéo để di chuyển góc xem
             </div>
         </div>
     </div>
 </div>
 
 <script>
-function zoomImage(src, title) {
-    document.getElementById('zoomImg').src = src;
-    document.getElementById('zoomTitle').innerText = title;
-    var myModal = new bootstrap.Modal(document.getElementById('imageZoomModal'));
+let currentScale = 1;
+let pointX = 0, pointY = 0;
+let startX = 0, startY = 0;
+let isPanning = false;
+
+const zoomImg = document.getElementById('zoomTargetImg');
+const zoomViewport = document.getElementById('zoomViewport');
+
+function updateTransform() {
+    zoomImg.style.transform = `translate(${pointX}px, ${pointY}px) scale(${currentScale})`;
+}
+
+function openInteractiveZoom(src, title) {
+    document.getElementById('zoomModalTitle').innerText = title;
+    zoomImg.src = src;
+    resetZoom();
+    var myModal = new bootstrap.Modal(document.getElementById('zoomInteractiveModal'));
     myModal.show();
 }
+
+function adjustZoom(delta) {
+    currentScale = Math.min(Math.max(0.5, currentScale + delta), 5);
+    updateTransform();
+}
+
+function resetZoom() {
+    currentScale = 1;
+    pointX = 0;
+    pointY = 0;
+    updateTransform();
+}
+
+// Bắt sự kiện cuộn chuột
+zoomViewport.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const xs = (e.clientX - pointX) / currentScale;
+    const ys = (e.clientY - pointY) / currentScale;
+    const delta = (e.wheelDelta ? e.wheelDelta : -e.deltaY);
+
+    if (delta > 0) {
+        currentScale = Math.min(currentScale * 1.15, 5);
+    } else {
+        currentScale = Math.max(currentScale / 1.15, 0.5);
+    }
+    updateTransform();
+}, { passive: false });
+
+// Bắt sự kiện kéo thả chuột trái
+zoomViewport.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    startX = e.clientX - pointX;
+    startY = e.clientY - pointY;
+    isPanning = true;
+});
+
+window.addEventListener('mousemove', function(e) {
+    if (!isPanning) return;
+    e.preventDefault();
+    pointX = e.clientX - startX;
+    pointY = e.clientY - startY;
+    updateTransform();
+});
+
+window.addEventListener('mouseup', function() {
+    isPanning = false;
+});
 </script>
 {% endblock %}
