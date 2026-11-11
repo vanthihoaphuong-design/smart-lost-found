@@ -655,12 +655,10 @@ def found_return(id):
 
 @app.route("/match")
 def match_items():
-    import heapq
-
     global FINGERPRINT_CACHE
     FINGERPRINT_CACHE.clear()
 
-    matches_heap = []
+    matches_list = []
     item_limit = 50
 
     try:
@@ -765,15 +763,14 @@ def match_items():
                     "ngay": ngay_score
                 }
 
-                heapq.heappush(matches_heap, (score, int(lost.id), int(found.id), result))
+                matches_list.append(result)
 
             except Exception as err:
                 print(f"Bỏ qua cặp bài lỗi: {err}")
 
-    matches = [entry[3] for entry in sorted(matches_heap, reverse=True)]
-    del matches_heap, lost_items, found_items
+    matches_list.sort(key=lambda x: x["score"], reverse=True)
     gc.collect()
-    return render_template("match.html", matches=matches)
+    return render_template("match.html", matches=matches_list)
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
 def teacher_check(lost_id, found_id):
