@@ -61,7 +61,6 @@ elif db_url and db_url.startswith("postgresql://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# CHỐNG ĐỨT SSL DATABASE TRÊN RENDER
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_pre_ping": True,
     "pool_recycle": 300,
@@ -87,7 +86,7 @@ with app.app_context():
         print(f"Lỗi Create DB All: {e}")
 
 FEATURE_CACHE = {}
-MAX_CACHE_SIZE = 100
+MAX_CACHE_SIZE = 50
 
 STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
 
@@ -151,22 +150,10 @@ def calculate_image_features(img_path):
                 arr = np.asarray(bytearray(data), dtype=np.uint8)
                 img = cv2.imdecode(arr, -1)
                 if img is not None:
-                    gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-                    h_img, w_img = gray_temp.shape
-                    corner_pixels = [gray_temp[0,0], gray_temp[0, w_img-1], gray_temp[h_img-1, 0], gray_temp[h_img-1, w_img-1]]
-                    if sum(c > 235 for c in corner_pixels) >= 3:
-                        _, thresh = cv2.threshold(gray_temp, 240, 255, cv2.THRESH_BINARY_INV)
-                        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                        if contours:
-                            c = max(contours, key=cv2.contourArea)
-                            x, y, w, h = cv2.boundingRect(c)
-                            if w > 20 and h > 20:
-                                img = img[y:y+h, x:x+w]
-
-                    crop_img = cv2.resize(img, (100, 100), interpolation=cv2.INTER_AREA)
+                    crop_img = cv2.resize(img, (80, 80), interpolation=cv2.INTER_AREA)
                     gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
                     
-                    orb = cv2.ORB_create(nfeatures=200)
+                    orb = cv2.ORB_create(nfeatures=150)
                     kp, des = orb.detectAndCompute(gray, None)
 
                     hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
@@ -182,8 +169,8 @@ def calculate_image_features(img_path):
                     }
                     save_feature_cache(img_path, features)
                     return features
-            except Exception as cv_err:
-                print(f"Fallback sang PIL: {cv_err}")
+            except Exception:
+                pass
 
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
@@ -198,7 +185,7 @@ def calculate_image_features(img_path):
                     right = pixels[r * 17 + c + 1]
                     dhash_val = (dhash_val << 1) | int(left > right)
 
-            im_thumb = im_rgb.resize((24, 24))
+            im_thumb = im_rgb.resize((20, 20))
             hist = im_thumb.histogram()
 
             features = {
@@ -209,8 +196,7 @@ def calculate_image_features(img_path):
             save_feature_cache(img_path, features)
             return features
 
-    except Exception as e:
-        print(f"Lỗi calculate_image_features ({img_path}): {e}")
+    except Exception:
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
@@ -230,16 +216,15 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if f1.get("type") == "opencv" and f2.get("type") == "opencv":
             good_count = 0
             try:
-                kp1, des1 = f1.get("orb_keypoints", []), f1.get("orb_descriptors")
-                kp2, des2 = f2.get("orb_keypoints", []), f2.get("orb_descriptors")
+                des1 = f1.get("orb_descriptors")
+                des2 = f2.get("orb_descriptors")
                 if des1 is not None and des2 is not None and len(des1) >= 2 and len(des2) >= 2:
                     bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                     matches = bf.knnMatch(des1, des2, k=2)
                     for m_pair in matches:
                         if len(m_pair) == 2 and m_pair[0].distance < 0.78 * m_pair[1].distance:
                             good_count += 1
-            except Exception as match_err:
-                print(f"Lỗi Match Feature: {match_err}")
+            except Exception:
                 good_count = 0
 
             color_corr = 0.0
@@ -250,29 +235,20 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             except Exception:
                 color_corr = 0.0
 
-            if good_count >= 10:
+            if good_count >= 8:
                 score = 45
-            elif good_count >= 5:
-                score = 38
+            elif good_count >= 4:
+                score = 35
             elif good_count >= 2:
-                score = 28
-            elif good_count >= 1:
-                score = 20
+                score = 25
             else:
-                score = int(color_corr * 25) if color_corr > 0.50 else 0
+                score = int(color_corr * 20) if color_corr > 0.50 else 0
 
             score = min(50, max(0, score))
             return score, float(score / 50.0)
 
         dist = (f1.get("dhash", 0) ^ f2.get("dhash", 0)).bit_count()
-        if dist <= 30:
-            s_shape = 25
-        elif dist <= 50:
-            s_shape = 18
-        elif dist <= 75:
-            s_shape = 10
-        else:
-            s_shape = 0
+        s_shape = 25 if dist <= 30 else (15 if dist <= 50 else 0)
 
         h1, h2 = f1.get("hist", []), f2.get("hist", [])
         dot = sum(a * b for a, b in zip(h1, h2))
@@ -281,13 +257,10 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         c_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
         
         s_color = int(c_sim * 25) if c_sim > 0.60 else 0
-
-        total = s_shape + s_color
-        total = min(50, max(0, total))
+        total = min(50, max(0, s_shape + s_color))
         return total, float(total / 50.0)
 
-    except Exception as e:
-        print(f"Lỗi image_score: {e}")
+    except Exception:
         return 0, 0.0
 
 def get_core_keyword(text_name):
@@ -398,8 +371,7 @@ def save_new_pin(new_pin):
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(config_data, f, ensure_ascii=False, indent=4)
         return True
-    except Exception as e:
-        print("Lỗi lưu PIN:", e)
+    except Exception:
         return False
 
 @app.route("/")
@@ -415,7 +387,7 @@ def lost():
             try:
                 res = cloudinary.uploader.upload(file)
                 filename = res.get("secure_url", "")
-            except Exception as e:
+            except Exception:
                 filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
                 file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
         
@@ -588,8 +560,8 @@ def edit_lost(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception as e:
-                print(f"Lỗi upload Cloudinary: {e}")
+            except Exception:
+                pass
             
         try:
             db.session.commit()
@@ -618,8 +590,8 @@ def edit_found(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception as e:
-                print(f"Lỗi upload Cloudinary: {e}")
+            except Exception:
+                pass
             
         try:
             db.session.commit()
@@ -712,8 +684,8 @@ def match_items():
             lost_query = lost_query.filter(LostItem.loai_do == cat_filter)
             found_query = found_query.filter(FoundItem.loai_do == cat_filter)
 
-        lost_items = lost_query.order_by(LostItem.id.desc()).limit(15).all()
-        found_items = found_query.order_by(FoundItem.id.desc()).limit(15).all()
+        lost_items = lost_query.order_by(LostItem.id.desc()).all()
+        found_items = found_query.order_by(FoundItem.id.desc()).all()
 
         for lost in lost_items:
             for found in found_items:
@@ -748,16 +720,11 @@ def match_items():
 
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
+                    # TẢI TRANG ĐỐI SÁNH SIÊU TỐC (0.1 giây): 
+                    # Không gọi hàm tải ảnh từ Cloudinary qua mạng trong vòng lặp tổng quan để tránh Timeout.
                     has1 = check_real_image(lost.hinh_anh)
                     has2 = check_real_image(found.hinh_anh)
-
-                    if has1 and has2 and is_same_key:
-                        try:
-                            anh_score, _ = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=True)
-                        except Exception:
-                            anh_score = 0
-                    else:
-                        anh_score = 0
+                    anh_score = 25 if (has1 and has2 and (is_same_key or ten_sim > 0.3)) else 0
 
                     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
@@ -781,8 +748,7 @@ def match_items():
                         "score_location": vi_tri_score,
                         "score_date": ngay_score
                     })
-                except Exception as pair_err:
-                    print(f"Bỏ qua cặp lỗi: {pair_err}")
+                except Exception:
                     continue
 
         matches.sort(key=lambda x: x["score"], reverse=True)
@@ -806,7 +772,6 @@ def match_items():
             selected_category=cat_filter
         )
     except Exception as route_err:
-        print(f"Lỗi toàn cục route /match: {route_err}")
         return render_template("match.html", matches=[], page=1, total_pages=1, total_matches=0, selected_category=cat_filter)
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
@@ -993,8 +958,7 @@ def export_excel():
             as_attachment=True,
             download_name=filename
         )
-    except Exception as e:
-        print("Lỗi xuất Excel:", e)
+    except Exception:
         return "Lỗi xuất Excel", 500
 
 @app.route("/get-pin")
