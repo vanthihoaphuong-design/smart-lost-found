@@ -19,6 +19,20 @@
         .score-number { font-size: 2.2rem; font-weight: 800; color: #0d6efd; line-height: 1; margin-bottom: 12px; }
         .score-table { font-size: 0.85rem; width: 100%; max-width: 180px; margin-bottom: 12px; }
         .score-table td { padding: 2px 0; }
+        
+        /* Khung xem ảnh Zoom */
+        .zoom-wrapper {
+            overflow: hidden;
+            position: relative;
+            cursor: grab;
+            background-color: #1a1a1a;
+            border-radius: 8px;
+            min-height: 350px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .zoom-wrapper:active { cursor: grabbing; }
     </style>
 </head>
 <body>
@@ -67,7 +81,7 @@
                     <!-- CỘT 1: ĐỒ MẤT -->
                     <div class="col-md-4 border-end item-box">
                         {% if item.lost.hinh_anh %}
-                            <img src="{{ item.lost.hinh_anh }}" class="item-img mb-2" onclick="zoomImage('{{ item.lost.hinh_anh }}', '{{ item.lost.ten_do }}')" title="Bấm để phóng to">
+                            <img src="{{ item.lost.hinh_anh }}" class="item-img mb-2" onclick="zoomImage('{{ item.lost.hinh_anh }}', '{{ item.lost.ten_do }}')" title="Bấm để phóng to / thu nhỏ">
                         {% else %}
                             <div class="item-img d-flex align-items-center justify-content-center bg-light text-muted mx-auto mb-2">Không có ảnh</div>
                         {% endif %}
@@ -80,7 +94,7 @@
                     <!-- CỘT 2: ĐỒ NHẶT -->
                     <div class="col-md-4 border-end item-box">
                         {% if item.found.hinh_anh %}
-                            <img src="{{ item.found.hinh_anh }}" class="item-img mb-2" onclick="zoomImage('{{ item.found.hinh_anh }}', '{{ item.found.ten_do }}')" title="Bấm để phóng to">
+                            <img src="{{ item.found.hinh_anh }}" class="item-img mb-2" onclick="zoomImage('{{ item.found.hinh_anh }}', '{{ item.found.ten_do }}')" title="Bấm để phóng to / thu nhỏ">
                         {% else %}
                             <div class="item-img d-flex align-items-center justify-content-center bg-light text-muted mx-auto mb-2">Không có ảnh</div>
                         {% endif %}
@@ -117,27 +131,60 @@
         {% endif %}
     </div>
 
-    <!-- MODAL PHÓNG TO ẢNH (ZOOM) -->
+    <!-- MODAL PHÓNG TO / THU NHỎ ẢNH -->
     <div class="modal fade" id="zoomModal" tabindex="-1" aria-hidden="true">
         <div class="modal-dialog modal-dialog-centered modal-lg">
             <div class="modal-content">
                 <div class="modal-header py-2">
                     <h6 class="modal-title fw-bold" id="zoomTitle">Xem ảnh phóng to</h6>
+                    <div class="ms-auto me-2">
+                        <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnZoomIn" title="Phóng to"><i class="fa-solid fa-magnifying-glass-plus"></i></button>
+                        <button type="button" class="btn btn-sm btn-outline-secondary me-1" id="btnZoomOut" title="Thu nhỏ"><i class="fa-solid fa-magnifying-glass-minus"></i></button>
+                        <button type="button" class="btn btn-sm btn-outline-danger me-2" id="btnReset" title="Đặt lại"><i class="fa-solid fa-rotate-left"></i></button>
+                    </div>
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
                 </div>
-                <div class="modal-body text-center bg-dark p-2">
-                    <img id="zoomImgSrc" src="" class="img-fluid rounded" style="max-height: 80vh;">
+                <div class="modal-body p-2 bg-dark">
+                    <div class="zoom-wrapper">
+                        <img id="zoomImgSrc" src="" class="img-fluid rounded" style="max-height: 75vh;">
+                    </div>
+                    <div class="text-center text-light mt-1"><small>💡 Dùng con lăn chuột hoặc kéo thả để phóng to / di chuyển ảnh</small></div>
                 </div>
             </div>
         </div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@panzoom/panzoom@4.5.1/dist/panzoom.min.js"></script>
+    
     <script>
+        let panzoomInstance = null;
+
         function zoomImage(src, title) {
-            document.getElementById('zoomImgSrc').src = src;
+            const imgElem = document.getElementById('zoomImgSrc');
+            imgElem.src = src;
             document.getElementById('zoomTitle').innerText = title;
-            new bootstrap.Modal(document.getElementById('zoomModal')).show();
+
+            const modalElem = document.getElementById('zoomModal');
+            const myModal = new bootstrap.Modal(modalElem);
+            myModal.show();
+
+            modalElem.addEventListener('shown.bs.modal', function () {
+                if (panzoomInstance) {
+                    panzoomInstance.destroy();
+                }
+                panzoomInstance = Panzoom(imgElem, {
+                    maxScale: 5,
+                    minScale: 0.8,
+                    contain: 'outside'
+                });
+
+                imgElem.parentElement.addEventListener('wheel', panzoomInstance.zoomWithWheel);
+
+                document.getElementById('btnZoomIn').onclick = panzoomInstance.zoomIn;
+                document.getElementById('btnZoomOut').onclick = panzoomInstance.zoomOut;
+                document.getElementById('btnReset').onclick = panzoomInstance.reset;
+            }, { once: true });
         }
     </script>
 </body>
