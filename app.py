@@ -17,6 +17,7 @@ import cloudinary.uploader
 
 from PIL import Image, ImageOps, ImageFile
 
+# Vô hiệu hóa cảnh báo SSL và cho phép PIL đọc ảnh truncated từ Cloudinary
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
@@ -61,6 +62,7 @@ elif db_url and db_url.startswith("postgresql://"):
 app.config["SQLALCHEMY_DATABASE_URI"] = db_url
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
+# BẢO VỆ KẾT NỐI DATABASE SSL TỰ KHÔI PHỤC
 app.config["SQLALCHEMY_ENGINE_OPTIONS"] = {
     "pool_pre_ping": True,
     "pool_recycle": 300,
@@ -86,7 +88,7 @@ with app.app_context():
         print(f"Lỗi Create DB All: {e}")
 
 FEATURE_CACHE = {}
-MAX_CACHE_SIZE = 50
+MAX_CACHE_SIZE = 100
 
 STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
 
@@ -145,15 +147,28 @@ def calculate_image_features(img_path):
         if not data:
             return None
 
+        # 1. Tối ưu xử lý bằng OpenCV
         if HAS_OPENCV:
             try:
                 arr = np.asarray(bytearray(data), dtype=np.uint8)
                 img = cv2.imdecode(arr, -1)
                 if img is not None:
-                    crop_img = cv2.resize(img, (80, 80), interpolation=cv2.INTER_AREA)
+                    gray_temp = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                    h_img, w_img = gray_temp.shape
+                    corner_pixels = [gray_temp[0,0], gray_temp[0, w_img-1], gray_temp[h_img-1, 0], gray_temp[h_img-1, w_img-1]]
+                    if sum(c > 235 for c in corner_pixels) >= 3:
+                        _, thresh = cv2.threshold(gray_temp, 240, 255, cv2.THRESH_BINARY_INV)
+                        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                        if contours:
+                            c = max(contours, key=cv2.contourArea)
+                            x, y, w, h = cv2.boundingRect(c)
+                            if w > 20 and h > 20:
+                                img = img[y:y+h, x:x+w]
+
+                    crop_img = cv2.resize(img, (100, 100), interpolation=cv2.INTER_AREA)
                     gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
                     
-                    orb = cv2.ORB_create(nfeatures=150)
+                    orb = cv2.ORB_create(nfeatures=200)
                     kp, des = orb.detectAndCompute(gray, None)
 
                     hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
@@ -169,9 +184,10 @@ def calculate_image_features(img_path):
                     }
                     save_feature_cache(img_path, features)
                     return features
-            except Exception:
-                pass
+            except Exception as cv_err:
+                print(f"Fallback sang PIL: {cv_err}")
 
+        # 2. Xử lý dự phòng bằng PIL
         with Image.open(io.BytesIO(data)) as im:
             im_rgb = im.convert("RGB")
             im_gray = im_rgb.convert("L")
@@ -185,7 +201,7 @@ def calculate_image_features(img_path):
                     right = pixels[r * 17 + c + 1]
                     dhash_val = (dhash_val << 1) | int(left > right)
 
-            im_thumb = im_rgb.resize((20, 20))
+            im_thumb = im_rgb.resize((24, 24))
             hist = im_thumb.histogram()
 
             features = {
@@ -196,7 +212,8 @@ def calculate_image_features(img_path):
             save_feature_cache(img_path, features)
             return features
 
-    except Exception:
+    except Exception as e:
+        print(f"Lỗi calculate_image_features ({img_path}): {e}")
         return None
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
@@ -216,15 +233,15 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if f1.get("type") == "opencv" and f2.get("type") == "opencv":
             good_count = 0
             try:
-                des1 = f1.get("orb_descriptors")
-                des2 = f2.get("orb_descriptors")
+                kp1, des1 = f1.get("orb_keypoints", []), f1.get("orb_descriptors")
+                kp2, des2 = f2.get("orb_keypoints", []), f2.get("orb_descriptors")
                 if des1 is not None and des2 is not None and len(des1) >= 2 and len(des2) >= 2:
                     bf = cv2.BFMatcher(cv2.NORM_HAMMING)
                     matches = bf.knnMatch(des1, des2, k=2)
                     for m_pair in matches:
                         if len(m_pair) == 2 and m_pair[0].distance < 0.78 * m_pair[1].distance:
                             good_count += 1
-            except Exception:
+            except Exception as match_err:
                 good_count = 0
 
             color_corr = 0.0
@@ -235,20 +252,29 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             except Exception:
                 color_corr = 0.0
 
-            if good_count >= 8:
+            if good_count >= 10:
                 score = 45
-            elif good_count >= 4:
-                score = 35
+            elif good_count >= 5:
+                score = 38
             elif good_count >= 2:
-                score = 25
+                score = 28
+            elif good_count >= 1:
+                score = 20
             else:
-                score = int(color_corr * 20) if color_corr > 0.50 else 0
+                score = int(color_corr * 25) if color_corr > 0.50 else 0
 
             score = min(50, max(0, score))
             return score, float(score / 50.0)
 
         dist = (f1.get("dhash", 0) ^ f2.get("dhash", 0)).bit_count()
-        s_shape = 25 if dist <= 30 else (15 if dist <= 50 else 0)
+        if dist <= 30:
+            s_shape = 25
+        elif dist <= 50:
+            s_shape = 18
+        elif dist <= 75:
+            s_shape = 10
+        else:
+            s_shape = 0
 
         h1, h2 = f1.get("hist", []), f2.get("hist", [])
         dot = sum(a * b for a, b in zip(h1, h2))
@@ -257,10 +283,13 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         c_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
         
         s_color = int(c_sim * 25) if c_sim > 0.60 else 0
-        total = min(50, max(0, s_shape + s_color))
+
+        total = s_shape + s_color
+        total = min(50, max(0, total))
         return total, float(total / 50.0)
 
-    except Exception:
+    except Exception as e:
+        print(f"Lỗi image_score: {e}")
         return 0, 0.0
 
 def get_core_keyword(text_name):
@@ -268,32 +297,33 @@ def get_core_keyword(text_name):
         return ""
     t = str(text_name).lower().strip()
     
+    # Từ điển từ khóa phân loại chính xác, tránh gộp chung lung tung
     synonyms_map = {
         "máy tính casio": ["casio", "fx580", "fx 580", "máy tính bỏ túi", "casio580"],
         "laptop": ["laptop", "macbook", "máy tính xách tay"],
         "chuột": ["chuột", "con chuột", "chuột máy tính", "mouse"],
-        "sách toán": ["sách toán", "toán", "math", "bài tập toán"],
-        "sách văn": ["sách văn", "ngữ văn", "văn học", "bài tập ngữ văn"],
+        "sách toán 10": ["sách toán 10", "toán 10"],
+        "sách toán 9": ["sách toán 9", "toán 9", "sách bài tập toán 9", "sbt toán 9"],
+        "sách văn": ["sách văn", "ngữ văn", "văn học"],
         "sách tiếng anh": ["sách anh", "tiếng anh", "english"],
-        "sách tin học": ["tin học", "tin 11", "tin 9", "tin 10"],
+        "sách tin học": ["tin học", "sách tin", "tin 11", "tin 9", "tin 8", "sách tin 8"],
+        "sách công nghệ": ["công nghệ", "sách công nghệ", "công nghệ 8"],
         "sách lý": ["vật lý", "lý"],
         "sách hóa": ["hóa học", "hóa"],
-        "bút": ["bút", "viết", "bút bi", "bút chì", "bút xóa"],
+        "bút bi": ["bút bi", "viết bi"],
+        "bút chì": ["bút chì", "bút chì kim"],
         "điện thoại": ["điện thoại", "phone", "iphone", "samsung"],
-        "balo": ["balo", "ba lô", "túi", "túi xách", "cặp"],
-        "ví": ["ví", "bóp", "ví tiền", "bóp tiền"],
-        "dây chuyền": ["dây chuyền", "vòng cổ"],
-        "nhẫn": ["nhẫn"],
+        "balo": ["balo", "ba lô"],
+        "cặp": ["cặp", "cặp sách"],
+        "ví": ["ví", "bóp", "ví tiền"],
+        "áo khoác": ["áo khoác", "áo gió", "áo ấm"],
         "nón": ["nón", "mũ", "nón kết"],
         "thẻ": ["thẻ", "căn cước", "cccd", "thẻ học sinh"],
-        "bình nước": ["bình nước", "bình giữ nhiệt"],
-        "sữa": ["sữa", "hộp sữa", "milo", "vinamilk", "th true milk"],
-        "sáo": ["sáo", "sáo trúc"],
-        "đèn": ["đèn", "đèn học", "đèn để bàn"]
+        "bình nước": ["bình nước", "bình giữ nhiệt"]
     }
 
     for core_key, words in synonyms_map.items():
-        if any(re.search(r'\b' + re.escape(w) + r'\b', t) for w in words):
+        if any(w in t for w in words):
             return core_key
             
     tokens = [w for w in t.split() if w not in STOP_WORDS_VN]
@@ -371,7 +401,8 @@ def save_new_pin(new_pin):
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(config_data, f, ensure_ascii=False, indent=4)
         return True
-    except Exception:
+    except Exception as e:
+        print("Lỗi lưu PIN:", e)
         return False
 
 @app.route("/")
@@ -387,7 +418,7 @@ def lost():
             try:
                 res = cloudinary.uploader.upload(file)
                 filename = res.get("secure_url", "")
-            except Exception:
+            except Exception as e:
                 filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
                 file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
         
@@ -560,8 +591,8 @@ def edit_lost(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
             
         try:
             db.session.commit()
@@ -590,8 +621,8 @@ def edit_found(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Lỗi upload Cloudinary: {e}")
             
         try:
             db.session.commit()
@@ -688,11 +719,11 @@ def match_items():
         found_items = found_query.order_by(FoundItem.id.desc()).all()
 
         for lost in lost_items:
-            # Gán cờ kiểm tra ảnh thực tế
             lost.has_image = check_real_image(lost.hinh_anh)
             for found in found_items:
                 found.has_image = check_real_image(found.hinh_anh)
                 try:
+                    # 1. Bỏ qua nếu khác loại đồ vật
                     if lost.loai_do and found.loai_do and str(lost.loai_do).strip().lower() != str(found.loai_do).strip().lower():
                         continue
 
@@ -723,16 +754,12 @@ def match_items():
 
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
 
-                    # Tính điểm ảnh chính xác
+                    # 2. TÍNH ĐIỂM ẢNH THỰC TẾ BẰNG THUẬT TOÁN MA TRẬN ẢNH OPENCV / PIL
                     if lost.has_image and found.has_image:
-                        if is_same_key and mau_score >= 10:
-                            anh_score = 45
-                        elif is_same_key:
-                            anh_score = 35
-                        elif ten_sim > 0.4:
-                            anh_score = 20
+                        if is_same_key or ten_sim >= 0.4:
+                            anh_score, _ = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
                         else:
-                            anh_score = 10
+                            anh_score = 0
                     else:
                         anh_score = 0
 
@@ -968,7 +995,8 @@ def export_excel():
             as_attachment=True,
             download_name=filename
         )
-    except Exception:
+    except Exception as e:
+        print("Lỗi xuất Excel:", e)
         return "Lỗi xuất Excel", 500
 
 @app.route("/get-pin")
