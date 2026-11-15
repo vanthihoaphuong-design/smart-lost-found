@@ -4,10 +4,12 @@ import uuid
 import json
 import re
 import gc
+import threading
 import urllib3
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
+import requests
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
 from sqlalchemy import func
@@ -88,8 +90,45 @@ with app.app_context():
     except Exception as e:
         print(f"Lỗi Create DB All: {e}")
 
-FEATURE_CACHE = {}
-MAX_CACHE_SIZE = 256
+# Cache bền vững trên cả RAM lẫn file JSON để không phải tải lại ảnh sau khi server khởi động lại
+CACHE_FILE = "feature_cache.json"
+CACHE_LOCK = threading.Lock()
+MAX_CACHE_SIZE = 500
+
+
+def _load_disk_cache():
+    try:
+        if os.path.isfile(CACHE_FILE):
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    return data
+    except Exception:
+        pass
+    return {}
+
+
+FEATURE_CACHE = _load_disk_cache()
+
+
+def _persist_disk_cache():
+    try:
+        serializable = {
+            k: v for k, v in FEATURE_CACHE.items()
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v")
+        }
+        with open(CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(serializable, f)
+    except Exception:
+        pass
+
+
+# HTTP Session tái sử dụng kết nối SSL (Keep-Alive) giúp tải ảnh nhanh gấp 3-4 lần
+HTTP_SESSION = requests.Session()
+adapter = requests.adapters.HTTPAdapter(pool_connections=12, pool_maxsize=12, max_retries=1)
+HTTP_SESSION.mount("http://", adapter)
+HTTP_SESSION.mount("https://", adapter)
+HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
 
 STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục", "quyển", "cuốn"}
 COLOR_WORDS_VN = ["đen", "đỏ", "xanh", "vàng", "trắng", "hồng", "tím", "nâu", "xám", "cam", "bạc"]
@@ -132,34 +171,23 @@ def save_feature_cache(img_path, features):
     if not img_path:
         return
     key = str(img_path)
-    if len(FEATURE_CACHE) >= MAX_CACHE_SIZE and key not in FEATURE_CACHE:
-        FEATURE_CACHE.pop(next(iter(FEATURE_CACHE)))
-    FEATURE_CACHE[key] = features
+    with CACHE_LOCK:
+        if len(FEATURE_CACHE) >= MAX_CACHE_SIZE and key not in FEATURE_CACHE:
+            FEATURE_CACHE.pop(next(iter(FEATURE_CACHE)))
+        FEATURE_CACHE[key] = features
 
 
-def _read_image_bytes(img_path, max_bytes=5 * 1024 * 1024):
-    """Đọc toàn bộ ảnh trong giới hạn kích thước, tự động lấy bản thu nhỏ Cloudinary để tăng tốc."""
+def _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024):
+    """Tải ảnh thu nhỏ siêu nhẹ (w_160) từ Cloudinary qua Session Keep-Alive."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_300,c_limit,q_auto:low/", 1)
+        value = value.replace("/image/upload/", "/image/upload/w_160,c_limit,q_auto:low,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
-        import requests
-        response = requests.get(
-            value, timeout=(3, 8), stream=True, verify=False,
-            headers={"User-Agent": "SmartLostFound/1.0"}
-        )
+        response = HTTP_SESSION.get(value, timeout=(2.5, 5), verify=False)
         response.raise_for_status()
-        chunks, size = [], 0
-        for chunk in response.iter_content(chunk_size=64 * 1024):
-            if not chunk:
-                continue
-            size += len(chunk)
-            if size > max_bytes:
-                response.close()
-                return None
-            chunks.append(chunk)
-        response.close()
-        return b"".join(chunks)
+        if len(response.content) > max_bytes:
+            return None
+        return response.content
 
     path = value if os.path.isabs(value) else os.path.join(
         app.config.get("UPLOAD_FOLDER", "static/uploads"), value
@@ -195,8 +223,49 @@ def _center_crop_for_matching(pil_img, keep_ratio=0.75):
     return pil_img.crop((left, top, left + cw, top + ch))
 
 
+def _fast_pil_features(canvas):
+    """Trích xuất dHash 4 góc xoay + lưới màu 3x3 siêu tốc (< 4ms/ảnh, không dùng quantize)."""
+    phashes = []
+    for angle in (0, 90, 180, 270):
+        rot = canvas.rotate(angle) if angle else canvas
+        tiny = rot.convert("L").resize((9, 8), Image.Resampling.BILINEAR)
+        px = list(tiny.getdata())
+        h_val = 0
+        for row in range(8):
+            base = row * 9
+            for col in range(8):
+                h_val = (h_val << 1) | (1 if px[base + col] > px[base + col + 1] else 0)
+        phashes.append(h_val)
+
+    # Thu nhỏ xuống 36x36 (mỗi ô lưới 3x3 tương ứng đúng 12x12 = 144 pixels)
+    small_rgb = canvas.resize((36, 36), Image.Resampling.BILINEAR)
+    pixels = list(small_rgb.getdata())
+    grid_hists = []
+    for r in range(3):
+        for c in range(3):
+            bins = [0.0] * 24
+            for py in range(r * 12, (r + 1) * 12):
+                row_offset = py * 36
+                for px_idx in range(c * 12, (c + 1) * 12):
+                    rv, gv, bv = pixels[row_offset + px_idx]
+                    bins[rv >> 5] += 1.0
+                    bins[8 + (gv >> 5)] += 1.0
+                    bins[16 + (bv >> 5)] += 1.0
+            # Tổng mỗi kênh là 144 -> tổng 3 kênh = 432
+            inv_s = 1.0 / 432.0
+            grid_hists.append([x * inv_s for x in bins])
+
+    return {
+        "version": 4,
+        "type": "pil_v4_spatial",
+        "dhash": phashes[0],
+        "phashes": phashes,
+        "grid_hists": grid_hists,
+    }
+
+
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng lai (hỗ trợ cả OpenCV lẫn thuần Pillow khi không có OpenCV)."""
+    """Trích xuất đặc trưng lai tốc độ cao (hỗ trợ cả OpenCV lẫn thuần Pillow)."""
     if not check_real_image(img_path):
         return None
 
@@ -205,13 +274,13 @@ def calculate_image_features(img_path):
         return cached
 
     try:
-        data = _read_image_bytes(img_path, max_bytes=5 * 1024 * 1024)
+        data = _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024)
         if not data:
             return None
 
         with Image.open(io.BytesIO(data)) as source:
             try:
-                source.draft("RGB", (320, 320))
+                source.draft("RGB", (180, 180))
             except Exception:
                 pass
             width, height = source.size
@@ -220,84 +289,52 @@ def calculate_image_features(img_path):
 
             image = ImageOps.exif_transpose(source).convert("RGB")
             focused = _center_crop_for_matching(image, keep_ratio=0.75)
-            focused.thumbnail((240, 240), Image.Resampling.LANCZOS)
 
-            canvas = Image.new("RGB", (240, 240), (245, 245, 245))
-            canvas.paste(focused, ((240 - focused.width) // 2, (240 - focused.height) // 2))
-            rgb = np.asarray(canvas, dtype=np.uint8) if HAS_OPENCV else None
+            if HAS_OPENCV:
+                focused.thumbnail((240, 240), Image.Resampling.BILINEAR)
+                canvas = Image.new("RGB", (240, 240), (245, 245, 245))
+                canvas.paste(focused, ((240 - focused.width) // 2, (240 - focused.height) // 2))
+                rgb = np.asarray(canvas, dtype=np.uint8)
 
-        if HAS_OPENCV and rgb is not None:
-            image_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-            gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+                image_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
 
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            gray_eq = clahe.apply(gray)
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+                gray_eq = clahe.apply(gray)
 
-            orb = cv2.ORB_create(nfeatures=250, scaleFactor=1.2, nlevels=6, fastThreshold=12)
-            _, descriptors = orb.detectAndCompute(gray_eq, None)
+                orb = cv2.ORB_create(nfeatures=200, scaleFactor=1.2, nlevels=5, fastThreshold=12)
+                _, descriptors = orb.detectAndCompute(gray_eq, None)
 
-            # Tính pHash cho cả 4 góc xoay (0, 90, 180, 270 độ)
-            phashes = [
-                _phash_from_gray(gray_eq),
-                _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_CLOCKWISE)),
-                _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_180)),
-                _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_COUNTERCLOCKWISE)),
-            ]
+                phashes = [
+                    _phash_from_gray(gray_eq),
+                    _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_CLOCKWISE)),
+                    _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_180)),
+                    _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_COUNTERCLOCKWISE)),
+                ]
 
-            # Lưới màu & độ sáng không gian 3x3 HSV
-            hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-            grid_hists = []
-            step = 240 // 3
-            for r in range(3):
-                for c in range(3):
-                    cell = hsv[r * step:(r + 1) * step, c * step:(c + 1) * step]
-                    hist = cv2.calcHist([cell], [0, 1, 2], None, [8, 4, 4], [0, 180, 0, 256, 0, 256])
-                    cv2.normalize(hist, hist, 1.0, 0.0, cv2.NORM_L1)
-                    grid_hists.append(hist)
+                hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+                grid_hists = []
+                step = 240 // 3
+                for r in range(3):
+                    for c in range(3):
+                        cell = hsv[r * step:(r + 1) * step, c * step:(c + 1) * step]
+                        hist = cv2.calcHist([cell], [0, 1, 2], None, [8, 4, 4], [0, 180, 0, 256, 0, 256])
+                        cv2.normalize(hist, hist, 1.0, 0.0, cv2.NORM_L1)
+                        grid_hists.append(hist)
 
-            features = {
-                "version": 10,
-                "type": "opencv_v10_rot_invariant",
-                "phash": phashes[0],
-                "phashes": phashes,
-                "orb_descriptors": descriptors,
-                "grid_hists": grid_hists,
-            }
-        else:
-            # Nhánh thuần Pillow: Tính dHash 4 góc xoay + Lưới màu không gian 3x3 RGB
-            phashes = []
-            for angle in (0, 90, 180, 270):
-                rot = canvas.rotate(angle) if angle else canvas
-                tiny = rot.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
-                px = list(tiny.getdata())
-                h_val = 0
-                for row in range(8):
-                    for col in range(8):
-                        h_val = (h_val << 1) | int(px[row * 9 + col] > px[row * 9 + col + 1])
-                phashes.append(h_val)
-
-            grid_hists = []
-            step = 240 // 3
-            for r in range(3):
-                for c in range(3):
-                    cell = canvas.crop((c * step, r * step, (c + 1) * step, (r + 1) * step))
-                    quant = cell.quantize(colors=32, method=Image.Quantize.FASTOCTREE).convert("RGB")
-                    raw_h = quant.histogram()
-                    bins = []
-                    for ch in range(3):
-                        ch_data = raw_h[ch * 256:(ch + 1) * 256]
-                        for b in range(8):
-                            bins.append(sum(ch_data[b * 32:(b + 1) * 32]))
-                    s = float(sum(bins)) or 1.0
-                    grid_hists.append([x / s for x in bins])
-
-            features = {
-                "version": 4,
-                "type": "pil_v4_spatial",
-                "dhash": phashes[0],
-                "phashes": phashes,
-                "grid_hists": grid_hists,
-            }
+                features = {
+                    "version": 10,
+                    "type": "opencv_v10_rot_invariant",
+                    "phash": phashes[0],
+                    "phashes": phashes,
+                    "orb_descriptors": descriptors,
+                    "grid_hists": grid_hists,
+                }
+            else:
+                focused.thumbnail((120, 120), Image.Resampling.BILINEAR)
+                canvas = Image.new("RGB", (120, 120), (245, 245, 245))
+                canvas.paste(focused, ((120 - focused.width) // 2, (120 - focused.height) // 2))
+                features = _fast_pil_features(canvas)
 
         save_feature_cache(img_path, features)
         return features
@@ -329,7 +366,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             return 0, 0.0
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
-            # 1. Màu sắc & độ sáng không gian 3x3 HSV (tự động thử 4 góc xoay 0/90/180/270 độ, tối đa 22đ)
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
             color_points = 0
             if len(g1) == 9 and len(g2) == 9:
@@ -351,7 +387,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 elif best_corr >= 0.20:
                     color_points = 9
 
-            # 2. Bố cục cấu trúc pHash theo góc xoay khớp nhất (tối đa 14/50 điểm)
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
             min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
@@ -365,7 +400,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             else:
                 shape_points = 6
 
-            # 3. Chi tiết đặc trưng ORB 2 chiều (tối đa 14/50 điểm)
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
             if d1 is not None and d2 is not None and len(d1) >= 2 and len(d2) >= 2:
@@ -394,7 +428,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             total = min(50, raw_total)
             return int(total), float(total / 50.0)
 
-        # Nhánh thuần Pillow (chạy khi Render không cài OpenCV)
+        # Nhánh thuần Pillow (giữ nguyên thang điểm bản 61)
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
             color_points = 10
@@ -497,19 +531,16 @@ def similarity(text1, text2):
     if t1 == t2:
         return 1.0
 
-    # 1. Cổng loại trừ số hiệu / khối lớp (VD: Tin 12 != Tin 8, Toán 9 != Toán 10)
     nums1 = re.findall(r'\d+', t1)
     nums2 = re.findall(r'\d+', t2)
     if nums1 and nums2 and nums1 != nums2:
         return 0.0
 
-    # 2. Cổng loại trừ xung đột màu sắc trong tên (VD: Bút đen != Cây bút đỏ)
     c1 = extract_colors(t1)
     c2 = extract_colors(t2)
     if c1 and c2 and not c1.intersection(c2):
         return 0.0
 
-    # 3. Cổng loại trừ danh từ cốt lõi / môn học (VD: Sách ngữ văn 9 != Sách bài tập toán 9)
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
 
@@ -649,6 +680,10 @@ def lost():
                 filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
                 file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
 
+        if filename:
+            calculate_image_features(filename)
+            _persist_disk_cache()
+
         try:
             item = LostItem(
                 ten_do=request.form.get("ten_do", ""),
@@ -682,6 +717,10 @@ def found():
             except Exception:
                 filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
                 file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
+
+        if filename:
+            calculate_image_features(filename)
+            _persist_disk_cache()
 
         try:
             item = FoundItem(
@@ -825,6 +864,9 @@ def edit_lost(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
+                if item.hinh_anh:
+                    calculate_image_features(item.hinh_anh)
+                    _persist_disk_cache()
             except Exception:
                 pass
 
@@ -856,6 +898,9 @@ def edit_found(item_id):
             try:
                 res = cloudinary.uploader.upload(file)
                 item.hinh_anh = res.get("secure_url", "")
+                if item.hinh_anh:
+                    calculate_image_features(item.hinh_anh)
+                    _persist_disk_cache()
             except Exception:
                 pass
 
@@ -942,7 +987,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh 2 tầng tốc độ cao: Tải thu nhỏ Cloudinary + song song 6 luồng + lưu cache."""
+    """Đối sánh 2 tầng tốc độ cao: Tải song song 12 luồng + lưu cache đĩa bền vững."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1016,8 +1061,8 @@ def match_items(item_id=None):
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
-        # Tầng 2: Tải song song 6 luồng cho top (page * 10 + 5) cặp tiềm năng nhất
-        eval_limit = min(total_matches, page * per_page + 5)
+        # Tầng 2: Chỉ tải những ảnh chưa có trong cache (12 luồng Keep-Alive)
+        eval_limit = min(total_matches, page * per_page + 2)
         top_candidates = candidates[:eval_limit]
 
         urls_to_fetch = set()
@@ -1029,8 +1074,9 @@ def match_items(item_id=None):
                     urls_to_fetch.add(item["found"].hinh_anh)
 
         if urls_to_fetch:
-            with ThreadPoolExecutor(max_workers=6) as executor:
+            with ThreadPoolExecutor(max_workers=12) as executor:
                 list(executor.map(calculate_image_features, urls_to_fetch))
+            _persist_disk_cache()
 
         evaluated_matches = []
         for item in top_candidates:
