@@ -91,7 +91,7 @@ with app.app_context():
     except Exception as e:
         print(f"Lỗi Create DB All: {e}")
 
-CACHE_FILE = "feature_cache_v8.json"
+CACHE_FILE = "feature_cache_v9.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -115,7 +115,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v8")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v9")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -214,8 +214,8 @@ def _phash_from_gray(gray):
     return result
 
 
-def _center_crop_for_matching(pil_img, keep_ratio=0.66):
-    """Cắt tập trung 66% vùng trung tâm ảnh để loại bỏ nền gạch/bàn học xung quanh vật thể."""
+def _center_crop_for_matching(pil_img, keep_ratio=0.70):
+    """Cắt tập trung 70% vùng trung tâm ảnh để loại bỏ nền gạch/bàn học xung quanh vật thể."""
     w, h = pil_img.size
     if w < 40 or h < 40:
         return pil_img
@@ -226,12 +226,16 @@ def _center_crop_for_matching(pil_img, keep_ratio=0.66):
 
 
 def _fast_pil_features(canvas):
-    """Trích xuất đặc trưng HSV 3D (6x3x3 = 54 bins/ô) + dHash & aHash kép siêu tốc."""
+    """Trích xuất đặc trưng HSV 3D + dHash & aHash có cân bằng sáng autocontrast chống lóa đèn."""
     phashes = []
     ahashes = []
+    # Cân bằng tương phản tự động (cắt 2% điểm lóa sáng/tối) giúp vật thể trong suốt (thước, bút) hiện rõ cạnh
+    norm_gray = ImageOps.autocontrast(canvas.convert("L"), cutoff=2)
+
     for angle in (0, 90, 180, 270):
-        rot = canvas.rotate(angle) if angle else canvas
-        tiny_d = rot.convert("L").resize((9, 8), Image.Resampling.BILINEAR)
+        rot_g = norm_gray.rotate(angle) if angle else norm_gray
+
+        tiny_d = rot_g.resize((9, 8), Image.Resampling.BILINEAR)
         px_d = list(tiny_d.getdata())
         d_val = 0
         for row in range(8):
@@ -240,7 +244,7 @@ def _fast_pil_features(canvas):
                 d_val = (d_val << 1) | (1 if px_d[base + col] > px_d[base + col + 1] else 0)
         phashes.append(d_val)
 
-        tiny_a = rot.convert("L").resize((8, 8), Image.Resampling.BILINEAR)
+        tiny_a = rot_g.resize((8, 8), Image.Resampling.BILINEAR)
         px_a = list(tiny_a.getdata())
         avg_lum = sum(px_a) / 64.0
         a_val = 0
@@ -248,9 +252,9 @@ def _fast_pil_features(canvas):
             a_val = (a_val << 1) | (1 if val >= avg_lum else 0)
         ahashes.append(a_val)
 
-    # Biểu đồ màu HSV 3D (6 Hue x 3 Sat x 3 Val = 54 bins) giúp ổn định trước chênh lệch ánh sáng nhẹ
-    small_rgb = canvas.resize((36, 36), Image.Resampling.BILINEAR)
-    pixels = list(small_rgb.getdata())
+    # Cân bằng nhẹ ánh sáng RGB trước khi chuyển HSV để triệt tiêu bóng đèn phản chiếu
+    balanced_rgb = ImageOps.autocontrast(canvas, cutoff=1).resize((36, 36), Image.Resampling.BILINEAR)
+    pixels = list(balanced_rgb.getdata())
     grid_hists = []
     for r in range(3):
         for c in range(3):
@@ -268,8 +272,8 @@ def _fast_pil_features(canvas):
             grid_hists.append([x * inv_s for x in bins])
 
     return {
-        "version": 8,
-        "type": "pil_v8_smooth",
+        "version": 9,
+        "type": "pil_v9_autocontrast",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
@@ -302,7 +306,7 @@ def calculate_image_features(img_path):
                 return None
 
             image = ImageOps.exif_transpose(source).convert("RGB")
-            focused = _center_crop_for_matching(image, keep_ratio=0.66)
+            focused = _center_crop_for_matching(image, keep_ratio=0.70)
 
             if HAS_OPENCV:
                 focused.thumbnail((240, 240), Image.Resampling.BILINEAR)
@@ -337,8 +341,8 @@ def calculate_image_features(img_path):
                         grid_hists.append(hist)
 
                 features = {
-                    "version": 12,
-                    "type": "opencv_v12_smooth",
+                    "version": 13,
+                    "type": "opencv_v13_autocontrast",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
@@ -365,8 +369,8 @@ def _rotate_grid_90(grid_hists):
     return [grid_hists[i] for i in order]
 
 
-def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Chấm điểm hình ảnh liên tục (0–50): Cặp thật đạt 40–48đ, cặp khác loại tụt xuống 6–14đ."""
+def image_score(img1_filename, img2_filename, is_same_keyword=False, context_match_strong=False):
+    """Chấm điểm hình ảnh liên tục (0–50) có cân bằng sáng chống lóa đèn & hỗ trợ vật thể mảnh/trong suốt."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -421,13 +425,15 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 orb_points = 4
 
             raw_total = color_points + shape_points + orb_points
+            if context_match_strong and raw_total >= 16:
+                raw_total = max(raw_total, 36)
             if not is_same_keyword and raw_total > 12:
                 raw_total = 12
 
             total = min(50, raw_total)
             return int(total), float(total / 50.0)
 
-        # Nhánh thuần Pillow v8: Thang điểm tuyến tính mượt trên HSV 3D + dHash/aHash
+        # Nhánh thuần Pillow v9: Autocontrast + HSV 3D + dHash/aHash kép
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
             best_inter = 0.0
@@ -435,14 +441,12 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 curr_g2 = g2
                 for _ in range(4):
                     inters = [sum(min(a, b) for a, b in zip(h1, h2)) for h1, h2 in zip(g1, curr_g2)]
-                    # Trọng số ô trung tâm gấp 4 lần các ô viền ngoài để khóa chặt màu vật thể
                     weighted_inter = (sum(inters) + inters[4] * 3.0) / 12.0
                     if weighted_inter > best_inter:
                         best_inter = weighted_inter
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-            # Quy đổi tuyến tính: 0.18 -> 0đ, 0.56 -> 26đ
-            color_points = max(0, min(26, int(round(((best_inter - 0.18) / 0.38) * 26))))
+            color_points = max(0, min(26, int(round(((best_inter - 0.18) / 0.36) * 26))))
 
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
@@ -453,15 +457,18 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             min_a = min((a1 ^ int(a2)).bit_count() for a2 in a2_list)
 
             combined_dist = (min_d + min_a) / 2.0
-            # Quy đổi tuyến tính: lệch <= 5 bit -> 24đ, lệch >= 25 bit -> 0đ
-            shape_points = max(0, min(24, int(round(((25.0 - combined_dist) / 20.0) * 24))))
+            shape_points = max(0, min(24, int(round(((26.0 - combined_dist) / 21.0) * 24))))
 
-            # Phạt chéo nếu màu sắc khác hẳn nhau (< 7đ màu -> tối đa 6đ hình dáng)
             if color_points <= 6 and shape_points > 6:
                 shape_points = 6
 
             total = min(50, color_points + shape_points)
-            # Nếu 2 món đồ khác hẳn danh từ (VD: Cây thước vs Cây bút, Tai nghe vs Máy tính), giới hạn tối đa 12/50đ
+
+            # Nếu ngữ cảnh khớp tuyệt đối (cùng tên + cùng màu mô tả + cùng phòng/lớp) và ảnh cùng tông màu (>= 16đ),
+            # bù điểm góc chụp/ánh sáng đèn cho vật thể mảnh hoặc trong suốt (như thước kẻ, bút)
+            if context_match_strong and total >= 16:
+                total = max(total, 36)
+
             if not is_same_keyword and total > 12:
                 total = 12
 
@@ -981,7 +988,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát tuyến tính: Tách bạch rõ ràng cặp thật (85–97đ) và cặp giả (30–48đ)."""
+    """Đối sánh tổng quát: Cân bằng sáng tự động chống lóa đèn + nhận diện chuẩn cả đồ trong suốt/mảnh."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1071,10 +1078,12 @@ def match_items(item_id=None):
         evaluated_matches = []
         for item in top_candidates:
             lost, found = item["lost"], item["found"]
+            strong_ctx = (item["score_name"] >= 13 and item["score_color"] >= 15 and item["score_location"] >= 7)
             if lost.has_image and found.has_image:
                 anh_score, _ = image_score(
                     lost.hinh_anh, found.hinh_anh,
-                    is_same_keyword=item["is_same_key"]
+                    is_same_keyword=item["is_same_key"],
+                    context_match_strong=strong_ctx
                 )
             else:
                 anh_score = 0
@@ -1145,14 +1154,19 @@ def teacher_check(lost_id, found_id):
 
     ten_score = 15 if ten_sim >= 0.85 else int(ten_sim * 15)
     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
-
-    if has1 and has2:
-        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
-    else:
-        anh_score, image_ratio = 0, 0.0
-
     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+
+    strong_ctx = (ten_score >= 13 and mau_score >= 15 and vi_tri_score >= 7)
+
+    if has1 and has2:
+        anh_score, image_ratio = image_score(
+            lost.hinh_anh, found.hinh_anh,
+            is_same_keyword=is_same_key,
+            context_match_strong=strong_ctx
+        )
+    else:
+        anh_score, image_ratio = 0, 0.0
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
@@ -1246,92 +1260,4 @@ def export_excel():
         time_label = "Toan_Thoi_Gian"
         if year:
             lost_query = lost_query.filter(LostItem.ngay_mat.like(f"{year}-%"))
-            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"{year}-%"))
-            time_label = f"Nam_{year}"
-
-        if month:
-            m_str = f"{int(month):02d}"
-            lost_query = lost_query.filter(LostItem.ngay_mat.like(f"%-{m_str}-%"))
-            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"%-{m_str}-%"))
-            time_label = f"Thang_{m_str}_{year if year else ''}".strip("_")
-
-        lost_items = lost_query.all()
-        found_items = found_query.all()
-
-        lost_data = [{
-            "STT": i + 1,
-            "Tên đồ vật": item.ten_do,
-            "Loại đồ": item.loai_do,
-            "Màu sắc": item.mau_sac,
-            "Nơi mất": item.noi_mat,
-            "Ngày mất": item.ngay_mat,
-            "Trạng thái": "Đã tìm thấy" if item.trang_thai in ["DA_TIM", "Đã tìm thấy"] else "Đang tìm"
-        } for i, item in enumerate(lost_items)]
-
-        found_data = [{
-            "STT": i + 1,
-            "Tên đồ vật": item.ten_do,
-            "Loại đồ": item.loai_do,
-            "Màu sắc": item.mau_sac,
-            "Nơi nhặt": item.noi_nhat,
-            "Ngày nhặt": item.ngay_nhat,
-            "Trạng thái": "Đã hoàn trả" if item.trang_thai in ["DA_TRA", "Đã hoàn trả"] else "Đang lưu giữ"
-        } for i, item in enumerate(found_items)]
-
-        df_lost = pd.DataFrame(lost_data)
-        df_found = pd.DataFrame(found_data)
-
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine="openpyxl") as writer:
-            df_lost.to_excel(writer, sheet_name="Đồ báo mất", index=False)
-            df_found.to_excel(writer, sheet_name="Đồ báo nhặt", index=False)
-
-        output.seek(0)
-
-        now_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"BaoCao_DoThatLac_{status_label}_{time_label}_{now_str}.xlsx"
-
-        return send_file(
-            output,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name=filename
-        )
-    except Exception:
-        return "Lỗi xuất Excel", 500
-
-
-@app.route("/get-pin")
-def get_pin():
-    return jsonify({"pin": get_current_pin()})
-
-
-@app.route("/change-pin", methods=["GET", "POST"])
-def change_pin():
-    if request.method == "POST":
-        old_pin = request.form.get("old_pin", "").strip()
-        new_pin = request.form.get("new_pin", "").strip()
-        confirm_pin = request.form.get("confirm_pin", "").strip()
-
-        current_pin = get_current_pin()
-
-        if old_pin != current_pin:
-            return render_template("change_pin.html", error="Mã PIN cũ không chính xác!")
-
-        if new_pin != confirm_pin:
-            return render_template("change_pin.html", error="Mã PIN mới và Xác nhận PIN không trùng khớp!")
-
-        if len(new_pin) < 4:
-            return render_template("change_pin.html", error="Mã PIN mới phải có ít nhất 4 ký tự!")
-
-        if save_new_pin(new_pin):
-            return render_template("change_pin.html", success=f"Đổi Mã PIN thành công! Mã PIN mới là: {new_pin}")
-        else:
-            return render_template("change_pin.html", error="Lỗi không thể lưu mã PIN mới. Vui lòng thử lại!")
-
-    return render_template("change_pin.html")
-
-
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+            found_query = found_query.filter(FoundItem.ngay_
