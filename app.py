@@ -181,8 +181,8 @@ def _phash_from_gray(gray):
     return result
 
 
-def _center_crop_for_matching(pil_img, keep_ratio=0.80):
-    """Cắt vùng trung tâm ảnh (80%) để giảm nhiễu nền gạch/bàn học xung quanh vật thể."""
+def _center_crop_for_matching(pil_img, keep_ratio=0.75):
+    """Cắt vùng trung tâm ảnh (75%) để giảm nhiễu nền gạch/bàn học xung quanh vật thể."""
     w, h = pil_img.size
     if w < 40 or h < 40:
         return pil_img
@@ -193,7 +193,7 @@ def _center_crop_for_matching(pil_img, keep_ratio=0.80):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất tọa độ keypoint + descriptor ORB, pHash và HSV Histogram trên ảnh 320x320."""
+    """Trích xuất đặc trưng lai: Lưới màu không gian 3x3 HSV + pHash + ORB trên vùng trung tâm."""
     if not check_real_image(img_path):
         return None
 
@@ -216,13 +216,11 @@ def calculate_image_features(img_path):
                 return None
 
             image = ImageOps.exif_transpose(source).convert("RGB")
-            aspect_ratio = float(image.width) / float(max(1, image.height))
+            focused = _center_crop_for_matching(image, keep_ratio=0.75)
+            focused.thumbnail((240, 240), Image.Resampling.LANCZOS)
 
-            focused = _center_crop_for_matching(image, keep_ratio=0.80)
-            focused.thumbnail((320, 320), Image.Resampling.LANCZOS)
-
-            canvas = Image.new("RGB", (320, 320), (245, 245, 245))
-            canvas.paste(focused, ((320 - focused.width) // 2, (320 - focused.height) // 2))
+            canvas = Image.new("RGB", (240, 240), (245, 245, 245))
+            canvas.paste(focused, ((240 - focused.width) // 2, (240 - focused.height) // 2))
             rgb = np.asarray(canvas, dtype=np.uint8) if HAS_OPENCV else None
 
         if HAS_OPENCV and rgb is not None:
@@ -232,28 +230,26 @@ def calculate_image_features(img_path):
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             gray_eq = clahe.apply(gray)
 
-            orb = cv2.ORB_create(
-                nfeatures=300, scaleFactor=1.2, nlevels=6,
-                edgeThreshold=12, patchSize=31, fastThreshold=12
-            )
-            keypoints, descriptors = orb.detectAndCompute(gray_eq, None)
-            # Lưu tọa độ (x, y) dạng float32 nhẹ để dùng cho RANSAC Homography
-            kp_pts = np.array([kp.pt for kp in keypoints], dtype=np.float32) if keypoints else None
+            orb = cv2.ORB_create(nfeatures=250, scaleFactor=1.2, nlevels=6, fastThreshold=12)
+            _, descriptors = orb.detectAndCompute(gray_eq, None)
 
-            h, w = image_bgr.shape[:2]
-            core_crop = image_bgr[int(h * 0.25):int(h * 0.75), int(w * 0.25):int(w * 0.75)]
-            hsv = cv2.cvtColor(core_crop, cv2.COLOR_BGR2HSV)
-            color_hist = cv2.calcHist([hsv], [0, 1], None, [12, 8], [0, 180, 0, 256])
-            cv2.normalize(color_hist, color_hist, 1.0, 0.0, cv2.NORM_L1)
+            # Lưới màu không gian 3x3 trên vùng vật thể trung tâm
+            hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+            grid_hists = []
+            step = 240 // 3
+            for r in range(3):
+                for c in range(3):
+                    cell = hsv[r * step:(r + 1) * step, c * step:(c + 1) * step]
+                    hist = cv2.calcHist([cell], [0, 1], None, [10, 6], [0, 180, 0, 256])
+                    cv2.normalize(hist, hist, 1.0, 0.0, cv2.NORM_L1)
+                    grid_hists.append(hist)
 
             features = {
-                "version": 7,
-                "type": "opencv_v7_ransac",
+                "version": 8,
+                "type": "opencv_v8_spatial",
                 "phash": _phash_from_gray(gray_eq),
-                "orb_pts": kp_pts,
                 "orb_descriptors": descriptors,
-                "color_hist": color_hist,
-                "aspect_ratio": aspect_ratio,
+                "grid_hists": grid_hists,
             }
         else:
             tiny = canvas.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
@@ -262,14 +258,7 @@ def calculate_image_features(img_path):
             for row in range(8):
                 for col in range(8):
                     dhash = (dhash << 1) | int(px[row * 9 + col] > px[row * 9 + col + 1])
-            hist = canvas.histogram()
-            features = {
-                "version": 3,
-                "type": "pil_v3",
-                "dhash": dhash,
-                "hist": hist,
-                "aspect_ratio": aspect_ratio,
-            }
+            features = {"version": 3, "type": "pil_v3", "dhash": dhash, "hist": canvas.histogram()}
 
         save_feature_cache(img_path, features)
         return features
@@ -279,7 +268,7 @@ def calculate_image_features(img_path):
 
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Chấm điểm hình ảnh (0–50) kết hợp RANSAC kiểm chứng hình học + pHash + HSV Histogram."""
+    """Chấm điểm hình ảnh (0–50): Lưới màu không gian 3x3 (22đ) + pHash (14đ) + ORB (14đ)."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -293,80 +282,59 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             return 0, 0.0
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
-            # 1. pHash bố cục tổng thể (tối đa 16/50 điểm)
+            # 1. Màu sắc không gian 3x3 HSV (tối đa 22/50 điểm)
+            g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
+            color_points = 0
+            if len(g1) == 9 and len(g2) == 9:
+                corrs = [max(0.0, float(cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))) for h1, h2 in zip(g1, g2)]
+                top6_corr = sum(sorted(corrs, reverse=True)[:6]) / 6.0
+                if top6_corr >= 0.78:
+                    color_points = 22
+                elif top6_corr >= 0.62:
+                    color_points = 17
+                elif top6_corr >= 0.45:
+                    color_points = 12
+                elif top6_corr >= 0.30:
+                    color_points = 6
+
+            # 2. Bố cục cấu trúc pHash (tối đa 14/50 điểm)
             hamming = (int(f1["phash"]) ^ int(f2["phash"])).bit_count()
             phash_score = max(0.0, 1.0 - hamming / 63.0)
-            if phash_score >= 0.80:
-                shape_points = 16
-            elif phash_score >= 0.68:
-                shape_points = 13
-            elif phash_score >= 0.58:
-                shape_points = 10
-            elif phash_score >= 0.50:
-                shape_points = 6
+            if phash_score >= 0.76:
+                shape_points = 14
+            elif phash_score >= 0.64:
+                shape_points = 11
+            elif phash_score >= 0.54:
+                shape_points = 8
             else:
-                shape_points = 0
+                shape_points = 4
 
-            # 2. ORB + RANSAC kiểm chứng hình học (tối đa 20/50 điểm)
-            # Lọc bỏ các điểm khớp giả trên nền gạch hoặc bìa sách khác môn
+            # 3. Chi tiết đặc trưng ORB 2 chiều (tối đa 14/50 điểm)
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
-            pts1, pts2 = f1.get("orb_pts"), f2.get("orb_pts")
             orb_points = 0
-
-            if (d1 is not None and d2 is not None and pts1 is not None and pts2 is not None
-                    and len(d1) >= 4 and len(d2) >= 4):
+            if d1 is not None and d2 is not None and len(d1) >= 2 and len(d2) >= 2:
                 matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
                 forward = matcher.knnMatch(d1, d2, k=2)
                 reverse = matcher.knnMatch(d2, d1, k=2)
-
-                def _ratio_matches(pairs):
-                    return [p[0] for p in pairs if len(p) == 2 and p[0].distance < 0.78 * p[1].distance]
-
-                good_f = _ratio_matches(forward)
-                good_r = _ratio_matches(reverse)
+                good_f = [p[0] for p in forward if len(p) == 2 and p[0].distance < 0.78 * p[1].distance]
+                good_r = [p[0] for p in reverse if len(p) == 2 and p[0].distance < 0.78 * p[1].distance]
                 reverse_pairs = {(m.trainIdx, m.queryIdx) for m in good_r}
-                mutual_matches = [m for m in good_f if (m.queryIdx, m.trainIdx) in reverse_pairs]
+                mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
 
-                valid_count = len(mutual_matches)
-                # Khi có đủ >= 6 cặp điểm 2 chiều, chạy RANSAC kiểm tra tính nhất quán hình học
-                if valid_count >= 6:
-                    src_pts = np.float32([pts1[m.queryIdx] for m in mutual_matches]).reshape(-1, 1, 2)
-                    dst_pts = np.float32([pts2[m.trainIdx] for m in mutual_matches]).reshape(-1, 1, 2)
-                    _, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
-                    if mask is not None:
-                        inliers = int(mask.ravel().sum())
-                        valid_count = inliers
-
-                if valid_count >= 10:
-                    orb_points = 20
-                elif valid_count >= 6:
-                    orb_points = 15
-                elif valid_count >= 4:
-                    orb_points = 10
-                elif valid_count >= 2:
+                if mutual >= 12:
+                    orb_points = 14
+                elif mutual >= 6:
+                    orb_points = 11
+                elif mutual >= 3:
+                    orb_points = 8
+                elif mutual >= 1:
                     orb_points = 5
 
-            # 3. Tương quan màu vùng lõi vật thể HSV (tối đa 10/50 điểm)
-            color_points = 0
-            hist1, hist2 = f1.get("color_hist"), f2.get("color_hist")
-            if hist1 is not None and hist2 is not None:
-                corr = float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL))
-                if corr >= 0.78:
-                    color_points = 10
-                elif corr >= 0.58:
-                    color_points = 7
-                elif corr >= 0.38:
-                    color_points = 4
+            # Khóa chống nhiễu lông xù/nền gạch khi màu sắc vùng trung tâm khác hẳn
+            if color_points <= 6 and orb_points > 6:
+                orb_points = 6
 
-            # 4. Tỷ lệ khung hình thực tế (tối đa 4/50 điểm)
-            ar1 = f1.get("aspect_ratio", 1.0)
-            ar2 = f2.get("aspect_ratio", 1.0)
-            ar_diff = abs(ar1 - ar2) / max(ar1, ar2, 0.1)
-            ratio_points = 4 if ar_diff <= 0.18 else (2 if ar_diff <= 0.35 else 0)
-
-            raw_total = shape_points + orb_points + color_points + ratio_points
-
-            # Trần bảo vệ: Nếu tên đồ chưa xác nhận trùng từ khóa cốt lõi, không cho ảnh ăn điểm cao giả tạo
+            raw_total = color_points + shape_points + orb_points
             if not is_same_keyword and raw_total > 22:
                 raw_total = 22
 
@@ -376,14 +344,8 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         # Fallback PIL nếu OpenCV không khả dụng
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
             dist = (int(f1.get("dhash", 0)) ^ int(f2.get("dhash", 0))).bit_count()
-            shape = 35 if dist <= 12 else (25 if dist <= 20 else (15 if dist <= 28 else 7))
-            h1, h2 = f1.get("hist", []), f2.get("hist", [])
-            dot = sum(a * b for a, b in zip(h1, h2))
-            n1 = sum(a * a for a in h1) ** 0.5
-            n2 = sum(b * b for b in h2) ** 0.5
-            sim_c = dot / (n1 * n2) if n1 and n2 else 0.0
-            color = 15 if sim_c >= 0.80 else (10 if sim_c >= 0.65 else 5)
-            total = min(50, shape + color)
+            shape = 35 if dist <= 12 else (25 if dist <= 20 else 15)
+            total = min(50, shape + 10)
             if not is_same_keyword and total > 22:
                 total = 22
             return int(total), float(total / 50.0)
@@ -401,7 +363,7 @@ def get_core_keyword(text_name):
     t = str(text_name).lower().strip()
 
     synonyms_map = {
-        "máy tính casio": ["casio", "fx580", "fx 580", "fx570", "fx 570", "máy tính bỏ túi", "casio580"],
+        "máy tính casio": ["casio", "fx580", "fx 580", "fx570", "fx 570", "880btg", "fx880", "fx 880", "máy tính bỏ túi", "casio580"],
         "laptop": ["laptop", "macbook", "máy tính xách tay"],
         "chuột": ["chuột", "con chuột", "chuột máy tính", "mouse"],
         "sách toán": ["sách toán", "sbt toán", "bài tập toán", "toán"],
@@ -425,7 +387,8 @@ def get_core_keyword(text_name):
         "áo khoác": ["áo khoác", "áo gió", "áo ấm"],
         "nón": ["nón", "mũ", "nón kết"],
         "thẻ": ["thẻ", "căn cước", "cccd", "thẻ học sinh"],
-        "bình nước": ["bình nước", "bình giữ nhiệt"]
+        "bình nước": ["bình nước", "bình giữ nhiệt"],
+        "gấu bông": ["gấu bông", "thú nhồi bông", "móc khóa gấu"]
     }
 
     for core_key, words in synonyms_map.items():
@@ -471,10 +434,8 @@ def similarity(text1, text2):
             return 0.95
         base_k1 = k1.split("_")[0]
         base_k2 = k2.split("_")[0]
-        # Cùng loại đồ/môn học nhưng một bên ghi số lớp, bên kia quên ghi số lớp
         if base_k1 == base_k2:
             return 0.75
-        # Khác hẳn loại đồ hoặc khác hẳn môn học -> loại bỏ ngay lập tức
         return 0.0
 
     if t1 in t2 or t2 in t1:
@@ -897,7 +858,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh 2 tầng tối ưu RAM: Lọc cổng loại trừ văn bản trước -> RANSAC ảnh cho top cặp."""
+    """Đối sánh 2 tầng trung thực thang điểm 100 (50 - 15 - 15 - 10 - 10), không bù điểm khi thiếu ảnh."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -920,7 +881,7 @@ def match_items(item_id=None):
         for obj in found_items:
             obj.has_image = check_real_image(obj.hinh_anh)
 
-        # Tầng 1: Cổng loại trừ & chấm điểm văn bản ngay trong RAM (tốn rất ít bộ nhớ)
+        # Tầng 1: Cổng loại trừ & chấm điểm văn bản ngay trong RAM
         candidates = []
         sequence = 0
 
@@ -936,7 +897,6 @@ def match_items(item_id=None):
                     ten_sim = similarity(lost.ten_do, found.ten_do)
                     is_same_key = (key1 == key2 and key1 != "")
 
-                    # Chặn ngay mọi cặp khác môn học, khác số lớp hoặc trái màu
                     if not (is_same_key or ten_sim >= 0.40):
                         continue
 
@@ -949,11 +909,15 @@ def match_items(item_id=None):
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
                     base_score = ten_score + mau_score + vi_tri_score + ngay_score
 
+                    # Ưu tiên xếp các cặp có đủ cả 2 ảnh lên trước khi chọn ứng viên phân tích AI
+                    has_both_images = 1 if (lost.has_image and found.has_image) else 0
+
                     sequence += 1
                     candidates.append({
                         "lost": lost,
                         "found": found,
                         "base_score": base_score,
+                        "has_both_images": has_both_images,
                         "is_same_key": is_same_key,
                         "score_name": ten_score,
                         "score_color": mau_score,
@@ -964,12 +928,12 @@ def match_items(item_id=None):
                 except Exception:
                     continue
 
-        candidates.sort(key=lambda x: (x["base_score"], x["seq"]), reverse=True)
+        candidates.sort(key=lambda x: (x["has_both_images"], x["base_score"], x["seq"]), reverse=True)
         total_matches = len(candidates)
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
-        # Tầng 2: Chỉ tải ảnh và chạy RANSAC cho top (page * 10 + 15) cặp tiềm năng nhất
+        # Tầng 2: Chỉ tải ảnh và phân tích AI cho top (page * 10 + 15) cặp tiềm năng nhất
         eval_limit = min(total_matches, page * per_page + 15)
         evaluated_matches = []
 
@@ -983,6 +947,7 @@ def match_items(item_id=None):
             else:
                 anh_score = 0
 
+            # Cộng điểm trung thực: Hình ảnh (50) + Tên (15) + Màu (15) + Vị trí (10) + Ngày (10) = 100
             total_score = item["base_score"] + anh_score
             if total_score >= 75:
                 ket_luan = "🟢 Khả năng trùng khớp cao"
