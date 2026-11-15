@@ -6,6 +6,7 @@ import re
 import gc
 import urllib3
 from datetime import datetime, timezone, timedelta
+from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
@@ -137,8 +138,10 @@ def save_feature_cache(img_path, features):
 
 
 def _read_image_bytes(img_path, max_bytes=5 * 1024 * 1024):
-    """Đọc toàn bộ ảnh trong giới hạn kích thước để bảo vệ RAM."""
+    """Đọc toàn bộ ảnh trong giới hạn kích thước, tự động lấy bản thu nhỏ Cloudinary để tăng tốc."""
     value = str(img_path).strip()
+    if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
+        value = value.replace("/image/upload/", "/image/upload/w_300,c_limit,q_auto:low/", 1)
     if value.startswith(("http://", "https://")):
         import requests
         response = requests.get(
@@ -856,7 +859,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh 2 tầng trung thực thang điểm 100 (50 - 15 - 15 - 10 - 10), không bù điểm khi thiếu ảnh."""
+    """Đối sánh 2 tầng tốc độ cao: Tải thu nhỏ Cloudinary + song song 6 luồng + lưu cache."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -930,11 +933,24 @@ def match_items(item_id=None):
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
-        # Tầng 2: Chỉ tải ảnh và phân tích AI cho top (page * 10 + 15) cặp tiềm năng nhất
-        eval_limit = min(total_matches, page * per_page + 15)
-        evaluated_matches = []
+        # Tầng 2: Tải song song 6 luồng cho top (page * 10 + 5) cặp tiềm năng nhất
+        eval_limit = min(total_matches, page * per_page + 5)
+        top_candidates = candidates[:eval_limit]
 
-        for item in candidates[:eval_limit]:
+        urls_to_fetch = set()
+        for item in top_candidates:
+            if item["lost"].has_image and item["found"].has_image:
+                if get_feature_cache(item["lost"].hinh_anh) is None:
+                    urls_to_fetch.add(item["lost"].hinh_anh)
+                if get_feature_cache(item["found"].hinh_anh) is None:
+                    urls_to_fetch.add(item["found"].hinh_anh)
+
+        if urls_to_fetch:
+            with ThreadPoolExecutor(max_workers=6) as executor:
+                list(executor.map(calculate_image_features, urls_to_fetch))
+
+        evaluated_matches = []
+        for item in top_candidates:
             lost, found = item["lost"], item["found"]
             if lost.has_image and found.has_image:
                 anh_score, _ = image_score(
@@ -969,8 +985,6 @@ def match_items(item_id=None):
         evaluated_matches.sort(key=lambda x: x["score"], reverse=True)
         start_idx = (page - 1) * per_page
         page_matches = evaluated_matches[start_idx:start_idx + per_page]
-
-        FEATURE_CACHE.clear()
         gc.collect()
 
         return render_template(
@@ -983,7 +997,6 @@ def match_items(item_id=None):
         )
     except Exception as route_err:
         print(f"Lỗi route /match: {route_err}")
-        FEATURE_CACHE.clear()
         gc.collect()
         return render_template(
             "match.html",
@@ -1041,7 +1054,6 @@ def teacher_check(lost_id, found_id):
     elif not (has1 and has2):
         image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
 
-    FEATURE_CACHE.clear()
     gc.collect()
     return render_template(
         "teacher_check.html",
