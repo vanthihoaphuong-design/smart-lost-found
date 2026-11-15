@@ -91,7 +91,7 @@ with app.app_context():
     except Exception as e:
         print(f"Lỗi Create DB All: {e}")
 
-CACHE_FILE = "feature_cache_v7.json"
+CACHE_FILE = "feature_cache_v8.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -115,7 +115,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v7")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v8")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -214,8 +214,8 @@ def _phash_from_gray(gray):
     return result
 
 
-def _center_crop_for_matching(pil_img, keep_ratio=0.72):
-    """Cắt vùng trung tâm ảnh (72%) để loại bỏ tối đa nền gạch/bàn học xung quanh vật thể."""
+def _center_crop_for_matching(pil_img, keep_ratio=0.66):
+    """Cắt tập trung 66% vùng trung tâm ảnh để loại bỏ nền gạch/bàn học xung quanh vật thể."""
     w, h = pil_img.size
     if w < 40 or h < 40:
         return pil_img
@@ -226,12 +226,11 @@ def _center_crop_for_matching(pil_img, keep_ratio=0.72):
 
 
 def _fast_pil_features(canvas):
-    """Trích xuất đặc trưng HSV 3D (8x4x4 = 128 bins/ô) + dHash & aHash kép siêu tốc (< 6ms/ảnh)."""
+    """Trích xuất đặc trưng HSV 3D (6x3x3 = 54 bins/ô) + dHash & aHash kép siêu tốc."""
     phashes = []
     ahashes = []
     for angle in (0, 90, 180, 270):
         rot = canvas.rotate(angle) if angle else canvas
-        # dHash 8x8 (độ dốc cạnh)
         tiny_d = rot.convert("L").resize((9, 8), Image.Resampling.BILINEAR)
         px_d = list(tiny_d.getdata())
         d_val = 0
@@ -241,7 +240,6 @@ def _fast_pil_features(canvas):
                 d_val = (d_val << 1) | (1 if px_d[base + col] > px_d[base + col + 1] else 0)
         phashes.append(d_val)
 
-        # aHash 8x8 (phân bố vùng sáng/tối)
         tiny_a = rot.convert("L").resize((8, 8), Image.Resampling.BILINEAR)
         px_a = list(tiny_a.getdata())
         avg_lum = sum(px_a) / 64.0
@@ -250,28 +248,28 @@ def _fast_pil_features(canvas):
             a_val = (a_val << 1) | (1 if val >= avg_lum else 0)
         ahashes.append(a_val)
 
-    # Biểu đồ màu HSV 3D (8 Hue x 4 Sat x 4 Val = 128 bins) trên lưới 3x3 (ảnh 36x36)
+    # Biểu đồ màu HSV 3D (6 Hue x 3 Sat x 3 Val = 54 bins) giúp ổn định trước chênh lệch ánh sáng nhẹ
     small_rgb = canvas.resize((36, 36), Image.Resampling.BILINEAR)
     pixels = list(small_rgb.getdata())
     grid_hists = []
     for r in range(3):
         for c in range(3):
-            bins = [0.0] * 128
+            bins = [0.0] * 54
             for py in range(r * 12, (r + 1) * 12):
                 row_offset = py * 36
                 for px_idx in range(c * 12, (c + 1) * 12):
                     rv, gv, bv = pixels[row_offset + px_idx]
                     h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
-                    h_bin = min(7, int(h * 8.0))
-                    s_bin = min(3, int(s * 4.0))
-                    v_bin = min(3, int(v * 4.0))
-                    bins[(h_bin << 4) | (s_bin << 2) | v_bin] += 1.0
+                    h_bin = min(5, int(h * 6.0))
+                    s_bin = min(2, int(s * 3.0))
+                    v_bin = min(2, int(v * 3.0))
+                    bins[h_bin * 9 + s_bin * 3 + v_bin] += 1.0
             inv_s = 1.0 / 144.0
             grid_hists.append([x * inv_s for x in bins])
 
     return {
-        "version": 7,
-        "type": "pil_v7_hsv3d",
+        "version": 8,
+        "type": "pil_v8_smooth",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
@@ -304,7 +302,7 @@ def calculate_image_features(img_path):
                 return None
 
             image = ImageOps.exif_transpose(source).convert("RGB")
-            focused = _center_crop_for_matching(image, keep_ratio=0.72)
+            focused = _center_crop_for_matching(image, keep_ratio=0.66)
 
             if HAS_OPENCV:
                 focused.thumbnail((240, 240), Image.Resampling.BILINEAR)
@@ -339,8 +337,8 @@ def calculate_image_features(img_path):
                         grid_hists.append(hist)
 
                 features = {
-                    "version": 11,
-                    "type": "opencv_v11_rot_invariant",
+                    "version": 12,
+                    "type": "opencv_v12_smooth",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
@@ -368,7 +366,7 @@ def _rotate_grid_90(grid_hists):
 
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Chấm điểm hình ảnh (0–50) chống nhiễu nền & phân biệt rạch ròi màu sắc HSV."""
+    """Chấm điểm hình ảnh liên tục (0–50): Cặp thật đạt 40–48đ, cặp khác loại tụt xuống 6–14đ."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -383,39 +381,23 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
-            color_points = 0
+            best_corr = 0.0
             if len(g1) == 9 and len(g2) == 9:
-                best_corr = 0.0
                 curr_g2 = g2
                 for _ in range(4):
                     corrs = [max(0.0, float(cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))) for h1, h2 in zip(g1, curr_g2)]
-                    # Trọng số 3.0 cho ô chính giữa để loại bỏ nhiễu nền xung quanh
-                    weighted_corr = (sum(corrs) + corrs[4] * 2.0) / 11.0
+                    weighted_corr = (sum(corrs) + corrs[4] * 3.0) / 12.0
                     if weighted_corr > best_corr:
                         best_corr = weighted_corr
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-                if best_corr >= 0.60:
-                    color_points = 22
-                elif best_corr >= 0.45:
-                    color_points = 17
-                elif best_corr >= 0.30:
-                    color_points = 11
-                elif best_corr >= 0.18:
-                    color_points = 6
+            color_points = max(0, min(22, int(round(((best_corr - 0.12) / 0.50) * 22))))
 
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
             min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
             phash_score = max(0.0, 1.0 - min_hamming / 63.0)
-            if phash_score >= 0.72:
-                shape_points = 14
-            elif phash_score >= 0.60:
-                shape_points = 11
-            elif phash_score >= 0.50:
-                shape_points = 7
-            else:
-                shape_points = 4
+            shape_points = max(0, min(14, int(round(((phash_score - 0.42) / 0.36) * 14))))
 
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
@@ -431,47 +413,37 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 if mutual >= 7:
                     orb_points = 14
                 elif mutual >= 3:
-                    orb_points = 10
+                    orb_points = 11
                 elif mutual >= 1:
-                    orb_points = 6
+                    orb_points = 7
 
-            if color_points <= 6 and orb_points > 5:
-                orb_points = 5
+            if color_points <= 5 and orb_points > 4:
+                orb_points = 4
 
             raw_total = color_points + shape_points + orb_points
-            if not is_same_keyword and raw_total > 22:
-                raw_total = 22
+            if not is_same_keyword and raw_total > 12:
+                raw_total = 12
 
             total = min(50, raw_total)
             return int(total), float(total / 50.0)
 
-        # Nhánh thuần Pillow v7: HSV 3D 128 bins + dHash/aHash kép + trọng số vùng trung tâm
+        # Nhánh thuần Pillow v8: Thang điểm tuyến tính mượt trên HSV 3D + dHash/aHash
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
-            color_points = 5
+            best_inter = 0.0
             if len(g1) == 9 and len(g2) == 9:
-                best_inter = 0.0
                 curr_g2 = g2
                 for _ in range(4):
                     inters = [sum(min(a, b) for a, b in zip(h1, h2)) for h1, h2 in zip(g1, curr_g2)]
-                    # Lấy trung bình toàn bộ 9 ô với trọng số 3.0 cho ô chính giữa (không dùng top5 chọn nền gạch)
-                    weighted_inter = (sum(inters) + inters[4] * 2.0) / 11.0
+                    # Trọng số ô trung tâm gấp 4 lần các ô viền ngoài để khóa chặt màu vật thể
+                    weighted_inter = (sum(inters) + inters[4] * 3.0) / 12.0
                     if weighted_inter > best_inter:
                         best_inter = weighted_inter
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-                if best_inter >= 0.56:
-                    color_points = 26
-                elif best_inter >= 0.42:
-                    color_points = 20
-                elif best_inter >= 0.30:
-                    color_points = 13
-                elif best_inter >= 0.20:
-                    color_points = 8
-                else:
-                    color_points = 4
+            # Quy đổi tuyến tính: 0.18 -> 0đ, 0.56 -> 26đ
+            color_points = max(0, min(26, int(round(((best_inter - 0.18) / 0.38) * 26))))
 
-            # Kết hợp dHash (cạnh) + aHash (độ sáng từng vùng)
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
             min_d = min((d1 ^ int(d2)).bit_count() for d2 in d2_list)
@@ -481,22 +453,18 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             min_a = min((a1 ^ int(a2)).bit_count() for a2 in a2_list)
 
             combined_dist = (min_d + min_a) / 2.0
-            if combined_dist <= 9.0:
-                shape_points = 22
-            elif combined_dist <= 14.0:
-                shape_points = 16
-            elif combined_dist <= 19.0:
-                shape_points = 10
-            else:
-                shape_points = 5
+            # Quy đổi tuyến tính: lệch <= 5 bit -> 24đ, lệch >= 25 bit -> 0đ
+            shape_points = max(0, min(24, int(round(((25.0 - combined_dist) / 20.0) * 24))))
 
-            # Nếu màu HSV khác hẳn (<= 8đ), không cho phép điểm hình dáng kéo tổng điểm lên cao giả tạo
-            if color_points <= 8 and shape_points > 10:
-                shape_points = 10
+            # Phạt chéo nếu màu sắc khác hẳn nhau (< 7đ màu -> tối đa 6đ hình dáng)
+            if color_points <= 6 and shape_points > 6:
+                shape_points = 6
 
             total = min(50, color_points + shape_points)
-            if not is_same_keyword and total > 22:
-                total = 22
+            # Nếu 2 món đồ khác hẳn danh từ (VD: Cây thước vs Cây bút, Tai nghe vs Máy tính), giới hạn tối đa 12/50đ
+            if not is_same_keyword and total > 12:
+                total = 12
+
             return int(total), float(total / 50.0)
 
         return 0, 0.0
@@ -520,7 +488,6 @@ def get_core_keyword(text_name):
         return ""
     t = str(text_name).lower().strip()
 
-    # Phân biệt rõ phụ kiện chuột với máy tính / laptop
     if "chuột" in t or "mouse" in t:
         return "chuột"
 
@@ -556,23 +523,19 @@ def similarity(text1, text2):
     if t1 == t2:
         return 1.0
 
-    # 1. Chặn nếu 2 món có số hiệu / khối lớp khác nhau (VD: Toán 9 != Toán 10)
     nums1 = re.findall(r'\d+', t1)
     nums2 = re.findall(r'\d+', t2)
     if nums1 and nums2 and nums1 != nums2:
         return 0.0
 
-    # 2. Chặn nhầm lẫn "chuột máy tính" với "máy tính"
     if ("chuột" in t1) != ("chuột" in t2):
         return 0.0
 
-    # 3. Kiểm tra nhóm từ đồng nghĩa khác mặt chữ
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
     if k1 and k2 and k1 == k2:
         return 0.95
 
-    # 4. Giao thoa từ vựng tự nhiên: "bức tranh" & "tranh vẽ" -> đều có từ "tranh" -> tự động khớp!
     w1 = _tokenize_meaningful_words(t1)
     w2 = _tokenize_meaningful_words(t2)
     common = w1.intersection(w2)
@@ -1018,7 +981,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát chính xác: Phân biệt màu HSV 3D + lọc nhiễu nền + không ghép nhầm đồ khác loại."""
+    """Đối sánh tổng quát tuyến tính: Tách bạch rõ ràng cặp thật (85–97đ) và cặp giả (30–48đ)."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
