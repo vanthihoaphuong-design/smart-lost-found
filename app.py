@@ -90,7 +90,6 @@ with app.app_context():
     except Exception as e:
         print(f"Lỗi Create DB All: {e}")
 
-# Cache bền vững trên cả RAM lẫn file JSON để không phải tải lại ảnh sau khi server khởi động lại
 CACHE_FILE = "feature_cache.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
@@ -123,14 +122,16 @@ def _persist_disk_cache():
         pass
 
 
-# HTTP Session tái sử dụng kết nối SSL (Keep-Alive) giúp tải ảnh nhanh gấp 3-4 lần
 HTTP_SESSION = requests.Session()
 adapter = requests.adapters.HTTPAdapter(pool_connections=12, pool_maxsize=12, max_retries=1)
 HTTP_SESSION.mount("http://", adapter)
 HTTP_SESSION.mount("https://", adapter)
 HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
 
-STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục", "quyển", "cuốn"}
+STOP_WORDS_VN = {
+    "con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái",
+    "tấm", "bức", "tờ", "cục", "quyển", "cuốn", "cây", "vẽ", "màu", "loại"
+}
 COLOR_WORDS_VN = ["đen", "đỏ", "xanh", "vàng", "trắng", "hồng", "tím", "nâu", "xám", "cam", "bạc"]
 
 
@@ -224,7 +225,7 @@ def _center_crop_for_matching(pil_img, keep_ratio=0.75):
 
 
 def _fast_pil_features(canvas):
-    """Trích xuất dHash 4 góc xoay + lưới màu 3x3 siêu tốc (< 4ms/ảnh, không dùng quantize)."""
+    """Trích xuất dHash 4 góc xoay + lưới màu 3x3 siêu tốc (< 4ms/ảnh)."""
     phashes = []
     for angle in (0, 90, 180, 270):
         rot = canvas.rotate(angle) if angle else canvas
@@ -237,7 +238,6 @@ def _fast_pil_features(canvas):
                 h_val = (h_val << 1) | (1 if px[base + col] > px[base + col + 1] else 0)
         phashes.append(h_val)
 
-    # Thu nhỏ xuống 36x36 (mỗi ô lưới 3x3 tương ứng đúng 12x12 = 144 pixels)
     small_rgb = canvas.resize((36, 36), Image.Resampling.BILINEAR)
     pixels = list(small_rgb.getdata())
     grid_hists = []
@@ -251,7 +251,6 @@ def _fast_pil_features(canvas):
                     bins[rv >> 5] += 1.0
                     bins[8 + (gv >> 5)] += 1.0
                     bins[16 + (bv >> 5)] += 1.0
-            # Tổng mỗi kênh là 144 -> tổng 3 kênh = 432
             inv_s = 1.0 / 432.0
             grid_hists.append([x * inv_s for x in bins])
 
@@ -422,13 +421,13 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 orb_points = 7
 
             raw_total = color_points + shape_points + orb_points
-            if not is_same_keyword and raw_total > 22:
-                raw_total = 22
+            if not is_same_keyword and raw_total > 26:
+                raw_total = 26
 
             total = min(50, raw_total)
             return int(total), float(total / 50.0)
 
-        # Nhánh thuần Pillow (giữ nguyên thang điểm bản 61)
+        # Nhánh thuần Pillow
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
             color_points = 10
@@ -464,8 +463,8 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 shape_points = 9
 
             total = min(50, color_points + shape_points)
-            if not is_same_keyword and total > 22:
-                total = 22
+            if not is_same_keyword and total > 26:
+                total = 26
             return int(total), float(total / 50.0)
 
         return 0, 0.0
@@ -474,39 +473,31 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         return 0, 0.0
 
 
+def _tokenize_meaningful_words(text_name):
+    """Tách tập từ khóa có nghĩa tự nhiên (bỏ từ dừng & từ chỉ màu sắc), không cần khai báo thủ công."""
+    if not text_name:
+        return set()
+    t = re.sub(r'[^\w\s]', ' ', str(text_name).lower())
+    words = [w for w in t.split() if len(w) >= 2 and w not in STOP_WORDS_VN and w not in COLOR_WORDS_VN]
+    return set(words)
+
+
 def get_core_keyword(text_name):
-    """Chuẩn hóa danh từ cốt lõi và gắn kèm số hiệu/khối lớp để phân biệt rạch ròi từng môn/lớp."""
+    """Chuẩn hóa nhóm từ đồng nghĩa khác mặt chữ (casio/máy tính, ví/bóp...) hoặc lấy từ khóa tự nhiên."""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
 
+    # Chỉ dùng từ điển cho các từ đồng nghĩa KHÁC MẶT CHỮ (không cần thêm từng món đồ thông thường)
     synonyms_map = {
-        "máy tính casio": ["casio", "fx580", "fx 580", "fx570", "fx 570", "880btg", "fx880", "fx 880", "máy tính bỏ túi", "casio580"],
+        "máy tính casio": ["casio", "fx580", "fx 580", "fx570", "fx 570", "880btg", "fx880", "fx 880", "máy tính bỏ túi"],
         "laptop": ["laptop", "macbook", "máy tính xách tay"],
-        "chuột": ["chuột", "con chuột", "chuột máy tính", "mouse"],
-        "sách toán": ["sách toán", "sbt toán", "bài tập toán", "toán"],
-        "sách văn": ["sách văn", "ngữ văn", "văn học", "sách ngữ văn"],
-        "sách tiếng anh": ["sách anh", "tiếng anh", "english", "sách tiếng anh"],
-        "sách tin học": ["tin học", "sách tin", "tin 12", "tin 11", "tin 10", "tin 9", "tin 8", "tin 7", "tin 6"],
-        "sách công nghệ": ["công nghệ", "sách công nghệ"],
-        "sách lý": ["vật lý", "sách lý", "sách vật lý"],
-        "sách hóa": ["hóa học", "sách hóa", "sách hóa học"],
-        "sách sinh": ["sinh học", "sách sinh", "sách sinh học"],
-        "sách sử": ["lịch sử", "sách sử", "sách lịch sử"],
-        "sách địa": ["địa lý", "địa lí", "sách địa"],
-        "bút bi": ["bút bi", "viết bi"],
-        "bút chì": ["bút chì", "bút chì kim"],
-        "bút": ["cây bút", "bút mực", "bút nước", "bút gel", "bút"],
-        "thước": ["cây thước", "thước kẻ", "thước"],
+        "chuột": ["chuột", "mouse"],
         "điện thoại": ["điện thoại", "phone", "iphone", "samsung", "oppo", "xiaomi"],
         "balo": ["balo", "ba lô"],
-        "cặp": ["cặp", "cặp sách"],
-        "ví": ["ví", "bóp", "ví tiền"],
-        "áo khoác": ["áo khoác", "áo gió", "áo ấm"],
-        "nón": ["nón", "mũ", "nón kết"],
-        "thẻ": ["thẻ", "căn cước", "cccd", "thẻ học sinh"],
-        "bình nước": ["bình nước", "bình giữ nhiệt"],
-        "gấu bông": ["gấu bông", "thú nhồi bông", "móc khóa gấu"]
+        "ví": ["ví", "bóp"],
+        "nón": ["nón", "mũ"],
+        "thẻ": ["thẻ", "căn cước", "cccd"],
     }
 
     for core_key, words in synonyms_map.items():
@@ -514,7 +505,7 @@ def get_core_keyword(text_name):
             nums = re.findall(r'\d+', t)
             return f"{core_key}_{'_'.join(nums)}" if nums else core_key
 
-    tokens = [w for w in t.split() if w not in STOP_WORDS_VN and w not in COLOR_WORDS_VN]
+    tokens = sorted(_tokenize_meaningful_words(t))
     if not tokens:
         return t
     nums = re.findall(r'\d+', t)
@@ -523,7 +514,7 @@ def get_core_keyword(text_name):
 
 
 def similarity(text1, text2):
-    """Cổng loại trừ văn bản: Chặn ngay nếu khác môn học, khác số lớp hoặc trái màu sắc."""
+    """So khớp tên tổng quát: Tự động nhận diện từ chung bất kỳ (tranh, kính, vợt, hộp...) mà không cần thêm tay."""
     if not text1 or not text2:
         return 0.0
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
@@ -531,27 +522,31 @@ def similarity(text1, text2):
     if t1 == t2:
         return 1.0
 
+    # Chỉ chặn tự động khi 2 món có số hiệu / khối lớp khác nhau (VD: Toán 9 != Toán 10)
     nums1 = re.findall(r'\d+', t1)
     nums2 = re.findall(r'\d+', t2)
     if nums1 and nums2 and nums1 != nums2:
         return 0.0
 
-    c1 = extract_colors(t1)
-    c2 = extract_colors(t2)
-    if c1 and c2 and not c1.intersection(c2):
-        return 0.0
-
+    # 1. Kiểm tra nhóm từ đồng nghĩa khác mặt chữ
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
+    if k1 and k2 and k1 == k2:
+        return 0.95
 
-    if k1 and k2:
-        if k1 == k2:
-            return 0.95
-        base_k1 = k1.split("_")[0]
-        base_k2 = k2.split("_")[0]
-        if base_k1 == base_k2:
-            return 0.75
-        return 0.0
+    # 2. Giao thoa từ vựng tự nhiên: "bức tranh" & "tranh vẽ" -> đều có từ "tranh" -> tự động khớp!
+    w1 = _tokenize_meaningful_words(t1)
+    w2 = _tokenize_meaningful_words(t2)
+    common = w1.intersection(w2)
+    if common:
+        # Loại trừ trường hợp chỉ trùng mỗi chữ "sách" nhưng khác môn (VD: "sách toán" vs "sách văn")
+        non_generic = {w for w in common if w not in {"sách", "vở", "tập", "đồ", "vật"}}
+        if non_generic:
+            overlap_ratio = len(non_generic) / max(1, min(len(w1), len(w2)))
+            return min(0.95, 0.72 + 0.23 * overlap_ratio)
+        # Nếu chỉ trùng mỗi chữ "sách"/"vở" mà các từ còn lại khác hẳn môn học -> điểm thấp
+        if len(w1) > 1 and len(w2) > 1:
+            return 0.15
 
     if t1 in t2 or t2 in t1:
         return 0.85
@@ -560,7 +555,7 @@ def similarity(text1, text2):
 
 
 def evaluate_color_match(lost_item, found_item, is_same_key):
-    """Tính điểm màu sắc (0–15) và phát hiện xung đột màu giữa 2 món đồ."""
+    """Tính điểm màu sắc (0–15). Không chặn cứng khi lệch màu, chỉ cho 0đ màu để vẫn đối sánh được."""
     m1 = str(lost_item.mau_sac or "").strip().lower()
     m2 = str(found_item.mau_sac or "").strip().lower()
     has_m1 = m1 not in ["none", "null", ""]
@@ -576,7 +571,7 @@ def evaluate_color_match(lost_item, found_item, is_same_key):
             return 0, True
 
     if has_m1 and has_m2:
-        sim = similarity(m1, m2)
+        sim = SequenceMatcher(None, m1, m2).ratio()
         return int(sim * 15), (sim < 0.3)
 
     return (10 if is_same_key else 0), False
@@ -987,7 +982,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh 2 tầng tốc độ cao: Tải song song 12 luồng + lưu cache đĩa bền vững."""
+    """Đối sánh tổng quát: Tự động nhận diện từ chung & không loại bỏ cặp chỉ vì lệch màu mô tả."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1010,7 +1005,6 @@ def match_items(item_id=None):
         for obj in found_items:
             obj.has_image = check_real_image(obj.hinh_anh)
 
-        # Tầng 1: Cổng loại trừ & chấm điểm văn bản ngay trong RAM
         candidates = []
         sequence = 0
 
@@ -1024,15 +1018,13 @@ def match_items(item_id=None):
 
                     key2 = get_core_keyword(found.ten_do)
                     ten_sim = similarity(lost.ten_do, found.ten_do)
-                    is_same_key = (key1 == key2 and key1 != "")
+                    is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
 
-                    if not (is_same_key or ten_sim >= 0.40):
+                    if not (is_same_key or ten_sim >= 0.35):
                         continue
 
-                    ten_score = 15 if is_same_key else int(ten_sim * 15)
-                    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
-                    if color_conflict:
-                        continue
+                    ten_score = 15 if ten_sim >= 0.85 else int(ten_sim * 15)
+                    mau_score, _ = evaluate_color_match(lost, found, is_same_key)
 
                     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
@@ -1061,8 +1053,7 @@ def match_items(item_id=None):
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
-        # Tầng 2: Chỉ tải những ảnh chưa có trong cache (12 luồng Keep-Alive)
-        eval_limit = min(total_matches, page * per_page + 2)
+        eval_limit = min(total_matches, page * per_page + 5)
         top_candidates = candidates[:eval_limit]
 
         urls_to_fetch = set()
@@ -1151,9 +1142,9 @@ def teacher_check(lost_id, found_id):
     key1 = get_core_keyword(lost.ten_do)
     key2 = get_core_keyword(found.ten_do)
     ten_sim = similarity(lost.ten_do, found.ten_do)
-    is_same_key = (key1 == key2 and key1 != "")
+    is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
 
-    ten_score = 15 if is_same_key else int(ten_sim * 15)
+    ten_score = 15 if ten_sim >= 0.85 else int(ten_sim * 15)
     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
 
     if has1 and has2:
