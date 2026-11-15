@@ -292,8 +292,8 @@ def calculate_image_features(img_path):
                     grid_hists.append([x / s for x in bins])
 
             features = {
-                "version": 4,
-                "type": "pil_v4_spatial",
+                "version": 5,
+                "type": "pil_v5_spatial",
                 "dhash": phashes[0],
                 "phashes": phashes,
                 "grid_hists": grid_hists,
@@ -337,19 +337,19 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 curr_g2 = g2
                 for _ in range(4):
                     corrs = [max(0.0, float(cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))) for h1, h2 in zip(g1, curr_g2)]
-                    top5_corr = sum(sorted(corrs, reverse=True)[:5]) / 5.0
-                    if top5_corr > best_corr:
-                        best_corr = top5_corr
+                    avg_corr = (sum(corrs) + corrs[4] * 2.0) / 11.0
+                    if avg_corr > best_corr:
+                        best_corr = avg_corr
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-                if best_corr >= 0.62:
+                if best_corr >= 0.58:
                     color_points = 22
-                elif best_corr >= 0.45:
-                    color_points = 18
-                elif best_corr >= 0.32:
-                    color_points = 14
-                elif best_corr >= 0.20:
-                    color_points = 9
+                elif best_corr >= 0.42:
+                    color_points = 17
+                elif best_corr >= 0.28:
+                    color_points = 12
+                elif best_corr >= 0.16:
+                    color_points = 7
 
             # 2. Bố cục cấu trúc pHash theo góc xoay khớp nhất (tối đa 14/50 điểm)
             p1 = int(f1["phash"])
@@ -359,11 +359,11 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             if phash_score >= 0.68:
                 shape_points = 14
             elif phash_score >= 0.56:
-                shape_points = 12
+                shape_points = 11
             elif phash_score >= 0.46:
-                shape_points = 9
+                shape_points = 8
             else:
-                shape_points = 6
+                shape_points = 5
 
             # 3. Chi tiết đặc trưng ORB 2 chiều (tối đa 14/50 điểm)
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
@@ -380,12 +380,12 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 if mutual >= 7:
                     orb_points = 14
                 elif mutual >= 3:
-                    orb_points = 11
+                    orb_points = 10
                 elif mutual >= 1:
-                    orb_points = 9
+                    orb_points = 7
 
-            if color_points <= 9 and orb_points > 7:
-                orb_points = 7
+            if color_points <= 7 and orb_points > 6:
+                orb_points = 6
 
             raw_total = color_points + shape_points + orb_points
             if not is_same_keyword and raw_total > 22:
@@ -394,40 +394,40 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             total = min(50, raw_total)
             return int(total), float(total / 50.0)
 
-        # Nhánh thuần Pillow (chạy khi Render không cài OpenCV)
+        # Nhánh thuần Pillow (ưu tiên vùng trung tâm để tránh nền trắng kéo điểm)
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
-            color_points = 10
+            color_points = 7
             if len(g1) == 9 and len(g2) == 9:
                 best_inter = 0.0
                 curr_g2 = g2
                 for _ in range(4):
                     inters = [sum(min(a, b) for a, b in zip(h1, h2)) for h1, h2 in zip(g1, curr_g2)]
-                    top5 = sum(sorted(inters, reverse=True)[:5]) / 5.0
-                    if top5 > best_inter:
-                        best_inter = top5
+                    avg_inter = (sum(inters) + inters[4] * 2.0) / 11.0
+                    if avg_inter > best_inter:
+                        best_inter = avg_inter
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-                if best_inter >= 0.65:
+                if best_inter >= 0.62:
                     color_points = 26
-                elif best_inter >= 0.48:
-                    color_points = 21
+                elif best_inter >= 0.46:
+                    color_points = 20
                 elif best_inter >= 0.34:
-                    color_points = 16
+                    color_points = 13
                 else:
-                    color_points = 10
+                    color_points = 7
 
             p1 = int(f1.get("dhash", 0))
             p2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
             min_dist = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
-            if min_dist <= 14:
+            if min_dist <= 12:
                 shape_points = 22
-            elif min_dist <= 22:
-                shape_points = 17
-            elif min_dist <= 28:
-                shape_points = 13
+            elif min_dist <= 18:
+                shape_points = 16
+            elif min_dist <= 24:
+                shape_points = 11
             else:
-                shape_points = 9
+                shape_points = 6
 
             total = min(50, color_points + shape_points)
             if not is_same_keyword and total > 22:
