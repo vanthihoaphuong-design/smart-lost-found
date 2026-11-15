@@ -172,6 +172,73 @@ def _phash_from_gray(gray):
     return result
 
 
+def _foreground_for_matching(image_bgr):
+    """Tach tuong doi vat the bang GrabCut; neu khong chac chan thi dung anh goc.
+
+    Khong thay doi anh goc/URL hien thi tren website. Anh sau tach nen chi dung
+    noi bo de trich xuat dac trung so sanh. Khong can them cot database hay model AI.
+    """
+    if not HAS_OPENCV or image_bgr is None:
+        return image_bgr, False
+
+    try:
+        h, w = image_bgr.shape[:2]
+        if h < 40 or w < 40:
+            return image_bgr, False
+
+        # GrabCut lam viec tren kich thuoc nho de tiet kiem CPU/RAM Render Free.
+        scale = min(1.0, 240.0 / max(h, w))
+        sw, sh = max(40, int(w * scale)), max(40, int(h * scale))
+        small = cv2.resize(image_bgr, (sw, sh), interpolation=cv2.INTER_AREA)
+        mask = np.zeros((sh, sw), np.uint8)
+        bg_model = np.zeros((1, 65), np.float64)
+        fg_model = np.zeros((1, 65), np.float64)
+        margin_x = max(2, int(sw * 0.04))
+        margin_y = max(2, int(sh * 0.04))
+        rect = (margin_x, margin_y, max(1, sw - 2 * margin_x), max(1, sh - 2 * margin_y))
+
+        cv2.grabCut(small, mask, rect, bg_model, fg_model, 2, cv2.GC_INIT_WITH_RECT)
+        foreground_mask = np.where(
+            (mask == cv2.GC_FGD) | (mask == cv2.GC_PR_FGD), 255, 0
+        ).astype(np.uint8)
+
+        # Lam mem bien nhe, tranh tao vien nhieu khi so sanh ORB/pHash.
+        kernel = np.ones((3, 3), np.uint8)
+        foreground_mask = cv2.morphologyEx(foreground_mask, cv2.MORPH_CLOSE, kernel)
+        foreground_mask = cv2.GaussianBlur(foreground_mask, (3, 3), 0)
+
+        ratio = float(np.count_nonzero(foreground_mask)) / float(sw * sh)
+        # Neu GrabCut gan nhu giu het nen hoac cat qua nhieu thi khong tin ket qua.
+        if ratio < 0.025 or ratio > 0.92:
+            return image_bgr, False
+
+        ys, xs = np.where(foreground_mask > 24)
+        if len(xs) < 20 or len(ys) < 20:
+            return image_bgr, False
+
+        x1, x2 = int(xs.min()), int(xs.max()) + 1
+        y1, y2 = int(ys.min()), int(ys.max()) + 1
+        pad_x = max(3, int((x2 - x1) * 0.06))
+        pad_y = max(3, int((y2 - y1) * 0.06))
+        x1, x2 = max(0, x1 - pad_x), min(sw, x2 + pad_x)
+        y1, y2 = max(0, y1 - pad_y), min(sh, y2 + pad_y)
+
+        crop = small[y1:y2, x1:x2]
+        crop_mask = foreground_mask[y1:y2, x1:x2]
+        if crop.size == 0:
+            return image_bgr, False
+
+        # Nen duoc thay bang mau xam nhat dong nhat; giu mau vat the.
+        bg = np.full_like(crop, 245)
+        alpha = crop_mask.astype(np.float32)[:, :, None] / 255.0
+        isolated = (crop.astype(np.float32) * alpha + bg.astype(np.float32) * (1 - alpha))
+        isolated = np.clip(isolated, 0, 255).astype(np.uint8)
+        return isolated, True
+    except Exception as exc:
+        print(f"Canh bao tach nen GrabCut that bai, dung anh goc: {exc}")
+        return image_bgr, False
+
+
 def calculate_image_features(img_path):
     """Trích xuất đặc trưng từ toàn bộ ảnh, chuẩn hóa kích thước trước khi so sánh."""
     if not check_real_image(img_path):
@@ -196,13 +263,17 @@ def calculate_image_features(img_path):
             if h < 2 or w < 2 or h * w > 30_000_000:
                 return None
 
-            # Giữ tỷ lệ ảnh, không ép méo vật thể thành hình vuông.
+            # Chuan hoa anh goc, giu ty le va khong lam meo vat the.
             scale = min(1.0, 320.0 / max(h, w))
             nw, nh = max(2, int(w * scale)), max(2, int(h * scale))
             resized = cv2.resize(image, (nw, nh), interpolation=cv2.INTER_AREA)
-            canvas = np.full((320, 320, 3), 245, dtype=np.uint8)
+            original_canvas = np.full((320, 320, 3), 245, dtype=np.uint8)
             x, y = (320 - nw) // 2, (320 - nh) // 2
-            canvas[y:y + nh, x:x + nw] = resized
+            original_canvas[y:y + nh, x:x + nw] = resized
+
+            # Tach nen chi phuc vu tinh diem anh; anh goc tren website khong bi thay doi.
+            foreground, bg_removed = _foreground_for_matching(original_canvas)
+            canvas = foreground if bg_removed else original_canvas
 
             gray = cv2.cvtColor(canvas, cv2.COLOR_BGR2GRAY)
             orb = cv2.ORB_create(
@@ -220,8 +291,9 @@ def calculate_image_features(img_path):
             cv2.normalize(color_hist, color_hist, 1.0, 0.0, cv2.NORM_L1)
 
             features = {
-                "version": 2,
-                "type": "opencv_v2",
+                "version": 3,
+                "type": "opencv_v3_foreground",
+                "background_removed": bool(bg_removed),
                 "phash": _phash_from_gray(gray),
                 "orb_descriptors": descriptors,
                 "orb_count": len(keypoints) if keypoints else 0,
@@ -269,7 +341,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
         if f1 is None or f2 is None:
             return 0, 0.0
 
-        if f1.get("type") == "opencv_v2" and f2.get("type") == "opencv_v2":
+        if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
             # 25/50: perceptual hash — nhận diện bố cục/đặc trưng tổng thể.
             hamming = (int(f1["phash"]) ^ int(f2["phash"])).bit_count()
             phash_score = max(0.0, 1.0 - hamming / 63.0)
@@ -837,28 +909,22 @@ def match_items():
                 except Exception:
                     continue
 
-        # Sắp xếp các cặp theo mức độ liên quan về chữ trước
-        raw_matches.sort(key=lambda x: x["base_score"], reverse=True)
+        # BƯỚC 2: TÍNH ĐIỂM ĐẦY ĐỦ CHO TẤT CẢ CÁC CẶP TRƯỚC KHI PHÂN TRANG
+        # Điều này bảo đảm trang 1 là 10 cặp có tổng điểm cao nhất trên TOÀN BỘ
+        # dữ liệu; trang 2 là 10 cặp tiếp theo, không phải chỉ sắp xếp riêng từng trang.
+        final_matches_all = []
 
-        total_matches = len(raw_matches)
-        total_pages = max(1, (total_matches + per_page - 1) // per_page)
-        page = max(1, min(page, total_pages))
-
-        # BƯỚC 2: CẮT PHÂN TRANG LẤY ĐÚNG 10 CẶP CỦA TRANG HIỆN TẠI
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_raw = raw_matches[start_idx:end_idx]
-
-        final_matches = []
-
-        # BƯỚC 3: CHỈ CHẠY AI TÍNH ĐIỂM ẢNH CHO ĐÚNG 10 CẶP ĐƯỢC HIỂN THỊ
-        for item in paginated_raw:
+        for item in raw_matches:
             lost = item["lost"]
             found = item["found"]
-            
+
             if lost.has_image and found.has_image:
                 if item["is_same_key"] or item["ten_sim"] >= 0.35:
-                    anh_score, _ = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=item["is_same_key"])
+                    anh_score, _ = image_score(
+                        lost.hinh_anh,
+                        found.hinh_anh,
+                        is_same_keyword=item["is_same_key"]
+                    )
                 else:
                     anh_score = 0
             else:
@@ -875,7 +941,7 @@ def match_items():
             else:
                 ket_luan = "🔴 Khả năng trùng khớp thấp"
 
-            final_matches.append({
+            final_matches_all.append({
                 "lost": lost,
                 "found": found,
                 "score": total_score,
@@ -887,8 +953,15 @@ def match_items():
                 "score_date": item["score_date"]
             })
 
-        # Sắp xếp 10 cặp của trang theo tổng điểm chính xác
-        final_matches.sort(key=lambda x: x["score"], reverse=True)
+        # Sắp xếp TOÀN BỘ kết quả theo tổng điểm giảm dần trước khi cắt trang.
+        final_matches_all.sort(key=lambda x: x["score"], reverse=True)
+
+        total_matches = len(final_matches_all)
+        total_pages = max(1, (total_matches + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        final_matches = final_matches_all[start_idx:end_idx]
 
         gc.collect()
 
