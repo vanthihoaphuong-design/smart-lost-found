@@ -44,7 +44,7 @@
                             <td class="fw-bold text-dark">{{ item.ten_do }}</td>
                             <td><span class="badge bg-info text-dark text-wrap">{{ item.loai_do }}</span></td>
                             <td>{{ item.noi_nhat }}</td>
-                            <td>{{ item.ngay_nhat }}</td>
+                            <td>{{ item.ngay_nhat | vn_date }}</td>
                             <td>
                                 {% if item.trang_thai == 'DA_TRA' %}
                                     <span class="badge bg-success">✅ Đã có người nhận</span>
@@ -57,7 +57,7 @@
                             </td>
                             <td>
                                 {% if item.thoi_diem_tra %}
-                                    {{ item.thoi_diem_tra.strftime("%d/%m/%Y %H:%M") }}
+                                    {{ item.thoi_diem_tra.strftime("%d-%m-%Y %H:%M") }}
                                 {% else %}
                                     <span class="text-muted">—</span>
                                 {% endif %}
