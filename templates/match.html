@@ -94,7 +94,7 @@
                     </div>
                     <div class="item-title">{{ m.lost.ten_do }}</div>
                     <span class="badge bg-danger text-white mb-1">{{ m.lost.loai_do }}</span>
-                    <div class="small text-muted">📍 {{ m.lost.noi_mat }} | 📅 {{ m.lost.ngay_mat }}</div>
+                    <div class="small text-muted">📍 {{ m.lost.noi_mat }} | 📅 {{ m.lost.ngay_mat | vn_date }}</div>
                 </div>
 
                 <!-- ĐỒ NHẶT -->
@@ -115,7 +115,7 @@
                     </div>
                     <div class="item-title">{{ m.found.ten_do }}</div>
                     <span class="badge bg-success text-white mb-1">{{ m.found.loai_do }}</span>
-                    <div class="small text-muted">📍 {{ m.found.noi_nhat }} | 📅 {{ m.found.ngay_nhat }}</div>
+                    <div class="small text-muted">📍 {{ m.found.noi_nhat }} | 📅 {{ m.found.ngay_nhat | vn_date }}</div>
                 </div>
 
                 <!-- ĐIỂM SỐ -->
@@ -222,3 +222,933 @@ document.addEventListener('keydown', function(e) {
 });
 </script>
 {% endblock %}
+```[cite: 19]
+
+---
+
+### 2. `templates/list_items.html`
+
+```html
+{% extends "base.html" %}
+
+{% block title %}
+Danh sách đồ thất lạc
+{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h2 class="fw-bold text-primary mb-0">📋 Danh sách đồ thất lạc</h2>
+    <div>
+        <a href="{{ url_for('lost') }}" class="btn btn-primary shadow-sm">➕ Thêm đồ thất lạc</a>
+        <a href="{{ url_for('search') }}" class="btn btn-success shadow-sm ms-2">🔍 Tìm kiếm</a>
+    </div>
+</div>
+
+{% if items %}
+<div class="table-responsive shadow-sm rounded">
+    <table class="table table-bordered table-hover align-middle bg-white mb-0 text-center">
+        <thead class="table-primary align-middle">
+            <tr>
+                <th style="width: 5%;">ID</th>
+                <th style="width: 12%;">Ảnh</th>
+                <th style="width: 18%;">Tên đồ</th>
+                <th style="width: 18%;">Loại đồ</th>
+                <th style="width: 13%;">Nơi mất</th>
+                <th style="width: 12%;">Ngày mất</th>
+                <th style="width: 12%;">Trạng thái</th>
+                <th style="width: 10%;">Thao tác</th>
+            </tr>
+        </thead>
+        <tbody>
+        {% for item in items %}
+            <tr>
+                <td class="fw-bold">{{ item.id }}</td>
+                <td>
+                    {% if item.hinh_anh %}
+                        {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
+                        <img src="{{ img_url }}" 
+                             class="rounded shadow-sm cursor-pointer border" 
+                             style="max-height: 70px; object-fit: cover;" 
+                             onclick="zoomImage('{{ img_url }}')"
+                             title="Bấm để xem phóng to"
+                             onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                    {% else %}
+                        <span class="text-muted small">Không có ảnh</span>
+                    {% endif %}
+                </td>
+                <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                <td><span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span></td>
+                <td>{{ item.noi_mat }}</td>
+                <td>{{ item.ngay_mat | vn_date }}</td>
+                <td>
+                    {% if item.trang_thai == 'DA_TIM' or item.trang_thai == 'DA_TRA' or item.trang_thai == 'Đã tìm thấy' %}
+                        <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã tìm thấy</span>
+                    {% else %}
+                        <span class="badge bg-warning text-dark py-2 px-3 fw-bold">🔑 Đang tìm</span>
+                    {% endif %}
+                </td>
+                <td>
+                    {% if item.trang_thai == "DA_TIM_THAY" or item.trang_thai == "DA_TRA" %}
+                        <span class="badge bg-light text-muted border">Lưu trữ</span>
+                    {% else %}
+                        <div class="d-flex flex-column gap-1 align-items-center">
+                            <a href="{{ url_for('match_items') }}" class="btn btn-sm btn-outline-primary w-100">🔍 Đối sánh</a>
+                            <a href="{{ url_for('edit_lost', item_id=item.id) }}" class="btn btn-sm btn-warning w-100">✏️ Sửa</a>
+                            <a href="{{ url_for('delete_item', item_id=item.id) }}" class="btn btn-sm btn-danger w-100" onclick="confirmDeletePIN(event, this.href);">🗑️ Xóa</a>
+                        </div>
+                    {% endif %}
+                </td>
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+    <div class="alert alert-warning text-center mt-3">Chưa có dữ liệu đồ thất lạc.</div>
+{% endif %}
+
+<!-- Modal nhập PIN ẩn mật khẩu -->
+<div class="modal fade" id="pinModal" tabindex="-1" aria-labelledby="pinModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-warning text-dark">
+                <h5 class="modal-title fw-bold" id="pinModalLabel">🔒 Xác Nhận Quyền Quản Trị</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <p class="text-secondary mb-2">Thao tác này cần quyền giáo viên / quản trị viên. Vui lòng nhập Mã PIN:</p>
+                <input type="password" id="modalPinInput" class="form-control form-control-lg text-center" placeholder="••••••••" autocomplete="new-password">
+                <div id="pinErrorMsg" class="text-danger mt-2 small text-center" style="display: none;">❌ Mã PIN không chính xác!</div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
+                <button type="button" class="btn btn-danger fw-bold" onclick="submitPinCheck()">Xác nhận xóa</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT CHUẨN 100% -->
+<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
+            <div class="modal-header border-0 pb-0 pt-2 pe-3">
+                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
+                <img id="zoomModalImage" src="" 
+                     draggable="false"
+                     style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
+            </div>
+            <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let pendingDeleteUrl = "";
+
+function confirmDeletePIN(event, deleteUrl) {
+    event.preventDefault();
+    pendingDeleteUrl = deleteUrl;
+    document.getElementById('modalPinInput').value = '';
+    document.getElementById('pinErrorMsg').style.display = 'none';
+    let pinModal = new bootstrap.Modal(document.getElementById('pinModal'));
+    pinModal.show();
+}
+
+function submitPinCheck() {
+    let userPin = document.getElementById('modalPinInput').value.trim();
+    fetch('/get-pin?t=' + new Date().getTime())
+        .then(response => response.json())
+        .then(data => {
+            if (userPin === String(data.pin).trim()) {
+                window.location.href = pendingDeleteUrl;
+            } else {
+                document.getElementById('pinErrorMsg').style.display = 'block';
+            }
+        })
+        .catch(err => alert("❌ Lỗi kiểm tra mã PIN!"));
+}
+
+let scale = 1;
+let pointX = 0;
+let pointY = 0;
+let startX = 0;
+let startY = 0;
+let isDragging = false;
+
+function zoomImage(src) {
+    const imgEl = document.getElementById('zoomModalImage');
+    
+    scale = 1;
+    pointX = 0;
+    pointY = 0;
+    isDragging = false;
+    updateTransform(imgEl);
+    
+    imgEl.src = src;
+
+    const modalEl = document.getElementById('imageZoomModal');
+    const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    bsModal.show();
+}
+
+function updateTransform(img) {
+    img.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
+}
+
+document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const imgEl = document.getElementById('zoomModalImage');
+    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    
+    scale = Math.min(Math.max(1, scale + delta), 6);
+    
+    if (scale === 1) {
+        pointX = 0;
+        pointY = 0;
+    }
+    updateTransform(imgEl);
+}, { passive: false });
+
+const imgEl = document.getElementById('zoomModalImage');
+
+imgEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    isDragging = true;
+    startX = e.clientX - pointX;
+    startY = e.clientY - pointY;
+    imgEl.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    pointX = e.clientX - startX;
+    pointY = e.clientY - startY;
+    updateTransform(imgEl);
+});
+
+window.addEventListener('mouseup', function() {
+    if (isDragging) {
+        isDragging = false;
+        imgEl.style.cursor = 'grab';
+    }
+});
+</script>
+{% endblock %}
+```[cite: 18]
+
+---
+
+### 3. `templates/found_list.html`
+
+```html
+{% extends "base.html" %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="d-flex justify-content-between align-items-center mb-3">
+        <h3 class="fw-bold text-success">📦 Danh Sách Đồ Nhặt Được</h3>
+        <a href="{{ url_for('found') }}" class="btn btn-success fw-bold">➕ Báo Nhặt Đồ Mới</a>
+    </div>
+
+    <div class="card shadow-sm border-0">
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover align-middle mb-0 text-center">
+                    <thead class="table-success align-middle">
+                        <tr>
+                            <th>STT</th>
+                            <th>Hình ảnh</th>
+                            <th>Tên đồ vật</th>
+                            <th>Loại đồ</th>
+                            <th>Nơi nhặt</th>
+                            <th>Ngày nhặt</th>
+                            <th>Trạng thái</th>
+                            <th>Thời điểm trả</th>
+                            <th>Thao tác</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in items %}
+                        <tr>
+                            <td class="fw-bold">{{ item.id }}</td>
+                            <td style="width: 100px;">
+                                {% if item.hinh_anh %}
+                                    {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
+                                    <img src="{{ img_url }}" 
+                                         class="rounded shadow-sm cursor-pointer border" 
+                                         style="max-height: 75px; object-fit: cover;" 
+                                         onclick="zoomImage('{{ img_url }}')"
+                                         title="Bấm để xem phóng to"
+                                         onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                                {% else %}
+                                    <span class="text-muted small">Không có ảnh</span>
+                                {% endif %}
+                            </td>
+                            <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                            <td><span class="badge bg-info text-dark text-wrap">{{ item.loai_do }}</span></td>
+                            <td>{{ item.noi_nhat }}</td>
+                            <td>{{ item.ngay_nhat | vn_date }}</td>
+                            <td>
+                                {% if item.trang_thai == 'DA_TRA' %}
+                                    <span class="badge bg-success">✅ Đã có người nhận</span>
+                                {% else %}
+                                    <span class="badge bg-primary mb-1">📦 Đang lưu giữ</span><br>
+                                    <button type="button" class="btn btn-sm btn-success mt-1" onclick="confirmReturn('{{ item.id }}', '{{ item.ten_do }}')">
+                                        ✅ Đánh dấu đã trả
+                                    </button>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if item.thoi_diem_tra %}
+                                    {{ item.thoi_diem_tra.strftime("%d-%m-%Y %H:%M") }}
+                                {% else %}
+                                    <span class="text-muted">—</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <a href="{{ url_for('edit_found', item_id=item.id) }}" class="btn btn-sm btn-outline-warning fw-bold">
+                                    ✏️ Sửa
+                                </a>
+                            </td>
+                        </tr>
+                        {% else %}
+                        <tr>
+                            <td colspan="9" class="text-muted py-4">Chưa có dữ liệu đồ nhặt được.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Nhập PIN Xác Nhận Hoàn Trả -->
+<div class="modal fade" id="pinReturnModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header bg-success text-white">
+                <h5 class="modal-title fw-bold">🔑 Xác nhận hoàn trả đồ vật</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body text-center">
+                <p>Xác nhận món đồ: <strong id="returnItemName" class="text-primary"></strong> đã được trao trả lại cho người mất?</p>
+                <div class="mb-3 text-start">
+                    <label class="form-label fw-bold">Nhập Mã PIN Giáo viên:</label>
+                    <input type="password" id="inputReturnPin" class="form-control text-center fs-4" placeholder="••••••" maxlength="10">
+                    <div id="returnPinError" class="text-danger small mt-1" style="display: none;">❌ Mã PIN không chính xác!</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
+                <button type="button" class="btn btn-success fw-bold" onclick="submitReturn()">Xác nhận hoàn trả</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT CHUẨN 100% -->
+<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
+            <div class="modal-header border-0 pb-0 pt-2 pe-3">
+                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
+                <img id="zoomModalImage" src="" 
+                     draggable="false"
+                     style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
+            </div>
+            <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let selectedReturnId = null;
+
+function confirmReturn(id, name) {
+    selectedReturnId = id;
+    document.getElementById("returnItemName").innerText = name;
+    document.getElementById("inputReturnPin").value = "";
+    document.getElementById("returnPinError").style.display = "none";
+    let modal = new bootstrap.Modal(document.getElementById('pinReturnModal'));
+    modal.show();
+}
+
+function submitReturn() {
+    let inputPin = document.getElementById("inputReturnPin").value.trim();
+    fetch('/get-pin')
+        .then(response => response.json())
+        .then(data => {
+            if (inputPin === data.pin) {
+                window.location.href = "/found-return/" + selectedReturnId;
+            } else {
+                document.getElementById("returnPinError").style.display = "block";
+            }
+        })
+        .catch(err => alert("Lỗi kết nối máy chủ!"));
+}
+
+let scale = 1;
+let pointX = 0;
+let pointY = 0;
+let startX = 0;
+let startY = 0;
+let isDragging = false;
+
+function zoomImage(src) {
+    const imgEl = document.getElementById('zoomModalImage');
+    
+    scale = 1;
+    pointX = 0;
+    pointY = 0;
+    isDragging = false;
+    updateTransform(imgEl);
+    
+    imgEl.src = src;
+
+    const modalEl = document.getElementById('imageZoomModal');
+    const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    bsModal.show();
+}
+
+function updateTransform(img) {
+    img.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
+}
+
+document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const imgEl = document.getElementById('zoomModalImage');
+    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    
+    scale = Math.min(Math.max(1, scale + delta), 6);
+    
+    if (scale === 1) {
+        pointX = 0;
+        pointY = 0;
+    }
+    updateTransform(imgEl);
+}, { passive: false });
+
+const imgEl = document.getElementById('zoomModalImage');
+
+imgEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    isDragging = true;
+    startX = e.clientX - pointX;
+    startY = e.clientY - pointY;
+    imgEl.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    pointX = e.clientX - startX;
+    pointY = e.clientY - startY;
+    updateTransform(imgEl);
+});
+
+window.addEventListener('mouseup', function() {
+    if (isDragging) {
+        isDragging = false;
+        imgEl.style.cursor = 'grab';
+    }
+});
+</script>
+{% endblock %}
+```[cite: 17]
+
+---
+
+### 4. `templates/search.html`
+
+```html
+{% extends "base.html" %}
+
+{% block title %}
+Tìm kiếm đồ thất lạc
+{% endblock %}
+
+{% block content %}
+<div class="container mt-4">
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body p-4">
+            <h3 class="fw-bold text-primary mb-3">🔍 Tìm kiếm thông tin</h3>
+            <form action="{{ url_for('search') }}" method="GET" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Từ khóa (Tên đồ vật)</label>
+                    <input type="text" name="keyword" class="form-control" placeholder="Nhập tên đồ vật cần tìm..." value="{{ keyword }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Loại đồ</label>
+                    <select name="category" class="form-select">
+                        <option value="">-- Tất cả loại đồ --</option>
+                        <option value="Sách vở / Dụng cụ học tập" {% if category == 'Sách vở / Dụng cụ học tập' %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
+                        <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if category == 'Thiết bị điện tử (Laptop, Điện thoại...)' %}selected{% endif %}>Thiết bị điện tử (Laptop, Điện thoại...)</option>
+                        <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if category == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' %}selected{% endif %}>Trang phục / Phụ kiện (Áo khoác, Ví...)</option>
+                        <option value="Giấy tờ / Thẻ học sinh" {% if category == 'Giấy tờ / Thẻ học sinh' %}selected{% endif %}>Giấy tờ / Thẻ học sinh</option>
+                        <option value="Khác" {% if category == 'Khác' %}selected{% endif %}>Khác</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Màu sắc</label>
+                    <input type="text" name="color" class="form-control" placeholder="Nhập màu sắc..." value="{{ color }}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Nơi mất / Nơi nhặt</label>
+                    <select name="location" class="form-select">
+                        <option value="">-- Tất cả khu vực / phòng học --</option>
+                        <option value="Sân trường" {% if location == 'Sân trường' %}selected{% endif %}>Sân trường</option>
+                        <option value="Nhà xe" {% if location == 'Nhà xe' %}selected{% endif %}>Nhà xe</option>
+                        <option value="Căn tin" {% if location == 'Căn tin' %}selected{% endif %}>Căn tin</option>
+                        <option value="Thư viện" {% if location == 'Thư viện' %}selected{% endif %}>Thư viện</option>
+                        <option value="Sân bóng" {% if location == 'Sân bóng' %}selected{% endif %}>Sân bóng</option>
+                        <option value="Phòng STEM" {% if location == 'Phòng STEM' %}selected{% endif %}>Phòng STEM</option>
+                        <option value="Phòng Tin học 1" {% if location == 'Phòng Tin học 1' %}selected{% endif %}>Phòng Tin học 1</option>
+                        <option value="Phòng Tin học 2" {% if location == 'Phòng Tin học 2' %}selected{% endif %}>Phòng Tin học 2</option>
+                        <option value="Phòng Văn" {% if location == 'Phòng Văn' %}selected{% endif %}>Phòng Văn</option>
+                        <option value="Phòng Sử - Địa" {% if location == 'Phòng Sử - Địa' %}selected{% endif %}>Phòng Sử - Địa</option>
+                        <option value="Phòng Hội trường" {% if location == 'Phòng Hội trường' %}selected{% endif %}>Phòng Hội trường</option>
+                        <option value="Phòng Đoàn - Đội" {% if location == 'Phòng Đoàn - Đội' %}selected{% endif %}>Phòng Đoàn - Đội</option>
+                        <option value="Khu Văn phòng" {% if location == 'Khu Văn phòng' %}selected{% endif %}>Khu Văn phòng</option>
+                        <option value="Phòng Tâm lý" {% if location == 'Phòng Tâm lý' %}selected{% endif %}>Phòng Tâm lý</option>
+                        <option value="6A1" {% if location == '6A1' %}selected{% endif %}>6A1</option>
+                        <option value="6A2" {% if location == '6A2' %}selected{% endif %}>6A2</option>
+                        <option value="6A3" {% if location == '6A3' %}selected{% endif %}>6A3</option>
+                        <option value="7A1" {% if location == '7A1' %}selected{% endif %}>7A1</option>
+                        <option value="7A2" {% if location == '7A2' %}selected{% endif %}>7A2</option>
+                        <option value="7A3" {% if location == '7A3' %}selected{% endif %}>7A3</option>
+                        <option value="8A1" {% if location == '8A1' %}selected{% endif %}>8A1</option>
+                        <option value="8A2" {% if location == '8A2' %}selected{% endif %}>8A2</option>
+                        <option value="8A3" {% if location == '8A3' %}selected{% endif %}>8A3</option>
+                        <option value="9A1" {% if location == '9A1' %}selected{% endif %}>9A1</option>
+                        <option value="9A2" {% if location == '9A2' %}selected{% endif %}>9A2</option>
+                        <option value="9A3" {% if location == '9A3' %}selected{% endif %}>9A3</option>
+                        <option value="10A1" {% if location == '10A1' %}selected{% endif %}>10A1</option>
+                        <option value="10A2" {% if location == '10A2' %}selected{% endif %}>10A2</option>
+                        <option value="10A3" {% if location == '10A3' %}selected{% endif %}>10A3</option>
+                        <option value="11A1" {% if location == '11A1' %}selected{% endif %}>11A1</option>
+                        <option value="11A2" {% if location == '11A2' %}selected{% endif %}>11A2</option>
+                        <option value="12A1" {% if location == '12A1' %}selected{% endif %}>12A1</option>
+                        <option value="12A2" {% if location == '12A2' %}selected{% endif %}>12A2</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Trạng thái xử lý</label>
+                    <select name="status" class="form-select">
+                        <option value="">-- Tất cả trạng thái --</option>
+                        <option value="DANG_TIM" {% if status == 'DANG_TIM' %}selected{% endif %}>🔑 Đang tìm (Đồ báo mất)</option>
+                        <option value="DA_TIM" {% if status == 'DA_TIM' %}selected{% endif %}>✅ Đã tìm thấy (Đồ báo mất)</option>
+                        <option value="DANG_LUU_GIU" {% if status == 'DANG_LUU_GIU' %}selected{% endif %}>📦 Đang lưu giữ (Đồ báo nhặt)</option>
+                        <option value="DA_TRA" {% if status == 'DA_TRA' %}selected{% endif %}>✅ Đã hoàn trả (Đồ báo nhặt)</option>
+                    </select>
+                </div>
+                <div class="col-12 text-end mt-3">
+                    <a href="{{ url_for('search') }}" class="btn btn-outline-secondary me-2">🔄 Đặt lại</a>
+                    <button type="submit" class="btn btn-primary px-4 fw-bold">🔍 Tìm kiếm ngay</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- KẾT QUẢ ĐỒ BÁO MẤT -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-primary text-white fw-bold">
+            🚨 Đồ báo mất ({% if lost_items %}{{ lost_items|length }}{% else %}0{% endif %} kết quả)
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover align-middle mb-0 text-center">
+                    <thead class="table-light align-middle">
+                        <tr>
+                            <th>Ảnh</th>
+                            <th>Tên đồ vật</th>
+                            <th>Loại đồ</th>
+                            <th>Màu sắc</th>
+                            <th>Nơi mất</th>
+                            <th>Ngày mất</th>
+                            <th>Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if lost_items %}
+                            {% for item in lost_items %}
+                            <tr>
+                                <td style="width: 100px;">
+                                    {% if item.hinh_anh %}
+                                        {% set lost_img = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
+                                        <img src="{{ lost_img }}" 
+                                             class="rounded shadow-sm cursor-pointer border" 
+                                             style="max-height: 70px; object-fit: cover;" 
+                                             onclick="zoomImage('{{ lost_img }}')"
+                                             title="Bấm để xem phóng to"
+                                             onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                                    {% else %}
+                                        <span class="text-muted small">Không có ảnh</span>
+                                    {% endif %}
+                                </td>
+                                <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                                <td><span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span></td>
+                                <td><span class="badge bg-light text-dark border">{{ item.mau_sac }}</span></td>
+                                <td>{{ item.noi_mat }}</td>
+                                <td>{{ item.ngay_mat | vn_date }}</td>
+                                <td>
+                                    {% if item.trang_thai in ['DA_TIM', 'Đã tìm thấy'] %}
+                                        <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã tìm thấy</span>
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark py-2 px-3 fw-bold">🔑 Đang tìm</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="7" class="text-muted py-3">Không tìm thấy dữ liệu đồ báo mất phù hợp.</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- KẾT QUẢ ĐỒ BÁO NHẶT -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-success text-white fw-bold">
+            📦 Đồ báo nhặt ({% if found_items %}{{ found_items|length }}{% else %}0{% endif %} kết quả)
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover align-middle mb-0 text-center">
+                    <thead class="table-light align-middle">
+                        <tr>
+                            <th>Ảnh</th>
+                            <th>Tên đồ vật</th>
+                            <th>Loại đồ</th>
+                            <th>Màu sắc</th>
+                            <th>Nơi nhặt</th>
+                            <th>Ngày nhặt</th>
+                            <th>Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if found_items %}
+                            {% for item in found_items %}
+                            <tr>
+                                <td style="width: 100px;">
+                                    {% if item.hinh_anh %}
+                                        {% set found_img = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
+                                        <img src="{{ found_img }}" 
+                                             class="rounded shadow-sm cursor-pointer border" 
+                                             style="max-height: 70px; object-fit: cover;" 
+                                             onclick="zoomImage('{{ found_img }}')"
+                                             title="Bấm để xem phóng to"
+                                             onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                                    {% else %}
+                                        <span class="text-muted small">Không có ảnh</span>
+                                    {% endif %}
+                                </td>
+                                <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                                <td><span class="badge bg-info text-dark text-wrap">{{ item.loai_do }}</span></td>
+                                <td><span class="badge bg-light text-dark border">{{ item.mau_sac }}</span></td>
+                                <td>{{ item.noi_nhat }}</td>
+                                <td>{{ item.ngay_nhat | vn_date }}</td>
+                                <td>
+                                    {% if item.trang_thai in ['DA_TRA', 'Đã hoàn trả'] %}
+                                        <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã hoàn trả</span>
+                                    {% else %}
+                                        <span class="badge bg-primary py-2 px-3 fw-bold">📦 Đang lưu giữ</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="7" class="text-muted py-3">Không tìm thấy dữ liệu đồ báo nhặt phù hợp.</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT CHUẨN 100% -->
+<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
+            <div class="modal-header border-0 pb-0 pt-2 pe-3">
+                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
+                <img id="zoomModalImage" src="" 
+                     draggable="false"
+                     style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
+            </div>
+            <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let scale = 1;
+let pointX = 0;
+let pointY = 0;
+let startX = 0;
+let startY = 0;
+let isDragging = false;
+
+function zoomImage(src) {
+    const imgEl = document.getElementById('zoomModalImage');
+    
+    scale = 1;
+    pointX = 0;
+    pointY = 0;
+    isDragging = false;
+    updateTransform(imgEl);
+    
+    imgEl.src = src;
+
+    const modalEl = document.getElementById('imageZoomModal');
+    const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    bsModal.show();
+}
+
+function updateTransform(img) {
+    img.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
+}
+
+document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const imgEl = document.getElementById('zoomModalImage');
+    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    
+    scale = Math.min(Math.max(1, scale + delta), 6);
+    
+    if (scale === 1) {
+        pointX = 0;
+        pointY = 0;
+    }
+    updateTransform(imgEl);
+}, { passive: false });
+
+const imgEl = document.getElementById('zoomModalImage');
+
+imgEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    isDragging = true;
+    startX = e.clientX - pointX;
+    startY = e.clientY - pointY;
+    imgEl.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    pointX = e.clientX - startX;
+    pointY = e.clientY - startY;
+    updateTransform(imgEl);
+});
+
+window.addEventListener('mouseup', function() {
+    if (isDragging) {
+        isDragging = false;
+        imgEl.style.cursor = 'grab';
+    }
+});
+</script>
+{% endblock %}
+```[cite: 16]
+
+---
+
+### 5. `templates/teacher_check.html`
+
+```html
+{% extends "base.html" %}
+
+{% block content %}
+<style>
+    .check-container { max-width: 1000px; margin: 0 auto; padding: 25px 15px; }
+    .check-card { background: #fff; border-radius: 12px; border: 1px solid #e2e8f0; box-shadow: 0 4px 15px rgba(0,0,0,0.05); padding: 25px; margin-bottom: 25px; }
+    .img-check-box { cursor: zoom-in; position: relative; display: inline-block; text-align: center; }
+    .check-img { width: 100%; max-width: 280px; height: 260px; object-fit: cover; border-radius: 10px; border: 1px solid #cbd5e1; }
+    .check-img:hover { opacity: 0.95; }
+    .zoom-hint { position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); color: #fff; font-size: 11px; padding: 3px 8px; border-radius: 4px; pointer-events: none; }
+
+    /* LIGHTBOX TRÀN MÀN HÌNH */
+    .lightbox-overlay {
+        display: none;
+        position: fixed;
+        top: 0; left: 0;
+        width: 100vw; height: 100vh;
+        background: rgba(0, 0, 0, 0.92);
+        z-index: 99999;
+        justify-content: center;
+        align-items: center;
+        cursor: zoom-out;
+    }
+    .lightbox-img {
+        max-width: 90vw;
+        max-height: 90vh;
+        object-fit: contain;
+        transition: transform 0.1s ease-out;
+        cursor: grab;
+        user-select: none;
+    }
+    .lightbox-img:active { cursor: grabbing; }
+    .lightbox-close-btn {
+        position: absolute;
+        top: 20px; right: 30px;
+        color: #ffffff;
+        font-size: 35px;
+        font-weight: 300;
+        cursor: pointer;
+        opacity: 0.8;
+    }
+    .lightbox-close-btn:hover { opacity: 1; }
+</style>
+
+<div class="check-container">
+    <div class="text-center mb-4">
+        <h2 class="fw-bold text-primary">👨‍🏫 Bảng Kiểm Tra Đối Sánh Chi Tiết</h2>
+        <p class="text-muted">Xác minh hình ảnh và thông tin chi tiết trước khi xác nhận trao trả đồ</p>
+    </div>
+
+    {% if image_warning %}
+    <div class="alert alert-warning text-center fw-bold shadow-sm mb-4">
+        {{ image_warning }}
+    </div>
+    {% endif %}
+
+    <div class="check-card">
+        <div class="row align-items-center">
+            <!-- BÀI BÁO MẤT -->
+            <div class="col-md-5 text-center border-end">
+                <span class="badge bg-danger mb-3 px-3 py-2">ĐỒ BỊ MẤT</span>
+                <div>
+                    <div class="img-check-box" onclick="openLightbox('{{ lost.hinh_anh }}')">
+                        <img src="{{ lost.hinh_anh }}" class="check-img" alt="Lost" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'p-4 bg-light border rounded\'>📷 Chưa có ảnh</div>';">
+                        <span class="zoom-hint">🔍 Nhấp để Phóng to</span>
+                    </div>
+                </div>
+                <h4 class="fw-bold mt-3 mb-1">{{ lost.ten_do }}</h4>
+                <span class="badge bg-danger text-white mb-2">{{ lost.loai_do }}</span>
+                <div class="text-start mt-3 small text-secondary mx-auto" style="max-width: 260px;">
+                    <div>🎨 Màu sắc: <strong>{{ lost.mau_sac }}</strong></div>
+                    <div>📍 Nơi mất: <strong>{{ lost.noi_mat }}</strong></div>
+                    <div>📅 Ngày mất: <strong>{{ lost.ngay_mat | vn_date }}</strong></div>
+                </div>
+            </div>
+
+            <!-- BÀI BÁO NHẶT -->
+            <div class="col-md-5 text-center">
+                <span class="badge bg-success mb-3 px-3 py-2">ĐỒ NHẶT ĐƯỢC</span>
+                <div>
+                    <div class="img-check-box" onclick="openLightbox('{{ found.hinh_anh }}')">
+                        <img src="{{ found.hinh_anh }}" class="check-img" alt="Found" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'p-4 bg-light border rounded\'>📷 Chưa có ảnh</div>';">
+                        <span class="zoom-hint">🔍 Nhấp để Phóng to</span>
+                    </div>
+                </div>
+                <h4 class="fw-bold mt-3 mb-1">{{ found.ten_do }}</h4>
+                <span class="badge bg-success text-white mb-2">{{ found.loai_do }}</span>
+                <div class="text-start mt-3 small text-secondary mx-auto" style="max-width: 260px;">
+                    <div>🎨 Màu sắc: <strong>{{ found.mau_sac }}</strong></div>
+                    <div>📍 Nơi nhặt: <strong>{{ found.noi_nhat }}</strong></div>
+                    <div>📅 Ngày nhặt: <strong>{{ found.ngay_nhat | vn_date }}</strong></div>
+                </div>
+            </div>
+
+            <!-- TỔNG ĐIỂM -->
+            <div class="col-md-2 text-center border-start py-3 bg-light rounded-3">
+                <div class="small fw-bold text-secondary">ĐIỂM AI</div>
+                <div class="display-6 fw-bold text-primary my-1">{{ score }}</div>
+                <div class="small fw-bold mb-3">{{ ket_luan }}</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- FORM XÁC NHẬN MÃ PIN GIÁO VIÊN -->
+    <div class="check-card text-center">
+        <h5 class="fw-bold text-dark mb-3">🔑 Xác Nhận Trao Trả Đồ Thất Lạc</h5>
+        <form method="POST" action="/confirm-return/{{ lost.id }}/{{ found.id }}" class="d-flex justify-content-center gap-2 max-w-sm mx-auto" style="max-width: 400px;">
+            <input type="password" name="pin_code" class="form-control text-center fw-bold" placeholder="Nhập mã PIN Giáo viên" required>
+            <button type="submit" class="btn btn-success px-4 fw-bold">Xác Nhận</button>
+        </form>
+    </div>
+</div>
+
+<!-- KHUNG XEM ẢNH FULL MÀN HÌNH -->
+<div class="lightbox-overlay" id="lightboxOverlay" onclick="closeLightbox(event)">
+    <span class="lightbox-close-btn">&times;</span>
+    <img src="" class="lightbox-img" id="lightboxImg" onclick="event.stopPropagation()">
+</div>
+
+<script>
+let scale = 1, posX = 0, posY = 0, isDragging = false, startX = 0, startY = 0;
+const overlay = document.getElementById('lightboxOverlay');
+const lbImg = document.getElementById('lightboxImg');
+
+function openLightbox(src) {
+    lbImg.src = src;
+    scale = 1; posX = 0; posY = 0;
+    updateImgStyle();
+    overlay.style.display = 'flex';
+}
+
+function closeLightbox(e) {
+    overlay.style.display = 'none';
+}
+
+function updateImgStyle() {
+    lbImg.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
+}
+
+overlay.addEventListener('wheel', function(e) {
+    e.preventDefault();
+    if (e.deltaY < 0) {
+        scale = Math.min(scale * 1.15, 6);
+    } else {
+        scale = Math.max(scale / 1.15, 0.8);
+    }
+    updateImgStyle();
+}, { passive: false });
+
+lbImg.addEventListener('mousedown', function(e) {
+    e.preventDefault();
+    isDragging = true;
+    startX = e.clientX - posX;
+    startY = e.clientY - posY;
+});
+
+window.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    posX = e.clientX - startX;
+    posY = e.clientY - startY;
+    updateImgStyle();
+});
+
+window.addEventListener('mouseup', function() { isDragging = false; });
+
+document.addEventListener('keydown', function(e) {
+    if (e.key === "Escape") overlay.style.display = 'none';
+});
+</script>
+{% endblock %}
+```[cite: 15]
