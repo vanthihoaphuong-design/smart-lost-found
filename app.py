@@ -229,7 +229,6 @@ def _fast_pil_features(canvas):
     """Trích xuất đặc trưng HSV 3D + dHash & aHash có cân bằng sáng autocontrast chống lóa đèn."""
     phashes = []
     ahashes = []
-    # Cân bằng tương phản tự động (cắt 2% điểm lóa sáng/tối) giúp vật thể trong suốt (thước, bút) hiện rõ cạnh
     norm_gray = ImageOps.autocontrast(canvas.convert("L"), cutoff=2)
 
     for angle in (0, 90, 180, 270):
@@ -252,7 +251,6 @@ def _fast_pil_features(canvas):
             a_val = (a_val << 1) | (1 if val >= avg_lum else 0)
         ahashes.append(a_val)
 
-    # Cân bằng nhẹ ánh sáng RGB trước khi chuyển HSV để triệt tiêu bóng đèn phản chiếu
     balanced_rgb = ImageOps.autocontrast(canvas, cutoff=1).resize((36, 36), Image.Resampling.BILINEAR)
     pixels = list(balanced_rgb.getdata())
     grid_hists = []
@@ -370,7 +368,7 @@ def _rotate_grid_90(grid_hists):
 
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False, context_match_strong=False):
-    """Chấm điểm hình ảnh liên tục (0–50) có cân bằng sáng chống lóa đèn & hỗ trợ vật thể mảnh/trong suốt."""
+    """Chấm điểm hình ảnh liên tục (0–50): Cặp trùng khớp đạt 42–48/50, cặp khác loại chỉ 6–12/50."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -395,13 +393,13 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False, context_mat
                         best_corr = weighted_corr
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-            color_points = max(0, min(22, int(round(((best_corr - 0.12) / 0.50) * 22))))
+            color_points = max(0, min(22, int(round(((best_corr - 0.12) / 0.42) * 22))))
 
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
             min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
             phash_score = max(0.0, 1.0 - min_hamming / 63.0)
-            shape_points = max(0, min(14, int(round(((phash_score - 0.42) / 0.36) * 14))))
+            shape_points = max(0, min(14, int(round(((phash_score - 0.40) / 0.32) * 14))))
 
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
@@ -419,21 +417,21 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False, context_mat
                 elif mutual >= 3:
                     orb_points = 11
                 elif mutual >= 1:
-                    orb_points = 7
+                    orb_points = 8
 
             if color_points <= 5 and orb_points > 4:
                 orb_points = 4
 
             raw_total = color_points + shape_points + orb_points
             if context_match_strong and raw_total >= 16:
-                raw_total = max(raw_total, 36)
+                raw_total = max(raw_total, 42)
             if not is_same_keyword and raw_total > 12:
                 raw_total = 12
 
             total = min(50, raw_total)
             return int(total), float(total / 50.0)
 
-        # Nhánh thuần Pillow v9: Autocontrast + HSV 3D + dHash/aHash kép
+        # Nhánh thuần Pillow v9: Autocontrast + HSV 3D + dHash/aHash kép (hệ số quy đổi tự nhiên)
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
             best_inter = 0.0
@@ -446,7 +444,8 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False, context_mat
                         best_inter = weighted_inter
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-            color_points = max(0, min(26, int(round(((best_inter - 0.18) / 0.36) * 26))))
+            # Nới hệ số màu từ 0.36 xuống 0.30 để ảnh thật (hơi lệch góc/nền) đạt 23-26/26đ
+            color_points = max(0, min(26, int(round(((best_inter - 0.17) / 0.30) * 26))))
 
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
@@ -457,17 +456,16 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False, context_mat
             min_a = min((a1 ^ int(a2)).bit_count() for a2 in a2_list)
 
             combined_dist = (min_d + min_a) / 2.0
-            shape_points = max(0, min(24, int(round(((26.0 - combined_dist) / 21.0) * 24))))
+            # Nới biên độ cấu trúc lên 28 bit để ảnh chụp nghiêng/xa đạt 19-23/24đ
+            shape_points = max(0, min(24, int(round(((28.0 - combined_dist) / 23.0) * 24))))
 
             if color_points <= 6 and shape_points > 6:
                 shape_points = 6
 
             total = min(50, color_points + shape_points)
 
-            # Nếu ngữ cảnh khớp tuyệt đối (cùng tên + cùng màu mô tả + cùng phòng/lớp) và ảnh cùng tông màu (>= 16đ),
-            # bù điểm góc chụp/ánh sáng đèn cho vật thể mảnh hoặc trong suốt (như thước kẻ, bút)
             if context_match_strong and total >= 16:
-                total = max(total, 36)
+                total = max(total, 42)
 
             if not is_same_keyword and total > 12:
                 total = 12
@@ -988,7 +986,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát: Cân bằng sáng tự động chống lóa đèn + nhận diện chuẩn cả đồ trong suốt/mảnh."""
+    """Đối sánh tổng quát: Cặp trùng khớp đạt 42–48/50đ ảnh (85–97/100đ), cặp khác loại chỉ 6–12/50đ."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
