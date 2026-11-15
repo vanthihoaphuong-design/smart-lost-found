@@ -80,9 +80,10 @@
                 <div class="col-md-4 item-col item-col-lost">
                     <span class="badge bg-danger mb-2">ĐỒ BỊ MẤT</span>
                     <div>
-                        {% if m.lost.has_image %}
-                        <div class="item-img-box" onclick="openLightbox('{{ m.lost.hinh_anh }}')">
-                            <img src="{{ m.lost.hinh_anh }}" class="item-img" alt="Lost" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
+                        {% if m.lost.hinh_anh %}
+                        {% set lost_img_url = m.lost.hinh_anh if m.lost.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.lost.hinh_anh) %}
+                        <div class="item-img-box" onclick="openLightbox('{{ lost_img_url }}')">
+                            <img src="{{ lost_img_url }}" class="item-img" alt="Lost" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
                             <span class="zoom-badge">🔍 Zoom</span>
                         </div>
                         {% else %}
@@ -100,9 +101,10 @@
                 <div class="col-md-4 item-col item-col-found">
                     <span class="badge bg-success mb-2">ĐỒ NHẶT ĐƯỢC</span>
                     <div>
-                        {% if m.found.has_image %}
-                        <div class="item-img-box" onclick="openLightbox('{{ m.found.hinh_anh }}')">
-                            <img src="{{ m.found.hinh_anh }}" class="item-img" alt="Found" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
+                        {% if m.found.hinh_anh %}
+                        {% set found_img_url = m.found.hinh_anh if m.found.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.found.hinh_anh) %}
+                        <div class="item-img-box" onclick="openLightbox('{{ found_img_url }}')">
+                            <img src="{{ found_img_url }}" class="item-img" alt="Found" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
                             <span class="zoom-badge">🔍 Zoom</span>
                         </div>
                         {% else %}
