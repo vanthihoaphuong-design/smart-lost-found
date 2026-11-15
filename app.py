@@ -4,7 +4,6 @@ import uuid
 import json
 import re
 import gc
-import heapq
 import urllib3
 from datetime import datetime, timezone, timedelta
 import pandas as pd
@@ -89,9 +88,17 @@ with app.app_context():
         print(f"Lỗi Create DB All: {e}")
 
 FEATURE_CACHE = {}
-MAX_CACHE_SIZE = 512
+MAX_CACHE_SIZE = 256
 
-STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
+STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục", "quyển", "cuốn"}
+COLOR_WORDS_VN = ["đen", "đỏ", "xanh", "vàng", "trắng", "hồng", "tím", "nâu", "xám", "cam", "bạc"]
+
+
+def extract_colors(text):
+    if not text:
+        return set()
+    t = str(text).lower()
+    return {c for c in COLOR_WORDS_VN if re.search(rf'\b{c}\b', t)}
 
 
 def check_real_image(img_path):
@@ -129,8 +136,8 @@ def save_feature_cache(img_path, features):
     FEATURE_CACHE[key] = features
 
 
-def _read_image_bytes(img_path, max_bytes=8 * 1024 * 1024):
-    """Đọc toàn bộ ảnh trong giới hạn kích thước."""
+def _read_image_bytes(img_path, max_bytes=5 * 1024 * 1024):
+    """Đọc toàn bộ ảnh trong giới hạn kích thước để bảo vệ RAM."""
     value = str(img_path).strip()
     if value.startswith(("http://", "https://")):
         import requests
@@ -161,7 +168,7 @@ def _read_image_bytes(img_path, max_bytes=8 * 1024 * 1024):
 
 
 def _phash_from_gray(gray):
-    """Perceptual hash 64-bit dựa trên DCT, ổn định hơn dHash ở ảnh resize."""
+    """Perceptual hash 64-bit dựa trên DCT, ổn định với thay đổi kích thước."""
     small = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA).astype("float32")
     dct = cv2.dct(small)
     low = dct[:8, :8].flatten()
@@ -174,8 +181,8 @@ def _phash_from_gray(gray):
     return result
 
 
-def _center_crop_for_matching(pil_img, keep_ratio=0.78):
-    """Cắt vùng trung tâm ảnh (78%) để loại bỏ bớt nền gạch men/bàn học xung quanh vật thể."""
+def _center_crop_for_matching(pil_img, keep_ratio=0.80):
+    """Cắt vùng trung tâm ảnh (80%) để giảm nhiễu nền gạch/bàn học xung quanh vật thể."""
     w, h = pil_img.size
     if w < 40 or h < 40:
         return pil_img
@@ -186,7 +193,7 @@ def _center_crop_for_matching(pil_img, keep_ratio=0.78):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng hình ảnh tập trung vào vùng vật thể trung tâm (320x320)."""
+    """Trích xuất tọa độ keypoint + descriptor ORB, pHash và HSV Histogram trên ảnh 320x320."""
     if not check_real_image(img_path):
         return None
 
@@ -211,8 +218,7 @@ def calculate_image_features(img_path):
             image = ImageOps.exif_transpose(source).convert("RGB")
             aspect_ratio = float(image.width) / float(max(1, image.height))
 
-            # Cắt bớt viền nền xung quanh để tập trung vào vật thể chính
-            focused = _center_crop_for_matching(image, keep_ratio=0.78)
+            focused = _center_crop_for_matching(image, keep_ratio=0.80)
             focused.thumbnail((320, 320), Image.Resampling.LANCZOS)
 
             canvas = Image.new("RGB", (320, 320), (245, 245, 245))
@@ -223,7 +229,6 @@ def calculate_image_features(img_path):
             image_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
             gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
 
-            # Tăng độ tương phản cục bộ (CLAHE) để nhận diện rõ chi tiết khi ảnh chụp thiếu sáng/lóa sáng
             clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
             gray_eq = clahe.apply(gray)
 
@@ -232,8 +237,9 @@ def calculate_image_features(img_path):
                 edgeThreshold=12, patchSize=31, fastThreshold=12
             )
             keypoints, descriptors = orb.detectAndCompute(gray_eq, None)
+            # Lưu tọa độ (x, y) dạng float32 nhẹ để dùng cho RANSAC Homography
+            kp_pts = np.array([kp.pt for kp in keypoints], dtype=np.float32) if keypoints else None
 
-            # Tính biểu đồ màu HSV ở lõi trung tâm (50% giữa ảnh)
             h, w = image_bgr.shape[:2]
             core_crop = image_bgr[int(h * 0.25):int(h * 0.75), int(w * 0.25):int(w * 0.75)]
             hsv = cv2.cvtColor(core_crop, cv2.COLOR_BGR2HSV)
@@ -241,11 +247,11 @@ def calculate_image_features(img_path):
             cv2.normalize(color_hist, color_hist, 1.0, 0.0, cv2.NORM_L1)
 
             features = {
-                "version": 6,
-                "type": "opencv_v6_focused",
+                "version": 7,
+                "type": "opencv_v7_ransac",
                 "phash": _phash_from_gray(gray_eq),
+                "orb_pts": kp_pts,
                 "orb_descriptors": descriptors,
-                "orb_count": len(keypoints) if keypoints else 0,
                 "color_hist": color_hist,
                 "aspect_ratio": aspect_ratio,
             }
@@ -273,7 +279,7 @@ def calculate_image_features(img_path):
 
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Chấm điểm hình ảnh (0–50 điểm), giữ nguyên thang điểm gốc."""
+    """Chấm điểm hình ảnh (0–50) kết hợp RANSAC kiểm chứng hình học + pHash + HSV Histogram."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -287,24 +293,28 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             return 0, 0.0
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
-            # 1. pHash trên ảnh đã cân bằng sáng CLAHE (tối đa 18/50 điểm)
+            # 1. pHash bố cục tổng thể (tối đa 16/50 điểm)
             hamming = (int(f1["phash"]) ^ int(f2["phash"])).bit_count()
             phash_score = max(0.0, 1.0 - hamming / 63.0)
             if phash_score >= 0.80:
-                shape_points = 18
+                shape_points = 16
             elif phash_score >= 0.68:
-                shape_points = 15
+                shape_points = 13
             elif phash_score >= 0.58:
-                shape_points = 11
+                shape_points = 10
             elif phash_score >= 0.50:
-                shape_points = 7
+                shape_points = 6
             else:
                 shape_points = 0
 
-            # 2. ORB đối chiếu 2 chiều (tối đa 16/50 điểm)
+            # 2. ORB + RANSAC kiểm chứng hình học (tối đa 20/50 điểm)
+            # Lọc bỏ các điểm khớp giả trên nền gạch hoặc bìa sách khác môn
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
+            pts1, pts2 = f1.get("orb_pts"), f2.get("orb_pts")
             orb_points = 0
-            if d1 is not None and d2 is not None and len(d1) >= 2 and len(d2) >= 2:
+
+            if (d1 is not None and d2 is not None and pts1 is not None and pts2 is not None
+                    and len(d1) >= 4 and len(d2) >= 4):
                 matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
                 forward = matcher.knnMatch(d1, d2, k=2)
                 reverse = matcher.knnMatch(d2, d1, k=2)
@@ -315,18 +325,28 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 good_f = _ratio_matches(forward)
                 good_r = _ratio_matches(reverse)
                 reverse_pairs = {(m.trainIdx, m.queryIdx) for m in good_r}
-                mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
+                mutual_matches = [m for m in good_f if (m.queryIdx, m.trainIdx) in reverse_pairs]
 
-                if mutual >= 12:
-                    orb_points = 16
-                elif mutual >= 7:
-                    orb_points = 13
-                elif mutual >= 4:
-                    orb_points = 9
-                elif mutual >= 2:
+                valid_count = len(mutual_matches)
+                # Khi có đủ >= 6 cặp điểm 2 chiều, chạy RANSAC kiểm tra tính nhất quán hình học
+                if valid_count >= 6:
+                    src_pts = np.float32([pts1[m.queryIdx] for m in mutual_matches]).reshape(-1, 1, 2)
+                    dst_pts = np.float32([pts2[m.trainIdx] for m in mutual_matches]).reshape(-1, 1, 2)
+                    _, mask = cv2.findHomography(src_pts, dst_pts, cv2.RANSAC, 5.0)
+                    if mask is not None:
+                        inliers = int(mask.ravel().sum())
+                        valid_count = inliers
+
+                if valid_count >= 10:
+                    orb_points = 20
+                elif valid_count >= 6:
+                    orb_points = 15
+                elif valid_count >= 4:
+                    orb_points = 10
+                elif valid_count >= 2:
                     orb_points = 5
 
-            # 3. Tương quan màu lõi vật thể HSV (tối đa 10/50 điểm)
+            # 3. Tương quan màu vùng lõi vật thể HSV (tối đa 10/50 điểm)
             color_points = 0
             hist1, hist2 = f1.get("color_hist"), f2.get("color_hist")
             if hist1 is not None and hist2 is not None:
@@ -338,18 +358,19 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 elif corr >= 0.38:
                     color_points = 4
 
-            # 4. Độ tương đồng tỷ lệ khung hình (tối đa 6/50 điểm)
+            # 4. Tỷ lệ khung hình thực tế (tối đa 4/50 điểm)
             ar1 = f1.get("aspect_ratio", 1.0)
             ar2 = f2.get("aspect_ratio", 1.0)
             ar_diff = abs(ar1 - ar2) / max(ar1, ar2, 0.1)
-            if ar_diff <= 0.15:
-                ratio_points = 6
-            elif ar_diff <= 0.35:
-                ratio_points = 3
-            else:
-                ratio_points = 0
+            ratio_points = 4 if ar_diff <= 0.18 else (2 if ar_diff <= 0.35 else 0)
 
-            total = min(50, shape_points + orb_points + color_points + ratio_points)
+            raw_total = shape_points + orb_points + color_points + ratio_points
+
+            # Trần bảo vệ: Nếu tên đồ chưa xác nhận trùng từ khóa cốt lõi, không cho ảnh ăn điểm cao giả tạo
+            if not is_same_keyword and raw_total > 22:
+                raw_total = 22
+
+            total = min(50, raw_total)
             return int(total), float(total / 50.0)
 
         # Fallback PIL nếu OpenCV không khả dụng
@@ -363,6 +384,8 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             sim_c = dot / (n1 * n2) if n1 and n2 else 0.0
             color = 15 if sim_c >= 0.80 else (10 if sim_c >= 0.65 else 5)
             total = min(50, shape + color)
+            if not is_same_keyword and total > 22:
+                total = 22
             return int(total), float(total / 50.0)
 
         return 0, 0.0
@@ -372,25 +395,30 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
 
 
 def get_core_keyword(text_name):
+    """Chuẩn hóa danh từ cốt lõi và gắn kèm số hiệu/khối lớp để phân biệt rạch ròi từng môn/lớp."""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
 
     synonyms_map = {
-        "máy tính casio": ["casio", "fx580", "fx 580", "máy tính bỏ túi", "casio580"],
+        "máy tính casio": ["casio", "fx580", "fx 580", "fx570", "fx 570", "máy tính bỏ túi", "casio580"],
         "laptop": ["laptop", "macbook", "máy tính xách tay"],
         "chuột": ["chuột", "con chuột", "chuột máy tính", "mouse"],
-        "sách toán 10": ["sách toán 10", "toán 10"],
-        "sách toán 9": ["sách toán 9", "toán 9", "sách bài tập toán 9", "sbt toán 9"],
-        "sách văn": ["sách văn", "ngữ văn", "văn học"],
-        "sách tiếng anh": ["sách anh", "tiếng anh", "english"],
-        "sách tin học": ["tin học", "sách tin", "tin 11", "tin 9", "tin 8", "sách tin 8"],
-        "sách công nghệ": ["công nghệ", "sách công nghệ", "công nghệ 8"],
-        "sách lý": ["vật lý", "lý"],
-        "sách hóa": ["hóa học", "hóa"],
+        "sách toán": ["sách toán", "sbt toán", "bài tập toán", "toán"],
+        "sách văn": ["sách văn", "ngữ văn", "văn học", "sách ngữ văn"],
+        "sách tiếng anh": ["sách anh", "tiếng anh", "english", "sách tiếng anh"],
+        "sách tin học": ["tin học", "sách tin", "tin 12", "tin 11", "tin 10", "tin 9", "tin 8", "tin 7", "tin 6"],
+        "sách công nghệ": ["công nghệ", "sách công nghệ"],
+        "sách lý": ["vật lý", "sách lý", "sách vật lý"],
+        "sách hóa": ["hóa học", "sách hóa", "sách hóa học"],
+        "sách sinh": ["sinh học", "sách sinh", "sách sinh học"],
+        "sách sử": ["lịch sử", "sách sử", "sách lịch sử"],
+        "sách địa": ["địa lý", "địa lí", "sách địa"],
         "bút bi": ["bút bi", "viết bi"],
         "bút chì": ["bút chì", "bút chì kim"],
-        "điện thoại": ["điện thoại", "phone", "iphone", "samsung"],
+        "bút": ["cây bút", "bút mực", "bút nước", "bút gel", "bút"],
+        "thước": ["cây thước", "thước kẻ", "thước"],
+        "điện thoại": ["điện thoại", "phone", "iphone", "samsung", "oppo", "xiaomi"],
         "balo": ["balo", "ba lô"],
         "cặp": ["cặp", "cặp sách"],
         "ví": ["ví", "bóp", "ví tiền"],
@@ -402,13 +430,19 @@ def get_core_keyword(text_name):
 
     for core_key, words in synonyms_map.items():
         if any(w in t for w in words):
-            return core_key
+            nums = re.findall(r'\d+', t)
+            return f"{core_key}_{'_'.join(nums)}" if nums else core_key
 
-    tokens = [w for w in t.split() if w not in STOP_WORDS_VN]
-    return tokens[0] if tokens else t
+    tokens = [w for w in t.split() if w not in STOP_WORDS_VN and w not in COLOR_WORDS_VN]
+    if not tokens:
+        return t
+    nums = re.findall(r'\d+', t)
+    base = tokens[0]
+    return f"{base}_{'_'.join(nums)}" if nums else base
 
 
 def similarity(text1, text2):
+    """Cổng loại trừ văn bản: Chặn ngay nếu khác môn học, khác số lớp hoặc trái màu sắc."""
     if not text1 or not text2:
         return 0.0
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
@@ -416,21 +450,85 @@ def similarity(text1, text2):
     if t1 == t2:
         return 1.0
 
+    # 1. Cổng loại trừ số hiệu / khối lớp (VD: Tin 12 != Tin 8, Toán 9 != Toán 10)
     nums1 = re.findall(r'\d+', t1)
     nums2 = re.findall(r'\d+', t2)
     if nums1 and nums2 and nums1 != nums2:
-        return 0.1
+        return 0.0
 
+    # 2. Cổng loại trừ xung đột màu sắc trong tên (VD: Bút đen != Cây bút đỏ)
+    c1 = extract_colors(t1)
+    c2 = extract_colors(t2)
+    if c1 and c2 and not c1.intersection(c2):
+        return 0.0
+
+    # 3. Cổng loại trừ danh từ cốt lõi / môn học (VD: Sách ngữ văn 9 != Sách bài tập toán 9)
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
 
-    if k1 == k2 and k1 != "":
-        return 0.90
+    if k1 and k2:
+        if k1 == k2:
+            return 0.95
+        base_k1 = k1.split("_")[0]
+        base_k2 = k2.split("_")[0]
+        # Cùng loại đồ/môn học nhưng một bên ghi số lớp, bên kia quên ghi số lớp
+        if base_k1 == base_k2:
+            return 0.75
+        # Khác hẳn loại đồ hoặc khác hẳn môn học -> loại bỏ ngay lập tức
+        return 0.0
 
     if t1 in t2 or t2 in t1:
         return 0.85
 
     return SequenceMatcher(None, t1, t2).ratio()
+
+
+def evaluate_color_match(lost_item, found_item, is_same_key):
+    """Tính điểm màu sắc (0–15) và phát hiện xung đột màu giữa 2 món đồ."""
+    m1 = str(lost_item.mau_sac or "").strip().lower()
+    m2 = str(found_item.mau_sac or "").strip().lower()
+    has_m1 = m1 not in ["none", "null", ""]
+    has_m2 = m2 not in ["none", "null", ""]
+
+    colors1 = extract_colors(m1) | extract_colors(lost_item.ten_do)
+    colors2 = extract_colors(m2) | extract_colors(found_item.ten_do)
+
+    if colors1 and colors2:
+        if colors1.intersection(colors2):
+            return 15, False
+        else:
+            return 0, True
+
+    if has_m1 and has_m2:
+        sim = similarity(m1, m2)
+        return int(sim * 15), (sim < 0.3)
+
+    return (10 if is_same_key else 0), False
+
+
+def location_score(loc1, loc2):
+    """Chấm điểm vị trí (0–10), nhận diện cả phòng/lớp liền kề."""
+    v1 = str(loc1 or "").strip().lower()
+    v2 = str(loc2 or "").strip().lower()
+    if v1 in ["none", "null", ""] or v2 in ["none", "null", ""]:
+        return 0
+    if v1 == v2:
+        return 10
+
+    base1 = re.sub(r'\d+', '', v1).strip()
+    base2 = re.sub(r'\d+', '', v2).strip()
+    if base1 and base1 == base2:
+        return 7
+
+    if len(v1) >= 2 and len(v2) >= 2 and v1[:2] == v2[:2] and v1[0].isdigit():
+        return 6
+
+    sim = SequenceMatcher(None, v1, v2).ratio()
+    if sim > 0.75:
+        return 7
+    elif sim > 0.45:
+        return 4
+    return 0
 
 
 def parse_date_flexible(date_str):
@@ -797,8 +895,9 @@ def found_return(id):
 
 
 @app.route("/match")
-def match_items():
-    """Đối sánh giữ nguyên thang điểm cũ (50 + 15 + 15 + 10 + 10) với thuật toán ảnh mới."""
+@app.route("/match/<int:item_id>")
+def match_items(item_id=None):
+    """Đối sánh 2 tầng tối ưu RAM: Lọc cổng loại trừ văn bản trước -> RANSAC ảnh cho top cặp."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -806,6 +905,9 @@ def match_items():
     try:
         lost_query = LostItem.query.filter(LostItem.trang_thai != "DA_TIM")
         found_query = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA")
+
+        if item_id:
+            lost_query = lost_query.filter(LostItem.id == item_id)
         if cat_filter:
             lost_query = lost_query.filter(LostItem.loai_do == cat_filter)
             found_query = found_query.filter(FoundItem.loai_do == cat_filter)
@@ -818,9 +920,8 @@ def match_items():
         for obj in found_items:
             obj.has_image = check_real_image(obj.hinh_anh)
 
-        keep_count = max(per_page, max(1, page) * per_page)
-        top_heap = []
-        total_matches = 0
+        # Tầng 1: Cổng loại trừ & chấm điểm văn bản ngay trong RAM (tốn rất ít bộ nhớ)
+        candidates = []
         sequence = 0
 
         for lost in lost_items:
@@ -834,84 +935,89 @@ def match_items():
                     key2 = get_core_keyword(found.ten_do)
                     ten_sim = similarity(lost.ten_do, found.ten_do)
                     is_same_key = (key1 == key2 and key1 != "")
+
+                    # Chặn ngay mọi cặp khác môn học, khác số lớp hoặc trái màu
+                    if not (is_same_key or ten_sim >= 0.40):
+                        continue
+
                     ten_score = 15 if is_same_key else int(ten_sim * 15)
+                    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
+                    if color_conflict:
+                        continue
 
-                    mau_score = 0
-                    m1 = str(lost.mau_sac or "").strip().lower()
-                    m2 = str(found.mau_sac or "").strip().lower()
-                    if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-                        mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-                    elif is_same_key:
-                        mau_score = 10
-
-                    vi_tri_score = 0
-                    v1 = str(lost.noi_mat or "").strip().lower()
-                    v2 = str(found.noi_nhat or "").strip().lower()
-                    if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-                        vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-                        if vi_tri > 0.8:
-                            vi_tri_score = 10
-                        elif vi_tri > 0.5:
-                            vi_tri_score = 5
-
+                    vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
                     base_score = ten_score + mau_score + vi_tri_score + ngay_score
 
-                    if not (is_same_key or ten_sim >= 0.35):
-                        continue
-
-                    if lost.has_image and found.has_image:
-                        anh_score, _ = image_score(
-                            lost.hinh_anh, found.hinh_anh,
-                            is_same_keyword=is_same_key
-                        )
-                    else:
-                        anh_score = 0
-
-                    total_score = base_score + anh_score
-                    if total_score >= 75:
-                        ket_luan = "🟢 Khả năng trùng khớp cao"
-                    elif total_score >= 55:
-                        ket_luan = "🟡 Có khả năng trùng khớp"
-                    elif total_score >= 38:
-                        ket_luan = "🟠 Có một số điểm tương đồng"
-                    else:
-                        ket_luan = "🔴 Khả năng trùng khớp thấp"
-
-                    match_data = {
-                        "lost": lost, "found": found,
-                        "score": total_score, "ket_luan": ket_luan,
-                        "score_image": anh_score,
+                    sequence += 1
+                    candidates.append({
+                        "lost": lost,
+                        "found": found,
+                        "base_score": base_score,
+                        "is_same_key": is_same_key,
                         "score_name": ten_score,
                         "score_color": mau_score,
                         "score_location": vi_tri_score,
                         "score_date": ngay_score,
-                    }
-
-                    total_matches += 1
-                    sequence += 1
-                    entry = (total_score, sequence, match_data)
-                    if len(top_heap) < keep_count:
-                        heapq.heappush(top_heap, entry)
-                    elif entry[:2] > top_heap[0][:2]:
-                        heapq.heapreplace(top_heap, entry)
-
-                except Exception as pair_err:
-                    print(f"Lỗi tạo/chấm điểm cặp đối sánh: {pair_err}")
+                        "seq": sequence
+                    })
+                except Exception:
                     continue
 
-        ranked = sorted(top_heap, key=lambda x: (x[0], x[1]), reverse=True)
+        candidates.sort(key=lambda x: (x["base_score"], x["seq"]), reverse=True)
+        total_matches = len(candidates)
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
+
+        # Tầng 2: Chỉ tải ảnh và chạy RANSAC cho top (page * 10 + 15) cặp tiềm năng nhất
+        eval_limit = min(total_matches, page * per_page + 15)
+        evaluated_matches = []
+
+        for item in candidates[:eval_limit]:
+            lost, found = item["lost"], item["found"]
+            if lost.has_image and found.has_image:
+                anh_score, _ = image_score(
+                    lost.hinh_anh, found.hinh_anh,
+                    is_same_keyword=item["is_same_key"]
+                )
+            else:
+                anh_score = 0
+
+            total_score = item["base_score"] + anh_score
+            if total_score >= 75:
+                ket_luan = "🟢 Khả năng trùng khớp cao"
+            elif total_score >= 55:
+                ket_luan = "🟡 Có khả năng trùng khớp"
+            elif total_score >= 38:
+                ket_luan = "🟠 Có một số điểm tương đồng"
+            else:
+                ket_luan = "🔴 Khả năng trùng khớp thấp"
+
+            evaluated_matches.append({
+                "lost": lost,
+                "found": found,
+                "score": total_score,
+                "ket_luan": ket_luan,
+                "score_image": anh_score,
+                "score_name": item["score_name"],
+                "score_color": item["score_color"],
+                "score_location": item["score_location"],
+                "score_date": item["score_date"],
+            })
+
+        evaluated_matches.sort(key=lambda x: x["score"], reverse=True)
         start_idx = (page - 1) * per_page
-        page_matches = [entry[2] for entry in ranked[start_idx:start_idx + per_page]]
+        page_matches = evaluated_matches[start_idx:start_idx + per_page]
 
         FEATURE_CACHE.clear()
         gc.collect()
 
         return render_template(
-            "match.html", matches=page_matches, page=page,
-            total_pages=total_pages, total_matches=total_matches,
+            "match.html",
+            matches=page_matches,
+            page=page,
+            total_pages=total_pages,
+            total_matches=total_matches,
             selected_category=cat_filter
         )
     except Exception as route_err:
@@ -919,8 +1025,12 @@ def match_items():
         FEATURE_CACHE.clear()
         gc.collect()
         return render_template(
-            "match.html", matches=[], page=1, total_pages=1,
-            total_matches=0, selected_category=cat_filter
+            "match.html",
+            matches=[],
+            page=1,
+            total_pages=1,
+            total_matches=0,
+            selected_category=cat_filter
         )
 
 
@@ -937,37 +1047,19 @@ def teacher_check(lost_id, found_id):
 
     key1 = get_core_keyword(lost.ten_do)
     key2 = get_core_keyword(found.ten_do)
+    ten_sim = similarity(lost.ten_do, found.ten_do)
     is_same_key = (key1 == key2 and key1 != "")
+
+    ten_score = 15 if is_same_key else int(ten_sim * 15)
+    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
 
     if has1 and has2:
         anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
     else:
         anh_score, image_ratio = 0, 0.0
 
-    ten_score = 15 if is_same_key else int(similarity(lost.ten_do, found.ten_do) * 15)
-
-    mau_score = 0
-    m1 = str(lost.mau_sac or "").strip().lower()
-    m2 = str(found.mau_sac or "").strip().lower()
-    if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-        mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-    elif is_same_key:
-        mau_score = 10
-
-    vi_tri_score = 0
-    v1 = str(lost.noi_mat or "").strip().lower()
-    v2 = str(found.noi_nhat or "").strip().lower()
-    if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-        vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-        if vi_tri > 0.8:
-            vi_tri_score = 10
-        elif vi_tri > 0.5:
-            vi_tri_score = 5
-
+    vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-    if not (has1 and has2):
-        anh_score = 0
 
     score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
 
@@ -981,7 +1073,9 @@ def teacher_check(lost_id, found_id):
         ket_luan = "🔴 Khả năng trùng khớp thấp"
 
     image_warning = None
-    if has1 and has2 and image_ratio < 0.20:
+    if color_conflict:
+        image_warning = "⚠️ Hai món đồ có màu sắc trái ngược nhau, giáo viên cần đối chiếu kỹ."
+    elif has1 and has2 and image_ratio < 0.25:
         image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
     elif not (has1 and has2):
         image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
@@ -1006,7 +1100,7 @@ def confirm_return(lost_id, found_id):
     if pin_code != current_pin:
         return """
         <script>
-            alert("Ma PIN Giao vien khong chinh xac! Vui long thu lai.");
+            alert("Mã PIN Giáo viên không chính xác! Vui lòng thử lại.");
             window.history.back();
         </script>
         """
