@@ -196,7 +196,7 @@ def _center_crop_for_matching(pil_img, keep_ratio=0.75):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng lai: Lưới màu+sáng 3x3 HSV + pHash 4 góc xoay + ORB trên vùng trung tâm."""
+    """Trích xuất đặc trưng lai (hỗ trợ cả OpenCV lẫn thuần Pillow khi không có OpenCV)."""
     if not check_real_image(img_path):
         return None
 
@@ -236,7 +236,7 @@ def calculate_image_features(img_path):
             orb = cv2.ORB_create(nfeatures=250, scaleFactor=1.2, nlevels=6, fastThreshold=12)
             _, descriptors = orb.detectAndCompute(gray_eq, None)
 
-            # Tính pHash cho cả 4 góc xoay (0, 90, 180, 270 độ) để bắt được sách/vở chụp ngang
+            # Tính pHash cho cả 4 góc xoay (0, 90, 180, 270 độ)
             phashes = [
                 _phash_from_gray(gray_eq),
                 _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_CLOCKWISE)),
@@ -244,7 +244,7 @@ def calculate_image_features(img_path):
                 _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_COUNTERCLOCKWISE)),
             ]
 
-            # Lưới màu & độ sáng không gian 3x3 HSV (nhận diện cả đồ nhiều màu lẫn đồ trơn bạc/đen/trắng)
+            # Lưới màu & độ sáng không gian 3x3 HSV
             hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
             grid_hists = []
             step = 240 // 3
@@ -264,13 +264,40 @@ def calculate_image_features(img_path):
                 "grid_hists": grid_hists,
             }
         else:
-            tiny = canvas.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
-            px = list(tiny.getdata())
-            dhash = 0
-            for row in range(8):
-                for col in range(8):
-                    dhash = (dhash << 1) | int(px[row * 9 + col] > px[row * 9 + col + 1])
-            features = {"version": 3, "type": "pil_v3", "dhash": dhash, "hist": canvas.histogram()}
+            # Nhánh thuần Pillow: Tính dHash 4 góc xoay + Lưới màu không gian 3x3 RGB
+            phashes = []
+            for angle in (0, 90, 180, 270):
+                rot = canvas.rotate(angle) if angle else canvas
+                tiny = rot.convert("L").resize((9, 8), Image.Resampling.LANCZOS)
+                px = list(tiny.getdata())
+                h_val = 0
+                for row in range(8):
+                    for col in range(8):
+                        h_val = (h_val << 1) | int(px[row * 9 + col] > px[row * 9 + col + 1])
+                phashes.append(h_val)
+
+            grid_hists = []
+            step = 240 // 3
+            for r in range(3):
+                for c in range(3):
+                    cell = canvas.crop((c * step, r * step, (c + 1) * step, (r + 1) * step))
+                    quant = cell.quantize(colors=32, method=Image.Quantize.FASTOCTREE).convert("RGB")
+                    raw_h = quant.histogram()
+                    bins = []
+                    for ch in range(3):
+                        ch_data = raw_h[ch * 256:(ch + 1) * 256]
+                        for b in range(8):
+                            bins.append(sum(ch_data[b * 32:(b + 1) * 32]))
+                    s = float(sum(bins)) or 1.0
+                    grid_hists.append([x / s for x in bins])
+
+            features = {
+                "version": 4,
+                "type": "pil_v4_spatial",
+                "dhash": phashes[0],
+                "phashes": phashes,
+                "grid_hists": grid_hists,
+            }
 
         save_feature_cache(img_path, features)
         return features
@@ -288,7 +315,7 @@ def _rotate_grid_90(grid_hists):
 
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Chấm điểm hình ảnh (0–50) chống xoay 90 độ và nhận diện cả đồ họa tiết lẫn đồ trơn màu."""
+    """Chấm điểm hình ảnh (0–50) chống xoay 90 độ trên cả OpenCV và thuần Pillow."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -338,7 +365,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             else:
                 shape_points = 6
 
-            # 3. Chi tiết đặc trưng ORB 2 chiều (bất biến xoay tự nhiên, tối đa 14/50 điểm)
+            # 3. Chi tiết đặc trưng ORB 2 chiều (tối đa 14/50 điểm)
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
             if d1 is not None and d2 is not None and len(d1) >= 2 and len(d2) >= 2:
@@ -357,7 +384,6 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 elif mutual >= 1:
                     orb_points = 9
 
-            # Khóa chống nhiễu lông xù/nền gạch khi màu sắc vùng trung tâm khác hẳn
             if color_points <= 9 and orb_points > 7:
                 orb_points = 7
 
@@ -368,11 +394,42 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             total = min(50, raw_total)
             return int(total), float(total / 50.0)
 
-        # Fallback PIL nếu OpenCV không khả dụng
+        # Nhánh thuần Pillow (chạy khi Render không cài OpenCV)
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
-            dist = (int(f1.get("dhash", 0)) ^ int(f2.get("dhash", 0))).bit_count()
-            shape = 35 if dist <= 12 else (25 if dist <= 20 else 15)
-            total = min(50, shape + 10)
+            g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
+            color_points = 10
+            if len(g1) == 9 and len(g2) == 9:
+                best_inter = 0.0
+                curr_g2 = g2
+                for _ in range(4):
+                    inters = [sum(min(a, b) for a, b in zip(h1, h2)) for h1, h2 in zip(g1, curr_g2)]
+                    top5 = sum(sorted(inters, reverse=True)[:5]) / 5.0
+                    if top5 > best_inter:
+                        best_inter = top5
+                    curr_g2 = _rotate_grid_90(curr_g2)
+
+                if best_inter >= 0.65:
+                    color_points = 26
+                elif best_inter >= 0.48:
+                    color_points = 21
+                elif best_inter >= 0.34:
+                    color_points = 16
+                else:
+                    color_points = 10
+
+            p1 = int(f1.get("dhash", 0))
+            p2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
+            min_dist = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
+            if min_dist <= 14:
+                shape_points = 22
+            elif min_dist <= 22:
+                shape_points = 17
+            elif min_dist <= 28:
+                shape_points = 13
+            else:
+                shape_points = 9
+
+            total = min(50, color_points + shape_points)
             if not is_same_keyword and total > 22:
                 total = 22
             return int(total), float(total / 50.0)
