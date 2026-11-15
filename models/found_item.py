@@ -1,7 +1,7 @@
 from database import db
 
 class FoundItem(db.Model):
-    __tablename__ = 'found_item'
+    __tablename__ = "found_item"
 
     id = db.Column(db.Integer, primary_key=True)
     ten_do = db.Column(db.String(100))
@@ -10,8 +10,10 @@ class FoundItem(db.Model):
     ngay_nhat = db.Column(db.String(50))
     mau_sac = db.Column(db.String(50))
     hinh_anh = db.Column(db.String(300))
+    # JSON chứa pHash, ORB descriptors và HSV histogram.
+    image_features = db.Column(db.Text, nullable=True)
     trang_thai = db.Column(db.String(20), default="DANG_LUU_GIU")
     thoi_diem_tra = db.Column(db.DateTime, nullable=True)
 
     def __repr__(self):
-        return self.ten_do or ''
+        return self.ten_do or ""
