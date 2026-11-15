@@ -4,6 +4,9 @@ import uuid
 import json
 import re
 import gc
+import base64
+from collections import OrderedDict
+from sqlalchemy import text, inspect
 import urllib3
 from datetime import datetime, timezone, timedelta
 import pandas as pd
@@ -51,6 +54,8 @@ app.secret_key = os.environ.get("SECRET_KEY", "smart_lost_found_secret_key_123")
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# Giới hạn tổng dung lượng request để bảo vệ RAM/CPU trên Render Free.
+app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 
 db_url = os.environ.get("DATABASE_URL", "sqlite:///lost_found.db")
 if db_url and db_url.startswith("postgres://"):
@@ -85,171 +90,265 @@ with app.app_context():
     except Exception as e:
         print(f"Lỗi Create DB All: {e}")
 
-FEATURE_CACHE = {}
-MAX_CACHE_SIZE = 50
+    # Tự bổ sung cột đặc trưng cho database đang tồn tại, không xóa dữ liệu cũ.
+    try:
+        inspector = inspect(db.engine)
+        for table_name in ("lost_item", "found_item"):
+            if table_name in inspector.get_table_names():
+                cols = {c["name"] for c in inspector.get_columns(table_name)}
+                if "image_features" not in cols:
+                    db.session.execute(text(f"ALTER TABLE {table_name} ADD COLUMN image_features TEXT"))
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        app.logger.warning("Không thể kiểm tra/nâng cấp cột image_features: %s", e)
+
+from collections import OrderedDict
+import hashlib
+import requests
+
+# Cache LRU: không xóa toàn bộ cache khi thêm ảnh mới.
+FEATURE_CACHE = OrderedDict()
+MAX_CACHE_SIZE = 256
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_IMAGE_PIXELS = 25_000_000
+IMAGE_DOWNLOAD_TIMEOUT = (3, 6)
+_IMAGE_HTTP = requests.Session()
 
 STOP_WORDS_VN = {"con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái", "tấm", "bức", "tờ", "cục"}
+
+
+def _image_cache_key(img_path):
+    return str(img_path).strip() if img_path else None
+
 
 def check_real_image(img_path):
     if not img_path:
         return False
     try:
-        str_path = str(img_path).strip().lower()
-        if str_path in ["", "none", "null", "undefined"]:
+        value = str(img_path).strip()
+        lowered = value.lower()
+        if lowered in {"", "none", "null", "undefined"}:
             return False
-            
-        invalid_keywords = ["chua co anh", "chưa có ảnh", "no_image", "default", "placeholder", "120?text="]
-        if any(k in str_path for k in invalid_keywords):
+        invalid = ("chua co anh", "chưa có ảnh", "no_image", "placeholder", "120?text=")
+        if any(word in lowered for word in invalid):
             return False
-
-        if str_path.startswith("http://") or str_path.startswith("https://"):
-            return True
-
-        p = os.path.join(app.config.get("UPLOAD_FOLDER", "static/uploads"), str_path) if not os.path.isabs(str_path) else str_path
-        return os.path.exists(p)
-    except Exception:
+        if lowered.startswith(("http://", "https://")):
+            return True  # Kiểm tra nội dung thật khi tải, tránh request thừa ở vòng ghép cặp.
+        path = value if os.path.isabs(value) else os.path.join(
+            app.config.get("UPLOAD_FOLDER", "static/uploads"), value
+        )
+        return os.path.isfile(path)
+    except (TypeError, OSError):
         return False
 
+
 def get_feature_cache(img_path):
-    return FEATURE_CACHE.get(img_path) if img_path else None
+    key = _image_cache_key(img_path)
+    if not key:
+        return None
+    value = FEATURE_CACHE.get(key)
+    if value is not None:
+        FEATURE_CACHE.move_to_end(key)
+    return value
+
 
 def save_feature_cache(img_path, features):
-    if img_path:
-        if len(FEATURE_CACHE) > MAX_CACHE_SIZE:
-            FEATURE_CACHE.clear()
-        FEATURE_CACHE[img_path] = features
+    key = _image_cache_key(img_path)
+    if not key or features is None:
+        return
+    FEATURE_CACHE[key] = features
+    FEATURE_CACHE.move_to_end(key)
+    while len(FEATURE_CACHE) > MAX_CACHE_SIZE:
+        FEATURE_CACHE.popitem(last=False)
+
+
+def _read_image_bytes(img_path):
+    value = str(img_path).strip()
+    if value.lower().startswith(("http://", "https://")):
+        response = _IMAGE_HTTP.get(
+            value, timeout=IMAGE_DOWNLOAD_TIMEOUT, stream=True,
+            headers={"User-Agent": "SmartLostFound/1.0"}
+        )
+        response.raise_for_status()
+        chunks, size = [], 0
+        for chunk in response.iter_content(64 * 1024):
+            if not chunk:
+                continue
+            size += len(chunk)
+            if size > MAX_IMAGE_BYTES:
+                raise ValueError("Ảnh vượt quá giới hạn dung lượng xử lý")
+            chunks.append(chunk)
+        response.close()
+        return b"".join(chunks)
+
+    path = value if os.path.isabs(value) else os.path.join(app.config["UPLOAD_FOLDER"], value)
+    with open(path, "rb") as file:
+        data = file.read(MAX_IMAGE_BYTES + 1)
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ValueError("Ảnh vượt quá giới hạn dung lượng xử lý")
+    return data
+
 
 def calculate_image_features(img_path):
     if not check_real_image(img_path):
         return None
-    
+
     cached = get_feature_cache(img_path)
     if cached is not None:
         return cached
 
     try:
-        data = None
-        path_str = str(img_path).strip()
-        
-        if path_str.startswith(("http://", "https://")):
-            import requests
-            resp = requests.get(path_str, timeout=2, stream=True, verify=False)
-            if resp.status_code == 200:
-                data = resp.raw.read(102400) # Chỉ đọc 100KB đầu để tiết kiệm RAM
-        else:
-            p = os.path.join(app.config["UPLOAD_FOLDER"], path_str) if not os.path.isabs(path_str) else path_str
-            if os.path.exists(p):
-                with open(p, "rb") as f:
-                    data = f.read(102400)
-
+        data = _read_image_bytes(img_path)
         if not data:
             return None
 
-        if HAS_OPENCV:
-            try:
-                arr = np.asarray(bytearray(data), dtype=np.uint8)
-                img = cv2.imdecode(arr, -1)
-                if img is not None:
-                    crop_img = cv2.resize(img, (60, 60), interpolation=cv2.INTER_AREA)
-                    gray = cv2.cvtColor(crop_img, cv2.COLOR_BGR2GRAY)
-                    
-                    orb = cv2.ORB_create(nfeatures=120)
-                    kp, des = orb.detectAndCompute(gray, None)
+        # Đọc ảnh hoàn chỉnh, tự xoay theo EXIF và giữ nguyên tỷ lệ.
+        with Image.open(io.BytesIO(data)) as original:
+            # Chặn ảnh có số pixel quá lớn trước khi giải mã/chuyển RGB.
+            width, height = original.size
+            if width <= 0 or height <= 0 or width * height > MAX_IMAGE_PIXELS:
+                raise ValueError("Độ phân giải ảnh vượt giới hạn xử lý")
+            original = ImageOps.exif_transpose(original).convert("RGB")
+            # Chỉ resize bản dùng để trích xuất đặc trưng; ảnh gốc trên Cloudinary không đổi.
+            original.thumbnail((320, 320), Image.Resampling.LANCZOS)
+            rgb = np.asarray(original) if HAS_OPENCV else None
+            gray_pil = original.convert("L").resize((32, 32), Image.Resampling.LANCZOS)
 
-                    hsv = cv2.cvtColor(crop_img, cv2.COLOR_BGR2HSV)
-                    hist = cv2.calcHist([hsv], [0, 1], None, [8, 8], [0, 180, 0, 256])
-                    if hist is not None:
-                        cv2.normalize(hist, hist, 0, 1, cv2.NORM_MINMAX)
+            # Perceptual hash (DCT pHash): ổn định hơn dHash khi ảnh thay đổi kích thước.
+            if HAS_OPENCV:
+                pixels = np.asarray(gray_pil, dtype=np.float32)
+                dct = cv2.dct(pixels)
+                block = dct[:8, :8]
+                median = float(np.median(block.flatten()[1:]))
+                phash = 0
+                for value in block.flatten():
+                    phash = (phash << 1) | int(value > median)
+            else:
+                small = gray_pil.resize((9, 8), Image.Resampling.LANCZOS)
+                vals = list(small.getdata())
+                dhash = 0
+                for row in range(8):
+                    for col in range(8):
+                        dhash = (dhash << 1) | int(vals[row * 9 + col] > vals[row * 9 + col + 1])
+                phash = dhash
 
-                    features = {
-                        "type": "opencv",
-                        "orb_descriptors": des,
-                        "hsv_hist": hist
-                    }
-                    save_feature_cache(img_path, features)
-                    return features
-            except Exception:
-                pass
+            features = {"phash": phash, "orb": None, "hsv_hist": None}
 
-        with Image.open(io.BytesIO(data)) as im:
-            im_tiny = im.convert("RGB").resize((32, 32))
-            im_gray = im_tiny.convert("L").resize((9, 8))
-            pixels = list(im_gray.getdata())
-            dhash_val = 0
-            for r in range(8):
-                for c in range(8):
-                    dhash_val = (dhash_val << 1) | int(pixels[r * 9 + c] > pixels[r * 9 + c + 1])
+            if HAS_OPENCV and rgb is not None:
+                bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+                gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+                orb = cv2.ORB_create(
+                    nfeatures=500, scaleFactor=1.2, nlevels=8,
+                    edgeThreshold=15, fastThreshold=12
+                )
+                keypoints, descriptors = orb.detectAndCompute(gray, None)
+                features["orb"] = descriptors
+                hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+                hist = cv2.calcHist([hsv], [0, 1], None, [12, 8], [0, 180, 0, 256])
+                cv2.normalize(hist, hist, alpha=1.0, norm_type=cv2.NORM_L1)
+                features["hsv_hist"] = hist
 
-            hist = im_tiny.histogram()
-            features = {"type": "pil", "dhash": dhash_val, "hist": hist}
             save_feature_cache(img_path, features)
             return features
+    except Exception as exc:
+        app.logger.warning("Không xử lý được ảnh %s: %s", img_path, exc)
+        return None
 
+
+def serialize_image_features(features):
+    """Chuyển đặc trưng ảnh thành JSON nhỏ, lưu bền vững trong database."""
+    if not features:
+        return None
+    try:
+        orb = features.get("orb")
+        hist = features.get("hsv_hist")
+        payload = {
+            "v": 1,
+            "phash": int(features.get("phash", 0)),
+            "orb": orb.tolist() if orb is not None else None,
+            "hsv_hist": hist.reshape(-1).astype(float).tolist() if hist is not None else None,
+        }
+        return json.dumps(payload, separators=(",", ":"))
     except Exception:
         return None
 
-def image_score(img1_filename, img2_filename, is_same_keyword=False):
+
+def deserialize_image_features(value):
+    if not value:
+        return None
     try:
-        str1 = str(img1_filename).strip()
-        str2 = str(img2_filename).strip()
-
-        if str1 == str2:
-            return 50, 1.0
-
-        f1 = calculate_image_features(img1_filename)
-        f2 = calculate_image_features(img2_filename)
-
-        if f1 is None or f2 is None:
-            return 0, 0.0
-
-        if f1.get("type") == "opencv" and f2.get("type") == "opencv":
-            good_count = 0
-            try:
-                des1, des2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
-                if des1 is not None and des2 is not None and len(des1) >= 2 and len(des2) >= 2:
-                    bf = cv2.BFMatcher(cv2.NORM_HAMMING)
-                    matches = bf.knnMatch(des1, des2, k=2)
-                    for m_pair in matches:
-                        if len(m_pair) == 2 and m_pair[0].distance < 0.78 * m_pair[1].distance:
-                            good_count += 1
-            except Exception:
-                good_count = 0
-
-            color_corr = 0.0
-            try:
-                hist1, hist2 = f1.get("hsv_hist"), f2.get("hsv_hist")
-                if hist1 is not None and hist2 is not None:
-                    color_corr = max(0.0, float(cv2.compareHist(hist1, hist2, cv2.HISTCMP_CORREL)))
-            except Exception:
-                color_corr = 0.0
-
-            if good_count >= 8:
-                score = 45
-            elif good_count >= 4:
-                score = 35
-            elif good_count >= 2:
-                score = 25
-            else:
-                score = int(color_corr * 20) if color_corr > 0.50 else 0
-
-            score = min(50, max(0, score))
-            return score, float(score / 50.0)
-
-        dist = (f1.get("dhash", 0) ^ f2.get("dhash", 0)).bit_count()
-        s_shape = 25 if dist <= 20 else (15 if dist <= 35 else 0)
-
-        h1, h2 = f1.get("hist", []), f2.get("hist", [])
-        dot = sum(a * b for a, b in zip(h1, h2))
-        norm1 = sum(a * a for a in h1) ** 0.5
-        norm2 = sum(b * b for b in h2) ** 0.5
-        c_sim = (dot / (norm1 * norm2)) if (norm1 > 0 and norm2 > 0) else 0.0
-        
-        s_color = int(c_sim * 25) if c_sim > 0.60 else 0
-        total = min(50, max(0, s_shape + s_color))
-        return total, float(total / 50.0)
-
+        payload = json.loads(value) if isinstance(value, str) else value
+        result = {"phash": int(payload["phash"]), "orb": None, "hsv_hist": None}
+        if HAS_OPENCV and payload.get("orb"):
+            result["orb"] = np.asarray(payload["orb"], dtype=np.uint8)
+        if HAS_OPENCV and payload.get("hsv_hist"):
+            result["hsv_hist"] = np.asarray(payload["hsv_hist"], dtype=np.float32).reshape(12, 8)
+        return result
     except Exception:
+        return None
+
+
+def get_item_features(item):
+    """Ưu tiên đặc trưng trong DB; chỉ xử lý ảnh khi bản ghi cũ chưa có."""
+    stored = deserialize_image_features(getattr(item, "image_features", None))
+    if stored is not None:
+        return stored
+    extracted = calculate_image_features(item.hinh_anh)
+    if extracted:
+        serialized = serialize_image_features(extracted)
+        if serialized:
+            item.image_features = serialized
+            try:
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+    return extracted
+
+
+def image_score_from_features(f1, f2):
+    if not f1 or not f2:
         return 0, 0.0
+    hash1, hash2 = f1.get("phash"), f2.get("phash")
+    hash_similarity = 0.0
+    if hash1 is not None and hash2 is not None:
+        distance = (int(hash1) ^ int(hash2)).bit_count()
+        hash_similarity = max(0.0, 1.0 - distance / 32.0)
+    orb_similarity = 0.0
+    des1, des2 = f1.get("orb"), f2.get("orb")
+    if HAS_OPENCV and des1 is not None and des2 is not None and len(des1) >= 4 and len(des2) >= 4:
+        try:
+            pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(des1, des2, k=2)
+            good = sum(1 for pair in pairs if len(pair) == 2 and pair[0].distance < 0.72 * pair[1].distance)
+            denominator = max(1, min(len(des1), len(des2)))
+            orb_similarity = min(1.0, good / max(8.0, denominator * 0.20))
+        except Exception:
+            pass
+    color_similarity = 0.0
+    h1, h2 = f1.get("hsv_hist"), f2.get("hsv_hist")
+    if HAS_OPENCV and h1 is not None and h2 is not None:
+        try:
+            distance = float(cv2.compareHist(h1, h2, cv2.HISTCMP_BHATTACHARYYA))
+            color_similarity = max(0.0, min(1.0, 1.0 - distance))
+        except Exception:
+            pass
+    score = int(round(orb_similarity * 28 + hash_similarity * 17 + color_similarity * 5))
+    if orb_similarity < 0.12:
+        score = min(score, 22)
+    score = max(0, min(50, score))
+    return score, score / 50.0
+
+
+def image_score(img1_filename, img2_filename, is_same_keyword=False):
+    if not img1_filename or not img2_filename:
+        return 0, 0.0
+    if str(img1_filename).strip() == str(img2_filename).strip():
+        return 50, 1.0
+    return image_score_from_features(
+        calculate_image_features(img1_filename),
+        calculate_image_features(img2_filename)
+    )
+
 
 def get_core_keyword(text_name):
     if not text_name:
@@ -391,11 +490,13 @@ def lost():
             )
             db.session.add(item)
             db.session.commit()
+            if item.hinh_anh:
+                features = calculate_image_features(item.hinh_anh)
+                item.image_features = serialize_image_features(features)
+                db.session.commit()
         except Exception:
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
+            db.session.rollback()
+            app.logger.exception("Lỗi lưu đồ thất lạc")
         return redirect(url_for("list_items"))
     return render_template("lost_form.html")
 
@@ -424,11 +525,13 @@ def found():
             )
             db.session.add(item)
             db.session.commit()
+            if item.hinh_anh:
+                features = calculate_image_features(item.hinh_anh)
+                item.image_features = serialize_image_features(features)
+                db.session.commit()
         except Exception:
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
+            db.session.rollback()
+            app.logger.exception("Lỗi lưu đồ nhặt được")
         return redirect(url_for("found_list"))
     return render_template("found_form.html")
 
@@ -659,139 +762,78 @@ def found_return(id):
 
 @app.route("/match")
 def match_items():
-    raw_matches = []
-    page = request.args.get("page", 1, type=int)
+    page = max(1, request.args.get("page", 1, type=int))
     cat_filter = request.args.get("category", "").strip()
-    per_page = 10 
-
+    per_page = 10
     try:
         lost_query = LostItem.query.filter(LostItem.trang_thai != "DA_TIM")
         found_query = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA")
-
         if cat_filter:
             lost_query = lost_query.filter(LostItem.loai_do == cat_filter)
             found_query = found_query.filter(FoundItem.loai_do == cat_filter)
-
         lost_items = lost_query.order_by(LostItem.id.desc()).all()
         found_items = found_query.order_by(FoundItem.id.desc()).all()
 
-        # BƯỚC 1: LỌC DỮ LIỆU BẰNG CHỮ CỰC NHANH TRONG BỘ NHỚ (KHÔNG TẢI HÌNH ẢNH)
+        # Đặc trưng được đọc từ DB; bản ghi cũ sẽ được xử lý bổ sung khi cần.
+        lost_features = {x.id: get_item_features(x) for x in lost_items if check_real_image(x.hinh_anh)}
+        found_features = {x.id: get_item_features(x) for x in found_items if check_real_image(x.hinh_anh)}
+
+        ranked = []
         for lost in lost_items:
-            lost.has_image = check_real_image(lost.hinh_anh)
             for found in found_items:
-                found.has_image = check_real_image(found.hinh_anh)
                 try:
-                    if lost.loai_do and found.loai_do and str(lost.loai_do).strip().lower() != str(found.loai_do).strip().lower():
+                    if lost.loai_do and found.loai_do and lost.loai_do.strip().lower() != found.loai_do.strip().lower():
                         continue
-
-                    key1 = get_core_keyword(lost.ten_do)
-                    key2 = get_core_keyword(found.ten_do)
+                    key1, key2 = get_core_keyword(lost.ten_do), get_core_keyword(found.ten_do)
                     ten_sim = similarity(lost.ten_do, found.ten_do)
-                    is_same_key = (key1 == key2 and key1 != "")
+                    same_key = key1 == key2 and bool(key1)
+                    name_score = 15 if same_key else int(ten_sim * 15)
+                    c1, c2 = str(lost.mau_sac or "").strip(), str(found.mau_sac or "").strip()
+                    color_score = int(similarity(c1, c2) * 15) if c1 and c2 else (10 if same_key else 0)
+                    loc_score = 0
+                    l1, l2 = str(lost.noi_mat or "").strip(), str(found.noi_nhat or "").strip()
+                    if l1 and l2:
+                        loc_sim = similarity(l1, l2)
+                        loc_score = 10 if loc_sim > .8 else (5 if loc_sim > .5 else 0)
+                    d_score = date_score(lost.ngay_mat, found.ngay_nhat)
+                    base = name_score + color_score + loc_score + d_score
 
-                    ten_score = 15 if is_same_key else int(ten_sim * 15)
-
-                    mau_score = 0
-                    m1 = str(lost.mau_sac or "").strip().lower()
-                    m2 = str(found.mau_sac or "").strip().lower()
-                    if m1 not in ["none", "null", ""] and m2 not in ["none", "null", ""]:
-                        mau_score = int(similarity(lost.mau_sac, found.mau_sac) * 15)
-                    elif is_same_key:
-                        mau_score = 10
-
-                    vi_tri_score = 0
-                    v1 = str(lost.noi_mat or "").strip().lower()
-                    v2 = str(found.noi_nhat or "").strip().lower()
-                    if v1 not in ["none", "null", ""] and v2 not in ["none", "null", ""]:
-                        vi_tri = similarity(lost.noi_mat, found.noi_nhat)
-                        if vi_tri > 0.8:
-                            vi_tri_score = 10
-                        elif vi_tri > 0.5:
-                            vi_tri_score = 5
-
-                    ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-                    base_score = ten_score + mau_score + vi_tri_score + ngay_score
-
-                    raw_matches.append({
-                        "lost": lost,
-                        "found": found,
-                        "base_score": base_score,
-                        "is_same_key": is_same_key,
-                        "ten_sim": ten_sim,
-                        "score_name": ten_score,
-                        "score_color": mau_score,
-                        "score_location": vi_tri_score,
-                        "score_date": ngay_score
+                    # Chỉ so ảnh khi có tín hiệu mô tả tối thiểu; nhưng chấm mọi cặp
+                    # đủ điều kiện trước khi phân trang để xếp hạng toàn cục đúng.
+                    img_score = 0
+                    if (lost.id in lost_features and found.id in found_features
+                            and (same_key or ten_sim >= 0.35)):
+                        img_score = image_score_from_features(
+                            lost_features[lost.id], found_features[found.id]
+                        )[0]
+                    total = base + img_score
+                    label = ("🟢 Khả năng trùng khớp cao" if total >= 75 else
+                             "🟡 Có khả năng trùng khớp" if total >= 55 else
+                             "🟠 Có một số điểm tương đồng" if total >= 38 else
+                             "🔴 Khả năng trùng khớp thấp")
+                    ranked.append({
+                        "lost": lost, "found": found, "score": total,
+                        "ket_luan": label, "score_image": img_score,
+                        "score_name": name_score, "score_color": color_score,
+                        "score_location": loc_score, "score_date": d_score
                     })
                 except Exception:
+                    app.logger.exception("Lỗi tính cặp đối chiếu")
                     continue
 
-        # Sắp xếp các cặp theo mức độ liên quan về chữ trước
-        raw_matches.sort(key=lambda x: x["base_score"], reverse=True)
-
-        total_matches = len(raw_matches)
+        ranked.sort(key=lambda x: x["score"], reverse=True)
+        total_matches = len(ranked)
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
-        page = max(1, min(page, total_pages))
-
-        # BƯỚC 2: CẮT PHÂN TRANG LẤY ĐÚNG 10 CẶP CỦA TRANG HIỆN TẠI
-        start_idx = (page - 1) * per_page
-        end_idx = start_idx + per_page
-        paginated_raw = raw_matches[start_idx:end_idx]
-
-        final_matches = []
-
-        # BƯỚC 3: CHỈ CHẠY AI TÍNH ĐIỂM ẢNH CHO ĐÚNG 10 CẶP ĐƯỢC HIỂN THỊ
-        for item in paginated_raw:
-            lost = item["lost"]
-            found = item["found"]
-            
-            if lost.has_image and found.has_image:
-                if item["is_same_key"] or item["ten_sim"] >= 0.35:
-                    anh_score, _ = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=item["is_same_key"])
-                else:
-                    anh_score = 0
-            else:
-                anh_score = 0
-
-            total_score = item["base_score"] + anh_score
-
-            if total_score >= 75:
-                ket_luan = "🟢 Khả năng trùng khớp cao"
-            elif total_score >= 55:
-                ket_luan = "🟡 Có khả năng trùng khớp"
-            elif total_score >= 38:
-                ket_luan = "🟠 Có một số điểm tương đồng"
-            else:
-                ket_luan = "🔴 Khả năng trùng khớp thấp"
-
-            final_matches.append({
-                "lost": lost,
-                "found": found,
-                "score": total_score,
-                "ket_luan": ket_luan,
-                "score_image": anh_score,
-                "score_name": item["score_name"],
-                "score_color": item["score_color"],
-                "score_location": item["score_location"],
-                "score_date": item["score_date"]
-            })
-
-        # Sắp xếp 10 cặp của trang theo tổng điểm chính xác
-        final_matches.sort(key=lambda x: x["score"], reverse=True)
-
-        gc.collect()
-
-        return render_template(
-            "match.html",
-            matches=final_matches,
-            page=page,
-            total_pages=total_pages,
-            total_matches=total_matches,
-            selected_category=cat_filter
-        )
-    except Exception as route_err:
-        return render_template("match.html", matches=[], page=1, total_pages=1, total_matches=0, selected_category=cat_filter)
+        page = min(page, total_pages)
+        final_matches = ranked[(page - 1) * per_page:page * per_page]
+        return render_template("match.html", matches=final_matches, page=page,
+                               total_pages=total_pages, total_matches=total_matches,
+                               selected_category=cat_filter)
+    except Exception:
+        db.session.rollback()
+        app.logger.exception("Lỗi trang đối chiếu")
+        return render_template("match.html", matches=[], page=1, total_pages=1,
+                               total_matches=0, selected_category=cat_filter)
 
 @app.route("/teacher-check/<int:lost_id>/<int:found_id>")
 def teacher_check(lost_id, found_id):
@@ -809,7 +851,9 @@ def teacher_check(lost_id, found_id):
     is_same_key = (key1 == key2 and key1 != "")
 
     if has1 and has2:
-        anh_score, image_ratio = image_score(lost.hinh_anh, found.hinh_anh, is_same_keyword=is_same_key)
+        anh_score, image_ratio = image_score_from_features(
+            get_item_features(lost), get_item_features(found)
+        )
     else:
         anh_score, image_ratio = 0, 0.0
 
@@ -855,7 +899,6 @@ def teacher_check(lost_id, found_id):
     elif not (has1 and has2):
         image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
 
-    gc.collect()
     return render_template(
         "teacher_check.html",
         lost=lost,
