@@ -196,7 +196,7 @@ def _center_crop_for_matching(pil_img, keep_ratio=0.75):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng lai: Lưới màu không gian 3x3 HSV + pHash + ORB trên vùng trung tâm."""
+    """Trích xuất đặc trưng lai: Lưới màu+sáng 3x3 HSV + pHash 4 góc xoay + ORB trên vùng trung tâm."""
     if not check_real_image(img_path):
         return None
 
@@ -236,21 +236,30 @@ def calculate_image_features(img_path):
             orb = cv2.ORB_create(nfeatures=250, scaleFactor=1.2, nlevels=6, fastThreshold=12)
             _, descriptors = orb.detectAndCompute(gray_eq, None)
 
-            # Lưới màu không gian 3x3 trên vùng vật thể trung tâm
+            # Tính pHash cho cả 4 góc xoay (0, 90, 180, 270 độ) để bắt được sách/vở chụp ngang
+            phashes = [
+                _phash_from_gray(gray_eq),
+                _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_CLOCKWISE)),
+                _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_180)),
+                _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_COUNTERCLOCKWISE)),
+            ]
+
+            # Lưới màu & độ sáng không gian 3x3 HSV (nhận diện cả đồ nhiều màu lẫn đồ trơn bạc/đen/trắng)
             hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
             grid_hists = []
             step = 240 // 3
             for r in range(3):
                 for c in range(3):
                     cell = hsv[r * step:(r + 1) * step, c * step:(c + 1) * step]
-                    hist = cv2.calcHist([cell], [0, 1], None, [10, 6], [0, 180, 0, 256])
+                    hist = cv2.calcHist([cell], [0, 1, 2], None, [8, 4, 4], [0, 180, 0, 256, 0, 256])
                     cv2.normalize(hist, hist, 1.0, 0.0, cv2.NORM_L1)
                     grid_hists.append(hist)
 
             features = {
-                "version": 9,
-                "type": "opencv_v9_spatial_tuned",
-                "phash": _phash_from_gray(gray_eq),
+                "version": 10,
+                "type": "opencv_v10_rot_invariant",
+                "phash": phashes[0],
+                "phashes": phashes,
                 "orb_descriptors": descriptors,
                 "grid_hists": grid_hists,
             }
@@ -270,8 +279,16 @@ def calculate_image_features(img_path):
         return None
 
 
+def _rotate_grid_90(grid_hists):
+    """Xoay lưới 3x3 theo chiều kim đồng hồ 90 độ để khớp sách/vở chụp ngang."""
+    if len(grid_hists) != 9:
+        return grid_hists
+    order = [6, 3, 0, 7, 4, 1, 8, 5, 2]
+    return [grid_hists[i] for i in order]
+
+
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Chấm điểm hình ảnh (0–50) đã tinh chỉnh sát thực tế cho ảnh chụp khác góc/khác nền."""
+    """Chấm điểm hình ảnh (0–50) chống xoay 90 độ và nhận diện cả đồ họa tiết lẫn đồ trơn màu."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -285,24 +302,33 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             return 0, 0.0
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
-            # 1. Màu sắc không gian 3x3 HSV (tối đa 22/50 điểm)
+            # 1. Màu sắc & độ sáng không gian 3x3 HSV (tự động thử 4 góc xoay 0/90/180/270 độ, tối đa 22đ)
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
             color_points = 0
             if len(g1) == 9 and len(g2) == 9:
-                corrs = [max(0.0, float(cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))) for h1, h2 in zip(g1, g2)]
-                top6_corr = sum(sorted(corrs, reverse=True)[:6]) / 6.0
-                if top6_corr >= 0.65:
-                    color_points = 22
-                elif top6_corr >= 0.48:
-                    color_points = 18
-                elif top6_corr >= 0.35:
-                    color_points = 14
-                elif top6_corr >= 0.22:
-                    color_points = 8
+                best_corr = 0.0
+                curr_g2 = g2
+                for _ in range(4):
+                    corrs = [max(0.0, float(cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))) for h1, h2 in zip(g1, curr_g2)]
+                    top5_corr = sum(sorted(corrs, reverse=True)[:5]) / 5.0
+                    if top5_corr > best_corr:
+                        best_corr = top5_corr
+                    curr_g2 = _rotate_grid_90(curr_g2)
 
-            # 2. Bố cục cấu trúc pHash (tối đa 14/50 điểm)
-            hamming = (int(f1["phash"]) ^ int(f2["phash"])).bit_count()
-            phash_score = max(0.0, 1.0 - hamming / 63.0)
+                if best_corr >= 0.62:
+                    color_points = 22
+                elif best_corr >= 0.45:
+                    color_points = 18
+                elif best_corr >= 0.32:
+                    color_points = 14
+                elif best_corr >= 0.20:
+                    color_points = 9
+
+            # 2. Bố cục cấu trúc pHash theo góc xoay khớp nhất (tối đa 14/50 điểm)
+            p1 = int(f1["phash"])
+            p2_list = f2.get("phashes", [int(f2["phash"])])
+            min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
+            phash_score = max(0.0, 1.0 - min_hamming / 63.0)
             if phash_score >= 0.68:
                 shape_points = 14
             elif phash_score >= 0.56:
@@ -312,7 +338,7 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             else:
                 shape_points = 6
 
-            # 3. Chi tiết đặc trưng ORB 2 chiều (tối đa 14/50 điểm)
+            # 3. Chi tiết đặc trưng ORB 2 chiều (bất biến xoay tự nhiên, tối đa 14/50 điểm)
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
             if d1 is not None and d2 is not None and len(d1) >= 2 and len(d2) >= 2:
@@ -332,8 +358,8 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                     orb_points = 9
 
             # Khóa chống nhiễu lông xù/nền gạch khi màu sắc vùng trung tâm khác hẳn
-            if color_points <= 8 and orb_points > 6:
-                orb_points = 6
+            if color_points <= 9 and orb_points > 7:
+                orb_points = 7
 
             raw_total = color_points + shape_points + orb_points
             if not is_same_keyword and raw_total > 22:
