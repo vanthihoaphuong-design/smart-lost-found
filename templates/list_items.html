@@ -49,7 +49,7 @@ Danh sách đồ thất lạc
                 <td class="fw-bold text-dark">{{ item.ten_do }}</td>
                 <td><span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span></td>
                 <td>{{ item.noi_mat }}</td>
-                <td>{{ item.ngay_mat }}</td>
+                <td>{{ item.ngay_mat | vn_date }}</td>
                 <td>
                     {% if item.trang_thai == 'DA_TIM' or item.trang_thai == 'DA_TRA' or item.trang_thai == 'Đã tìm thấy' %}
                         <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã tìm thấy</span>
