@@ -50,6 +50,16 @@ if cloud_name and api_key and api_secret:
         print(f"Lỗi config Cloudinary: {e}")
 
 app = Flask(__name__)
+@app.template_filter('vn_date')
+def vn_date_filter(value):
+    if not value:
+        return ""
+    s = str(value).strip()
+    # Nếu chuỗi đang có dạng yyyy-mm-dd (ví dụ: 2026-11-16) thì đổi thành dd-mm-yyyy
+    parts = s.split(' ')[0].split('-')
+    if len(parts) == 3 and len(parts[0]) == 4:
+        return f"{parts[2]}-{parts[1]}-{parts[0]}"
+    return s
 app.secret_key = os.environ.get("SECRET_KEY", "smart_lost_found_secret_key_123")
 
 
