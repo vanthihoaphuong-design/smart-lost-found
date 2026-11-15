@@ -307,23 +307,31 @@ def get_item_features(item):
 
 
 def image_score_from_features(f1, f2):
+    """Chấm điểm ảnh trên thang 50; xử lý đúng pHash 64-bit và ORB đối sánh chéo."""
     if not f1 or not f2:
         return 0, 0.0
-    hash1, hash2 = f1.get("phash"), f2.get("phash")
+
+    # pHash được tạo từ khối DCT 8x8 nên có 64 bit, không phải 32 bit.
     hash_similarity = 0.0
+    hash1, hash2 = f1.get("phash"), f2.get("phash")
     if hash1 is not None and hash2 is not None:
         distance = (int(hash1) ^ int(hash2)).bit_count()
-        hash_similarity = max(0.0, 1.0 - distance / 32.0)
+        hash_similarity = max(0.0, 1.0 - distance / 64.0)
+
+    # ORB: dùng crossCheck để tránh Lowe ratio test loại nhầm các descriptor
+    # trùng khớp hoàn toàn (trường hợp hai ảnh giống hệt nhau).
     orb_similarity = 0.0
     des1, des2 = f1.get("orb"), f2.get("orb")
-    if HAS_OPENCV and des1 is not None and des2 is not None and len(des1) >= 4 and len(des2) >= 4:
+    if HAS_OPENCV and des1 is not None and des2 is not None and len(des1) and len(des2):
         try:
-            pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(des1, des2, k=2)
-            good = sum(1 for pair in pairs if len(pair) == 2 and pair[0].distance < 0.72 * pair[1].distance)
+            matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+            matches = matcher.match(des1, des2)
+            good = sum(1 for match in matches if match.distance <= 48)
             denominator = max(1, min(len(des1), len(des2)))
-            orb_similarity = min(1.0, good / max(8.0, denominator * 0.20))
+            orb_similarity = max(0.0, min(1.0, good / denominator))
         except Exception:
-            pass
+            orb_similarity = 0.0
+
     color_similarity = 0.0
     h1, h2 = f1.get("hsv_hist"), f2.get("hsv_hist")
     if HAS_OPENCV and h1 is not None and h2 is not None:
@@ -331,11 +339,16 @@ def image_score_from_features(f1, f2):
             distance = float(cv2.compareHist(h1, h2, cv2.HISTCMP_BHATTACHARYYA))
             color_similarity = max(0.0, min(1.0, 1.0 - distance))
         except Exception:
-            pass
-    score = int(round(orb_similarity * 28 + hash_similarity * 17 + color_similarity * 5))
-    if orb_similarity < 0.12:
-        score = min(score, 22)
-    score = max(0, min(50, score))
+            color_similarity = 0.0
+
+    # Nếu ORB không thể trích xuất (ảnh quá đơn giản), phân bổ phần trọng số
+    # đó sang pHash thay vì mặc định khiến ảnh giống nhau bị chặn ở 22/50.
+    if des1 is None or des2 is None or len(des1) == 0 or len(des2) == 0:
+        score = hash_similarity * 45 + color_similarity * 5
+    else:
+        score = orb_similarity * 28 + hash_similarity * 17 + color_similarity * 5
+
+    score = int(round(max(0.0, min(50.0, score))))
     return score, score / 50.0
 
 
