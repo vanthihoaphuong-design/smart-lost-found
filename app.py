@@ -245,8 +245,8 @@ def calculate_image_features(img_path):
                     grid_hists.append(hist)
 
             features = {
-                "version": 8,
-                "type": "opencv_v8_spatial",
+                "version": 9,
+                "type": "opencv_v9_spatial_tuned",
                 "phash": _phash_from_gray(gray_eq),
                 "orb_descriptors": descriptors,
                 "grid_hists": grid_hists,
@@ -268,7 +268,7 @@ def calculate_image_features(img_path):
 
 
 def image_score(img1_filename, img2_filename, is_same_keyword=False):
-    """Chấm điểm hình ảnh (0–50): Lưới màu không gian 3x3 (22đ) + pHash (14đ) + ORB (14đ)."""
+    """Chấm điểm hình ảnh (0–50) đã tinh chỉnh sát thực tế cho ảnh chụp khác góc/khác nền."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -288,26 +288,26 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
             if len(g1) == 9 and len(g2) == 9:
                 corrs = [max(0.0, float(cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))) for h1, h2 in zip(g1, g2)]
                 top6_corr = sum(sorted(corrs, reverse=True)[:6]) / 6.0
-                if top6_corr >= 0.78:
+                if top6_corr >= 0.65:
                     color_points = 22
-                elif top6_corr >= 0.62:
-                    color_points = 17
-                elif top6_corr >= 0.45:
-                    color_points = 12
-                elif top6_corr >= 0.30:
-                    color_points = 6
+                elif top6_corr >= 0.48:
+                    color_points = 18
+                elif top6_corr >= 0.35:
+                    color_points = 14
+                elif top6_corr >= 0.22:
+                    color_points = 8
 
             # 2. Bố cục cấu trúc pHash (tối đa 14/50 điểm)
             hamming = (int(f1["phash"]) ^ int(f2["phash"])).bit_count()
             phash_score = max(0.0, 1.0 - hamming / 63.0)
-            if phash_score >= 0.76:
+            if phash_score >= 0.68:
                 shape_points = 14
-            elif phash_score >= 0.64:
-                shape_points = 11
-            elif phash_score >= 0.54:
-                shape_points = 8
+            elif phash_score >= 0.56:
+                shape_points = 12
+            elif phash_score >= 0.46:
+                shape_points = 9
             else:
-                shape_points = 4
+                shape_points = 6
 
             # 3. Chi tiết đặc trưng ORB 2 chiều (tối đa 14/50 điểm)
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
@@ -321,17 +321,15 @@ def image_score(img1_filename, img2_filename, is_same_keyword=False):
                 reverse_pairs = {(m.trainIdx, m.queryIdx) for m in good_r}
                 mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
 
-                if mutual >= 12:
+                if mutual >= 7:
                     orb_points = 14
-                elif mutual >= 6:
-                    orb_points = 11
                 elif mutual >= 3:
-                    orb_points = 8
+                    orb_points = 11
                 elif mutual >= 1:
-                    orb_points = 5
+                    orb_points = 9
 
             # Khóa chống nhiễu lông xù/nền gạch khi màu sắc vùng trung tâm khác hẳn
-            if color_points <= 6 and orb_points > 6:
+            if color_points <= 8 and orb_points > 6:
                 orb_points = 6
 
             raw_total = color_points + shape_points + orb_points
@@ -909,7 +907,6 @@ def match_items(item_id=None):
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
                     base_score = ten_score + mau_score + vi_tri_score + ngay_score
 
-                    # Ưu tiên xếp các cặp có đủ cả 2 ảnh lên trước khi chọn ứng viên phân tích AI
                     has_both_images = 1 if (lost.has_image and found.has_image) else 0
 
                     sequence += 1
@@ -947,7 +944,6 @@ def match_items(item_id=None):
             else:
                 anh_score = 0
 
-            # Cộng điểm trung thực: Hình ảnh (50) + Tên (15) + Màu (15) + Vị trí (10) + Ngày (10) = 100
             total_score = item["base_score"] + anh_score
             if total_score >= 75:
                 ket_luan = "🟢 Khả năng trùng khớp cao"
