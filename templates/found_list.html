@@ -26,7 +26,7 @@ Danh sách đồ nhặt được
     .page-top-bar h3 { margin: 0; font-weight: 800; color: #0f172a; font-size: 1.45rem; }
     .page-top-bar p { margin: 2px 0 0 0; color: #64748b; font-size: 0.88rem; }
 
-    /* Khung bảng chính */
+    /* Khung bảng chính có thanh cuộn và ghim tiêu đề */
     .premium-table-card {
         background: #ffffff;
         border-radius: 16px;
@@ -34,8 +34,16 @@ Danh sách đồ nhặt được
         border: 1px solid #d1fae5;
         overflow: hidden;
     }
-    .premium-table { margin-bottom: 0; width: 100%; border-collapse: collapse; }
+    .sticky-table-scroll {
+        max-height: 68vh;
+        overflow-y: auto;
+        overflow-x: auto;
+    }
+    .premium-table { margin-bottom: 0; width: 100%; border-collapse: separate; border-spacing: 0; }
     .premium-table thead th {
+        position: sticky;
+        top: 0;
+        z-index: 10;
         background: linear-gradient(90deg, #065f46 0%, #059669 100%);
         color: #ffffff;
         font-weight: 700;
@@ -47,6 +55,7 @@ Danh sách đồ nhặt được
         vertical-align: middle;
         border: none;
         white-space: nowrap;
+        box-shadow: 0 2px 6px rgba(6, 95, 70, 0.2);
     }
     .premium-table tbody td {
         padding: 12px 10px;
@@ -199,7 +208,7 @@ Danh sách đồ nhặt được
     </div>
 
     <div class="premium-table-card">
-        <div class="table-responsive">
+        <div class="sticky-table-scroll">
             <table class="table premium-table text-center">
                 <thead>
                     <tr>
@@ -239,14 +248,16 @@ Danh sách đồ nhặt được
                         </td>
                         <td><span class="cat-pill">{{ item.loai_do }}</span></td>
                         <td class="fw-semibold text-dark">
-                            📍 {{ item.noi_nhat if (item.noi_nhat and item.noi_nhat != 'None') else 'Chưa rõ' }}
+                            {% set clean_noi_nhat = (item.noi_nhat | replace('Căng tin', 'Căn tin') | replace('căng tin', 'căn tin')) if (item.noi_nhat and item.noi_nhat != 'None') else 'Chưa rõ' %}
+                            📍 {{ clean_noi_nhat }}
                         </td>
                         <td class="text-secondary fw-semibold" style="white-space: nowrap;">
                             {{ item.ngay_nhat | vn_date }}
                         </td>
                         <td>
                             {% if item.noi_luu_giu and item.noi_luu_giu != 'None' %}
-                                <span class="storage-pill">📦 {{ item.noi_luu_giu }}</span>
+                                {% set clean_noi_gui = item.noi_luu_giu | replace('Căng tin', 'Căn tin') | replace('căng tin', 'căn tin') %}
+                                <span class="storage-pill">📦 {{ clean_noi_gui }}</span>
                             {% else %}
                                 <span class="storage-empty">Chưa cập nhật</span>
                             {% endif %}
