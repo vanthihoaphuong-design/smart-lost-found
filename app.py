@@ -13,7 +13,7 @@ import pandas as pd
 import requests
 from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
 from werkzeug.utils import secure_filename
-from sqlalchemy import func
+from sqlalchemy import func, text
 from difflib import SequenceMatcher
 
 import cloudinary
@@ -105,8 +105,11 @@ except Exception as e:
 with app.app_context():
     try:
         db.create_all()
+        db.session.execute(text("ALTER TABLE found_item ADD COLUMN noi_luu_giu VARCHAR(200);"))
+        db.session.commit()
     except Exception as e:
-        print(f"Lỗi Create DB All: {e}")
+        db.session.rollback()
+        print(f"Thông báo DB migration: {e}")
 
 CACHE_FILE = "feature_cache_v11.json"
 CACHE_LOCK = threading.Lock()
@@ -752,6 +755,7 @@ def found():
                 mau_sac=request.form.get("mau_sac", ""),
                 noi_nhat=request.form.get("noi_nhat", ""),
                 ngay_nhat=request.form.get("ngay_nhat", ""),
+                noi_luu_giu=request.form.get("noi_luu_giu", "").strip(),
                 hinh_anh=filename,
                 trang_thai="DANG_LUU_GIU"
             )
@@ -915,6 +919,7 @@ def edit_found(item_id):
         item.mau_sac = request.form.get("mau_sac")
         item.noi_nhat = request.form.get("noi_nhat")
         item.ngay_nhat = request.form.get("ngay_nhat")
+        item.noi_luu_giu = request.form.get("noi_luu_giu", "").strip()
 
         file = request.files.get("hinh_anh")
         if file and file.filename != "":
@@ -1314,6 +1319,7 @@ def export_excel():
             "Màu sắc": item.mau_sac,
             "Nơi nhặt": item.noi_nhat,
             "Ngày nhặt": format_vn_date(item.ngay_nhat),
+            "Nơi lưu giữ / Liên hệ": item.noi_luu_giu or "",
             "Trạng thái": "Đã hoàn trả" if item.trang_thai in ["DA_TRA", "Đã hoàn trả"] else "Đang lưu giữ"
         } for i, item in enumerate(found_items)]
 
