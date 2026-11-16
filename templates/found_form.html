@@ -38,13 +38,45 @@ Báo nhặt được đồ
 
     <br>
 
-    <label class="form-label">Màu sắc</label>
-    <input 
-        type="text" 
-        name="mau_sac" 
-        class="form-control" 
-        placeholder="Ví dụ: Đen, Xanh, Trắng..." 
-        required>
+    <div class="row">
+        <div class="col-md-6">
+            <label class="form-label">Màu sắc</label>
+            <input 
+                type="text" 
+                name="mau_sac" 
+                class="form-control" 
+                placeholder="Ví dụ: Đen, Xanh, Trắng..." 
+                required>
+        </div>
+
+        <div class="col-md-6">
+            <label class="form-label">Nơi đang gửi đồ / Liên hệ người nhặt</label>
+            <input 
+                type="text" 
+                name="noi_luu_giu" 
+                id="noiLuuGiuInput"
+                list="storageSuggestions"
+                class="form-control" 
+                placeholder="Phòng Bảo vệ, Phòng Đoàn - Đội, hoặc Tên + Lớp..." 
+                required>
+            <datalist id="storageSuggestions">
+                <option value="Phòng Bảo vệ">
+                <option value="Phòng Đoàn - Đội">
+            </datalist>
+            <div class="mt-2 d-flex flex-wrap gap-2">
+                <small class="text-muted align-self-center">Chọn nhanh:</small>
+                <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" onclick="document.getElementById('noiLuuGiuInput').value='Phòng Bảo vệ'">
+                    🛡️ Phòng Bảo vệ
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-success rounded-pill" onclick="document.getElementById('noiLuuGiuInput').value='Phòng Đoàn - Đội'">
+                    🚩 Phòng Đoàn - Đội
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill" onclick="let el=document.getElementById('noiLuuGiuInput'); el.value=''; el.focus();">
+                    ✍️ Nhập tên người giữ
+                </button>
+            </div>
+        </div>
+    </div>
 
     <br>
 
