@@ -4,6 +4,7 @@ import uuid
 import json
 import re
 import gc
+import math
 import colorsys
 import threading
 import urllib3
@@ -19,7 +20,7 @@ from difflib import SequenceMatcher
 import cloudinary
 import cloudinary.uploader
 
-from PIL import Image, ImageOps, ImageFile
+from PIL import Image, ImageOps, ImageFile, ImageFilter
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -32,7 +33,7 @@ try:
     import numpy as np
     HAS_OPENCV = True
 except Exception as e:
-    print(f"Cảnh báo OpenCV không khả dụng: {e}")
+    print(f"Cảnh báo OpenCV không khả dụng, sử dụng bộ xử lý thị giác PIL nâng cao: {e}")
 
 cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
 api_key = os.environ.get("CLOUDINARY_API_KEY", "")
@@ -111,7 +112,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v21.json"
+CACHE_FILE = "feature_cache_v22.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -135,7 +136,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v21")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v22")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -281,10 +282,11 @@ def _phash_from_gray(gray):
 
 
 def _fast_pil_features(canvas, visual_colors):
-    """Trích xuất biểu đồ màu HS tách sáng + lưới 3x3 + dHash & aHash kép."""
+    """Bộ trích xuất đặc trưng đa tầng thuần PIL: Cân bằng sáng + Bảng màu mềm + Hướng biên."""
     phashes = []
     ahashes = []
-    gray_base = ImageOps.autocontrast(canvas.convert("L"))
+    eq_rgb = ImageOps.autocontrast(canvas, cutoff=1)
+    gray_base = ImageOps.autocontrast(canvas.convert("L"), cutoff=1)
 
     for angle in (0, 90, 180, 270):
         rot_g = gray_base.rotate(angle) if angle else gray_base
@@ -306,44 +308,88 @@ def _fast_pil_features(canvas, visual_colors):
             a_val = (a_val << 1) | (1 if val >= avg_lum else 0)
         ahashes.append(a_val)
 
-    small_rgb = canvas.resize((36, 36), Image.Resampling.BILINEAR)
+    # Biểu đồ màu mềm 24 bins (6 tông màu Hue x 4 mức bão hòa/sáng) chống lệch ánh sáng
+    small_rgb = eq_rgb.resize((48, 48), Image.Resampling.BILINEAR)
     pixels = list(small_rgb.getdata())
-    global_bins = [0.0] * 36
-    grid_hists = []
-    for r in range(3):
-        for c in range(3):
-            bins = [0.0] * 36
-            for py in range(r * 12, (r + 1) * 12):
-                row_offset = py * 36
-                for px_idx in range(c * 12, (c + 1) * 12):
-                    rv, gv, bv = pixels[row_offset + px_idx]
-                    h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
-                    h_bin = min(8, int(h * 9.0))
-                    s_bin = min(3, int(s * 4.0))
-                    idx = h_bin * 4 + s_bin
-                    bins[idx] += 1.0
-                    global_bins[idx] += 1.0
-            inv_s = 1.0 / 144.0
-            grid_hists.append([x * inv_s for x in bins])
 
-    inv_all = 1.0 / 1296.0
-    global_hist = [x * inv_all for x in global_bins]
+    def _accumulate_soft_hist(px_coords):
+        bins = [0.0] * 24
+        count = 0.0
+        for idx_px in px_coords:
+            rv, gv, bv = pixels[idx_px]
+            h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
+            if s < 0.20:
+                # Nhóm màu trung tính (đen / xám / trắng) chia 4 mức sáng
+                idx = min(3, int(v * 4.0))
+                bins[idx] += 1.0
+            else:
+                # Nhóm màu sắc (đỏ, vàng, lục, lơ, chàm, tím) -> 6 tông x 3 mức sáng + phân bổ mềm
+                h_pos = (h * 6.0) % 6.0
+                h0 = int(h_pos)
+                frac = h_pos - h0
+                h1 = (h0 + 1) % 6
+                v_lvl = min(2, int(v * 3.0))
+                bins[4 + h0 * 3 + v_lvl] += (1.0 - frac * 0.4)
+                bins[4 + h1 * 3 + v_lvl] += (frac * 0.4)
+            count += 1.0
+        inv = 1.0 / max(1.0, count)
+        return [x * inv for x in bins]
+
+    all_coords = range(48 * 48)
+    global_hist = _accumulate_soft_hist(all_coords)
+
+    # Vùng trung tâm 62% (tọa độ 9..39 trên lưới 48x48)
+    center_coords = [r * 48 + c for r in range(9, 39) for c in range(9, 39)]
+    center_hist = _accumulate_soft_hist(center_coords)
+
+    grid_hists = []
+    for gr in range(3):
+        for gc_idx in range(3):
+            cell_coords = [
+                r * 48 + c
+                for r in range(gr * 16, (gr + 1) * 16)
+                for c in range(gc_idx * 16, (gc_idx + 1) * 16)
+            ]
+            grid_hists.append(_accumulate_soft_hist(cell_coords))
+
+    # Biểu đồ hướng biên (8 hướng góc) tính trên ảnh xám 48x48 đã lọc mượt
+    g_small = gray_base.filter(ImageFilter.SMOOTH).resize((48, 48), Image.Resampling.BILINEAR)
+    g_px = list(g_small.getdata())
+    edge_bins = [0.0] * 8
+    edge_sum = 0.0
+    for r in range(1, 47):
+        row_off = r * 48
+        for c in range(1, 47):
+            gx = float(g_px[row_off + c + 1] - g_px[row_off + c - 1])
+            gy = float(g_px[row_off + 48 + c] - g_px[row_off - 48 + c])
+            mag = math.hypot(gx, gy)
+            if mag > 12.0:
+                ang = (math.degrees(math.atan2(gy, gx)) + 180.0) % 180.0
+                ebin = min(7, int(ang / 22.5))
+                edge_bins[ebin] += mag
+                edge_sum += mag
+    if edge_sum > 0:
+        edge_hist = [x / edge_sum for x in edge_bins]
+    else:
+        edge_hist = [0.125] * 8
 
     return {
-        "version": 21,
-        "type": "pil_v21_truecolor",
+        "version": 22,
+        "type": "pil_v22_truecolor",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
         "ahashes": ahashes,
         "global_hist": global_hist,
+        "center_hist": center_hist,
         "grid_hists": grid_hists,
+        "edge_hist": edge_hist,
         "visual_colors": list(visual_colors),
     }
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng sắc độ HS tách ánh sáng + đa tỉ lệ + cấu trúc biên."""
+    """Trích xuất đặc trưng sắc độ + đa tỉ lệ + cấu trúc biên (tương thích cả OpenCV và PIL)."""
     if not check_real_image(img_path):
         return None
 
@@ -384,18 +430,15 @@ def calculate_image_features(img_path):
                     _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_COUNTERCLOCKWISE)),
                 ]
 
-                # Dùng biểu đồ sắc độ 2D [Hue(12), Saturation(4)] bất biến với ánh sáng bóng râm/đèn
                 hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
 
                 global_hs = cv2.calcHist([hsv], [0, 1], None, [12, 4], [0, 180, 0, 256])
                 cv2.normalize(global_hs, global_hs, 1.0, 0.0, cv2.NORM_L1)
 
-                # Vùng trung tâm 65% để bắt trọn vật thể dù chụp gần hay xa
                 center_hsv = hsv[45:211, 45:211]
                 center_hs = cv2.calcHist([center_hsv], [0, 1], None, [12, 4], [0, 180, 0, 256])
                 cv2.normalize(center_hs, center_hs, 1.0, 0.0, cv2.NORM_L1)
 
-                # Kênh độ sáng Value chuẩn hóa riêng
                 v_hist = cv2.calcHist([hsv], [2], None, [8], [0, 256])
                 cv2.normalize(v_hist, v_hist, 1.0, 0.0, cv2.NORM_L1)
 
@@ -415,8 +458,8 @@ def calculate_image_features(img_path):
                 cv2.normalize(edge_hist, edge_hist, 1.0, 0.0, cv2.NORM_L1)
 
                 features = {
-                    "version": 21,
-                    "type": "opencv_v21_truecolor",
+                    "version": 22,
+                    "type": "opencv_v22_truecolor",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
@@ -428,7 +471,7 @@ def calculate_image_features(img_path):
                     "visual_colors": list(visual_colors),
                 }
             else:
-                normalized_img = image.resize((120, 120), Image.Resampling.BILINEAR)
+                normalized_img = image.resize((144, 144), Image.Resampling.BILINEAR)
                 features = _fast_pil_features(normalized_img, visual_colors)
 
         save_feature_cache(img_path, features)
@@ -452,7 +495,7 @@ def image_score(
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác (0–50) ổn định với cả ảnh chụp nghiêng, xa/gần và trong suốt."""
+    """Chấm điểm thị giác (0–50) ổn định với cả ảnh chụp nghiêng, xa/gần và môi trường không OpenCV."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -466,14 +509,12 @@ def image_score(
             return 0, 0.0
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
-            # 1. Giao nhau sắc độ HS (bất biến ánh sáng bóng râm/đèn) - tối đa 28 điểm
             gh1, gh2 = f1.get("global_hs"), f2.get("global_hs")
             global_inter = float(cv2.compareHist(gh1, gh2, cv2.HISTCMP_INTERSECT)) if (gh1 is not None and gh2 is not None) else 0.0
 
             ch1, ch2 = f1.get("center_hs"), f2.get("center_hs")
             center_inter = float(cv2.compareHist(ch1, ch2, cv2.HISTCMP_INTERSECT)) if (ch1 is not None and ch2 is not None) else global_inter
 
-            # So khớp chéo toàn ảnh <-> trung tâm (giúp ảnh chụp xa khớp ảnh chụp gần)
             cross1 = float(cv2.compareHist(gh1, ch2, cv2.HISTCMP_INTERSECT)) if (gh1 is not None and ch2 is not None) else global_inter
             cross2 = float(cv2.compareHist(ch1, gh2, cv2.HISTCMP_INTERSECT)) if (ch1 is not None and gh2 is not None) else global_inter
             best_scale_inter = max(global_inter, center_inter, cross1, cross2)
@@ -493,9 +534,8 @@ def image_score(
             v_inter = float(cv2.compareHist(vh1, vh2, cv2.HISTCMP_INTERSECT)) if (vh1 is not None and vh2 is not None) else 0.5
 
             color_sim = 0.45 * best_scale_inter + 0.35 * best_grid_inter + 0.20 * v_inter
-            color_points = max(0, min(28, int(round(((color_sim - 0.24) / 0.44) * 28))))
+            color_points = max(0, min(28, int(round(((color_sim - 0.22) / 0.44) * 28))))
 
-            # 2. Cấu trúc hình dáng pHash + Hướng biên Sobel - tối đa 14 điểm
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
             min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
@@ -507,7 +547,6 @@ def image_score(
             edge_pts = max(0, min(6, int(round(((edge_inter - 0.55) / 0.35) * 6))))
             shape_points = phash_pts + edge_pts
 
-            # 3. Điểm đặc trưng chi tiết ORB - tối đa 8 điểm
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
             if d1 is not None and d2 is not None and len(d1) >= 2 and len(d2) >= 2:
@@ -539,22 +578,30 @@ def image_score(
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
             gh1 = f1.get("global_hist", [])
             gh2 = f2.get("global_hist", [])
+            ch1 = f1.get("center_hist", gh1)
+            ch2 = f2.get("center_hist", gh2)
+
             global_inter = sum(min(a, b) for a, b in zip(gh1, gh2)) if (gh1 and gh2) else 0.0
+            center_inter = sum(min(a, b) for a, b in zip(ch1, ch2)) if (ch1 and ch2) else global_inter
+            cross1 = sum(min(a, b) for a, b in zip(gh1, ch2)) if (gh1 and ch2) else global_inter
+            cross2 = sum(min(a, b) for a, b in zip(ch1, gh2)) if (ch1 and gh2) else global_inter
+            best_scale_inter = max(global_inter, center_inter, cross1, cross2)
 
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
-            best_inter = 0.0
+            best_grid_inter = 0.0
             if len(g1) == 9 and len(g2) == 9:
                 curr_g2 = g2
                 for _ in range(4):
                     inters = [sum(min(a, b) for a, b in zip(h1, h2)) for h1, h2 in zip(g1, curr_g2)]
-                    weighted_inter = (sum(inters) + inters[4] * 2.0) / 11.0
-                    if weighted_inter > best_inter:
-                        best_inter = weighted_inter
+                    weighted_inter = (sum(inters) + inters[4] * 3.0) / 12.0
+                    if weighted_inter > best_grid_inter:
+                        best_grid_inter = weighted_inter
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-            combined_inter = 0.55 * global_inter + 0.45 * best_inter
-            color_points = max(0, min(30, int(round(((combined_inter - 0.22) / 0.40) * 30))))
+            combined_inter = 0.55 * best_scale_inter + 0.45 * best_grid_inter
+            color_points = max(0, min(28, int(round(((combined_inter - 0.30) / 0.42) * 28))))
 
+            # Cấu trúc hình dáng (dHash + aHash xoay 4 hướng) + Hướng biên Sobel/Gradient
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
             min_d = min((d1 ^ int(d2)).bit_count() for d2 in d2_list)
@@ -564,9 +611,14 @@ def image_score(
             min_a = min((a1 ^ int(a2)).bit_count() for a2 in a2_list)
 
             combined_dist = (min_d + min_a) / 2.0
-            shape_points = max(0, min(17, int(round(((34.0 - combined_dist) / 24.0) * 17))))
+            hash_points = max(0, min(11, int(round(((36.0 - combined_dist) / 24.0) * 11))))
 
-            total = min(47, color_points + shape_points)
+            eh1 = f1.get("edge_hist", [])
+            eh2 = f2.get("edge_hist", [])
+            edge_inter = sum(min(a, b) for a, b in zip(eh1, eh2)) if (eh1 and eh2) else 0.7
+            edge_points = max(0, min(8, int(round(((edge_inter - 0.60) / 0.32) * 8))))
+
+            total = min(47, color_points + hash_points + edge_points)
 
             if color_conflict:
                 total = min(total, 10)
@@ -1111,7 +1163,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát chính xác: Biểu đồ sắc độ HS tách sáng + Đa tỉ lệ."""
+    """Đối sánh tổng quát chính xác: Tối ưu cả OpenCV và PIL thuần túy + Khử trùng lặp bài đăng."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1138,6 +1190,7 @@ def match_items(item_id=None):
             obj.noi_luu_giu = normalize_location_text(obj.noi_luu_giu)
 
         candidates = []
+        seen_signatures = set()
         sequence = 0
 
         for lost in lost_items:
@@ -1147,6 +1200,17 @@ def match_items(item_id=None):
                     if (lost.loai_do and found.loai_do and
                             str(lost.loai_do).strip().lower() != str(found.loai_do).strip().lower()):
                         continue
+
+                    # Khử trùng lặp các bài đăng giống hệt nhau bị bấm gửi 2 lần
+                    sig = (
+                        str(lost.ten_do or "").strip().lower(),
+                        str(lost.hinh_anh or "").strip(),
+                        str(found.ten_do or "").strip().lower(),
+                        str(found.hinh_anh or "").strip(),
+                    )
+                    if sig in seen_signatures:
+                        continue
+                    seen_signatures.add(sig)
 
                     key2 = get_core_keyword(found.ten_do)
                     ten_sim = similarity(lost.ten_do, found.ten_do)
