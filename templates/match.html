@@ -116,6 +116,9 @@
                     <div class="item-title">{{ m.found.ten_do }}</div>
                     <span class="badge bg-success text-white mb-1">{{ m.found.loai_do }}</span>
                     <div class="small text-muted">📍 {{ m.found.noi_nhat }} | 📅 {{ m.found.ngay_nhat | vn_date }}</div>
+                    <div class="small mt-1">
+                        <span class="badge bg-warning text-dark">📦 Nơi gửi: {{ m.found.noi_luu_giu or 'Chưa cập nhật' }}</span>
+                    </div>
                 </div>
 
                 <!-- ĐIỂM SỐ -->
