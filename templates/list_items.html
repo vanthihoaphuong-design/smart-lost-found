@@ -6,79 +6,142 @@ Danh sách đồ thất lạc
 
 {% block content %}
 <style>
-    .lost-list-container { max-width: 1220px; margin: 0 auto; padding: 24px 15px; }
-    .page-header-bar {
+    .lost-list-container { max-width: 1260px; margin: 24px auto 40px auto; padding: 0 15px; }
+
+    /* Banner đầu trang nổi bật */
+    .lost-hero {
         display: flex;
         justify-content: space-between;
         align-items: center;
         flex-wrap: wrap;
-        gap: 12px;
-        margin-bottom: 20px;
+        gap: 16px;
+        padding: 24px 30px;
+        margin-bottom: 22px;
+        border-radius: 18px;
+        background: linear-gradient(125deg, #1d4ed8 0%, #3b82f6 100%);
+        color: #ffffff;
+        box-shadow: 0 8px 24px rgba(29, 78, 216, 0.18);
     }
-    .page-header-bar h3 { color: #0f172a; font-weight: 800; margin: 0; }
+    .lost-hero h2 { margin: 0 0 4px 0; font-weight: 800; font-size: 1.65rem; color: #ffffff; }
+    .lost-hero p { margin: 0; font-size: 0.94rem; color: rgba(255, 255, 255, 0.9); }
+
+    .btn-hero-primary {
+        background-color: #ffffff;
+        color: #1d4ed8;
+        font-weight: 700;
+        padding: 9px 18px;
+        border-radius: 10px;
+        border: none;
+        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+        transition: all 0.2s ease;
+    }
+    .btn-hero-primary:hover {
+        background-color: #eff6ff;
+        color: #1e40af;
+        transform: translateY(-1px);
+    }
+    .btn-hero-outline {
+        background-color: rgba(255, 255, 255, 0.15);
+        color: #ffffff;
+        font-weight: 700;
+        padding: 9px 16px;
+        border-radius: 10px;
+        border: 1px solid rgba(255, 255, 255, 0.4);
+        transition: all 0.2s ease;
+    }
+    .btn-hero-outline:hover {
+        background-color: rgba(255, 255, 255, 0.25);
+        color: #ffffff;
+    }
 
     .modern-table-card {
         background: #ffffff;
         border-radius: 16px;
-        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.06);
-        border: 1px solid #e2e8f0;
+        box-shadow: 0 6px 22px rgba(15, 23, 42, 0.06);
+        border: 1px solid #dbeafe;
         overflow: hidden;
     }
     .modern-table { margin-bottom: 0; vertical-align: middle; }
     .modern-table thead th {
-        background-color: #f8fafc;
-        color: #475569;
-        font-weight: 700;
-        font-size: 0.8rem;
+        background-color: #eff6ff;
+        color: #1e3a8a;
+        font-weight: 800;
+        font-size: 0.82rem;
         text-transform: uppercase;
-        letter-spacing: 0.4px;
-        padding: 14px 12px;
-        border-bottom: 2px solid #e2e8f0;
+        letter-spacing: 0.5px;
+        padding: 15px 12px;
+        border-bottom: 2px solid #bfdbfe;
+        text-align: center;
         white-space: nowrap;
     }
     .modern-table tbody td {
-        padding: 14px 12px;
+        padding: 15px 12px;
         border-bottom: 1px solid #f1f5f9;
         color: #1e293b;
-        font-size: 0.9rem;
+        font-size: 0.92rem;
+        text-align: center;
+        vertical-align: middle;
     }
     .modern-table tbody tr:hover { background-color: #f8fafc; }
 
+    .id-badge {
+        background-color: #f1f5f9;
+        color: #334155;
+        font-weight: 800;
+        font-size: 0.84rem;
+        padding: 4px 10px;
+        border-radius: 8px;
+        display: inline-block;
+    }
+
     .thumb-box {
-        width: 68px;
-        height: 68px;
-        border-radius: 10px;
+        width: 72px;
+        height: 72px;
+        border-radius: 12px;
         object-fit: cover;
-        border: 1px solid #e2e8f0;
+        border: 2px solid #e2e8f0;
         cursor: zoom-in;
         transition: transform 0.2s ease, box-shadow 0.2s ease;
         background-color: #f8fafc;
     }
     .thumb-box:hover {
-        transform: scale(1.06);
-        box-shadow: 0 4px 10px rgba(0,0,0,0.12);
+        transform: scale(1.07);
+        box-shadow: 0 5px 14px rgba(0, 0, 0, 0.14);
     }
     .thumb-empty {
-        width: 68px;
-        height: 68px;
-        border-radius: 10px;
+        width: 72px;
+        height: 72px;
+        border-radius: 12px;
         border: 1px dashed #cbd5e1;
         background-color: #f8fafc;
         display: inline-flex;
         align-items: center;
         justify-content: center;
         color: #94a3b8;
-        font-size: 0.72rem;
+        font-size: 0.74rem;
     }
 
-    .item-name-title { font-weight: 700; color: #0f172a; font-size: 0.96rem; margin-bottom: 4px; }
+    .item-name-title {
+        font-weight: 800;
+        color: #0f172a;
+        font-size: 1rem;
+        margin-bottom: 6px;
+        text-align: center;
+    }
+    .badge-group-center {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
     .cat-soft-badge {
         background-color: #f1f5f9;
-        color: #475569;
-        border: 1px solid #e2e8f0;
-        font-size: 0.75rem;
-        font-weight: 500;
-        padding: 2px 8px;
+        color: #334155;
+        border: 1px solid #cbd5e1;
+        font-size: 0.76rem;
+        font-weight: 600;
+        padding: 3px 9px;
         border-radius: 6px;
         display: inline-block;
     }
@@ -88,8 +151,8 @@ Danh sách đồ thất lạc
         color: #b45309;
         border: 1px solid #fde68a;
         font-weight: 700;
-        font-size: 0.76rem;
-        padding: 4px 12px;
+        font-size: 0.78rem;
+        padding: 5px 13px;
         border-radius: 999px;
         display: inline-block;
         white-space: nowrap;
@@ -99,27 +162,28 @@ Danh sách đồ thất lạc
         color: #15803d;
         border: 1px solid #bbf7d0;
         font-weight: 700;
-        font-size: 0.76rem;
-        padding: 4px 12px;
+        font-size: 0.78rem;
+        padding: 5px 13px;
         border-radius: 999px;
         display: inline-block;
         white-space: nowrap;
     }
 
     .btn-match-action {
-        background-color: #eff6ff;
-        color: #1d4ed8;
-        border: 1px solid #bfdbfe;
+        background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        color: #ffffff;
+        border: none;
         font-size: 0.78rem;
         font-weight: 600;
-        padding: 5px 10px;
+        padding: 6px 12px;
         border-radius: 8px;
         white-space: nowrap;
+        box-shadow: 0 2px 6px rgba(37, 99, 235, 0.2);
         transition: all 0.15s ease;
     }
     .btn-match-action:hover {
-        background-color: #2563eb;
-        border-color: #2563eb;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
         color: #ffffff;
     }
 
@@ -129,7 +193,7 @@ Danh sách đồ thất lạc
         color: #334155;
         font-size: 0.78rem;
         font-weight: 600;
-        padding: 5px 9px;
+        padding: 5px 10px;
         border-radius: 8px;
         white-space: nowrap;
         transition: all 0.15s ease;
@@ -159,14 +223,17 @@ Danh sách đồ thất lạc
 </style>
 
 <div class="lost-list-container">
-    <div class="page-header-bar">
-        <h3>📋 Danh Sách Đồ Thất Lạc</h3>
-        <div class="d-flex gap-2">
-            <a href="{{ url_for('lost') }}" class="btn btn-primary fw-bold px-3 py-2 rounded-3 shadow-sm">
+    <div class="lost-hero">
+        <div>
+            <h2>📋 Danh Sách Đồ Thất Lạc</h2>
+            <p>Theo dõi, tìm kiếm và đối sánh AI các vật dụng học sinh báo mất trong trường.</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="{{ url_for('lost') }}" class="btn btn-hero-primary">
                 ➕ Báo Mất Đồ Mới
             </a>
-            <a href="{{ url_for('search') }}" class="btn btn-outline-secondary fw-bold px-3 py-2 rounded-3 bg-white">
-                🔍 Tìm kiếm
+            <a href="{{ url_for('search') }}" class="btn btn-hero-outline">
+                🔍 Tìm kiếm nâng cao
             </a>
         </div>
     </div>
@@ -177,18 +244,18 @@ Danh sách đồ thất lạc
             <table class="table modern-table text-center">
                 <thead>
                     <tr>
-                        <th style="width: 65px;">STT</th>
-                        <th style="width: 95px;">Hình ảnh</th>
-                        <th class="text-start">Thông tin đồ vật</th>
-                        <th>Nơi & Ngày mất</th>
-                        <th>Trạng thái</th>
-                        <th style="width: 210px;">Thao tác</th>
+                        <th style="width: 75px;">STT</th>
+                        <th style="width: 105px;">Hình ảnh</th>
+                        <th>Thông tin đồ vật</th>
+                        <th style="width: 185px;">Nơi &amp; Ngày mất</th>
+                        <th style="width: 145px;">Trạng thái</th>
+                        <th style="width: 225px;">Thao tác</th>
                     </tr>
                 </thead>
                 <tbody>
                 {% for item in items %}
                     <tr>
-                        <td class="fw-bold text-secondary">#{{ item.id }}</td>
+                        <td><span class="id-badge">#{{ item.id }}</span></td>
                         <td>
                             {% if item.hinh_anh %}
                                 {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
@@ -201,15 +268,17 @@ Danh sách đồ thất lạc
                                 <div class="thumb-empty">Không ảnh</div>
                             {% endif %}
                         </td>
-                        <td class="text-start">
+                        <td>
                             <div class="item-name-title">{{ item.ten_do }}</div>
-                            <span class="cat-soft-badge">{{ item.loai_do }}</span>
-                            {% if item.mau_sac and item.mau_sac != 'None' %}
-                                <span class="cat-soft-badge ms-1">🎨 {{ item.mau_sac }}</span>
-                            {% endif %}
+                            <div class="badge-group-center">
+                                <span class="cat-soft-badge">{{ item.loai_do }}</span>
+                                {% if item.mau_sac and item.mau_sac != 'None' %}
+                                    <span class="cat-soft-badge">🎨 {{ item.mau_sac }}</span>
+                                {% endif %}
+                            </div>
                         </td>
                         <td style="white-space: nowrap;">
-                            <div class="fw-semibold text-dark">
+                            <div class="fw-bold text-dark">
                                 📍 {{ item.noi_mat if (item.noi_mat and item.noi_mat != 'None') else 'Chưa rõ' }}
                             </div>
                             <div class="small text-muted mt-1">
@@ -247,7 +316,7 @@ Danh sách đồ thất lạc
         </div>
     </div>
     {% else %}
-        <div class="alert alert-light border text-center mt-3 py-4 rounded-4 shadow-sm text-muted">
+        <div class="alert alert-light border text-center mt-3 py-5 rounded-4 shadow-sm text-muted">
             Chưa có dữ liệu đồ thất lạc.
         </div>
     {% endif %}
