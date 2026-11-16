@@ -6,314 +6,374 @@ Danh sách đồ thất lạc
 
 {% block content %}
 <style>
-    .lost-list-container { max-width: 1260px; margin: 24px auto 40px auto; padding: 0 15px; }
+    .lost-grid-container { max-width: 1320px; margin: 24px auto 48px auto; padding: 0 16px; }
 
-    /* Banner đầu trang nổi bật */
+    /* Banner đầu trang */
     .lost-hero {
         display: flex;
         justify-content: space-between;
         align-items: center;
         flex-wrap: wrap;
         gap: 16px;
-        padding: 24px 30px;
-        margin-bottom: 22px;
-        border-radius: 18px;
-        background: linear-gradient(125deg, #1d4ed8 0%, #3b82f6 100%);
+        padding: 26px 32px;
+        margin-bottom: 24px;
+        border-radius: 20px;
+        background: linear-gradient(125deg, #1e3a8a 0%, #2563eb 55%, #3b82f6 100%);
         color: #ffffff;
-        box-shadow: 0 8px 24px rgba(29, 78, 216, 0.18);
+        box-shadow: 0 10px 28px rgba(37, 99, 235, 0.2);
     }
-    .lost-hero h2 { margin: 0 0 4px 0; font-weight: 800; font-size: 1.65rem; color: #ffffff; }
-    .lost-hero p { margin: 0; font-size: 0.94rem; color: rgba(255, 255, 255, 0.9); }
+    .lost-hero h2 { margin: 0 0 6px 0; font-weight: 800; font-size: 1.75rem; letter-spacing: -0.3px; }
+    .lost-hero p { margin: 0; font-size: 0.96rem; color: rgba(255, 255, 255, 0.9); }
 
-    .btn-hero-primary {
+    .btn-hero-white {
         background-color: #ffffff;
         color: #1d4ed8;
         font-weight: 700;
-        padding: 9px 18px;
-        border-radius: 10px;
+        padding: 10px 20px;
+        border-radius: 12px;
         border: none;
-        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
         transition: all 0.2s ease;
     }
-    .btn-hero-primary:hover {
-        background-color: #eff6ff;
-        color: #1e40af;
-        transform: translateY(-1px);
-    }
-    .btn-hero-outline {
-        background-color: rgba(255, 255, 255, 0.15);
+    .btn-hero-white:hover { background-color: #eff6ff; color: #1e40af; transform: translateY(-2px); }
+
+    .btn-hero-glass {
+        background-color: rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(6px);
         color: #ffffff;
         font-weight: 700;
-        padding: 9px 16px;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.4);
+        padding: 10px 18px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.35);
         transition: all 0.2s ease;
     }
-    .btn-hero-outline:hover {
-        background-color: rgba(255, 255, 255, 0.25);
-        color: #ffffff;
-    }
+    .btn-hero-glass:hover { background-color: rgba(255, 255, 255, 0.26); color: #ffffff; }
 
-    .modern-table-card {
+    /* Thanh lọc nhanh trên giao diện */
+    .quick-filter-bar {
         background: #ffffff;
+        border: 1px solid #e2e8f0;
         border-radius: 16px;
-        box-shadow: 0 6px 22px rgba(15, 23, 42, 0.06);
-        border: 1px solid #dbeafe;
-        overflow: hidden;
+        padding: 14px 18px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
     }
-    .modern-table { margin-bottom: 0; vertical-align: middle; }
-    .modern-table thead th {
-        background-color: #eff6ff;
-        color: #1e3a8a;
-        font-weight: 800;
-        font-size: 0.82rem;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        padding: 15px 12px;
-        border-bottom: 2px solid #bfdbfe;
-        text-align: center;
-        white-space: nowrap;
+    .quick-search-input {
+        max-width: 340px;
+        border-radius: 10px;
+        border: 1px solid #cbd5e1;
+        padding: 8px 14px;
+        font-size: 0.9rem;
     }
-    .modern-table tbody td {
-        padding: 15px 12px;
-        border-bottom: 1px solid #f1f5f9;
-        color: #1e293b;
-        font-size: 0.92rem;
-        text-align: center;
-        vertical-align: middle;
+    .quick-search-input:focus {
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
     }
-    .modern-table tbody tr:hover { background-color: #f8fafc; }
 
-    .id-badge {
+    /* Thẻ Card Đồ Vật */
+    .item-card {
+        background: #ffffff;
+        border-radius: 18px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
+        overflow: hidden;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+    }
+    .item-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.11);
+        border-color: #93c5fd;
+    }
+
+    .card-img-wrapper {
+        position: relative;
+        width: 100%;
+        height: 195px;
         background-color: #f1f5f9;
-        color: #334155;
+        overflow: hidden;
+        cursor: zoom-in;
+    }
+    .card-img-wrapper img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.35s ease;
+    }
+    .item-card:hover .card-img-wrapper img { transform: scale(1.05); }
+
+    .card-no-img {
+        width: 100%;
+        height: 195px;
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #64748b;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+
+    /* Nhãn nổi trên ảnh */
+    .floating-id {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        background: rgba(15, 23, 42, 0.72);
+        backdrop-filter: blur(4px);
+        color: #ffffff;
+        font-size: 0.75rem;
         font-weight: 800;
-        font-size: 0.84rem;
         padding: 4px 10px;
         border-radius: 8px;
-        display: inline-block;
     }
+    .floating-status-searching {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: #fef3c7;
+        color: #92400e;
+        border: 1px solid #fcd34d;
+        font-size: 0.75rem;
+        font-weight: 800;
+        padding: 4px 11px;
+        border-radius: 999px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    }
+    .floating-status-found {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: #dcfce7;
+        color: #166534;
+        border: 1px solid #86efac;
+        font-size: 0.75rem;
+        font-weight: 800;
+        padding: 4px 11px;
+        border-radius: 999px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    }
+    .zoom-hint-pill {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        background: rgba(15, 23, 42, 0.7);
+        color: #ffffff;
+        font-size: 0.7rem;
+        padding: 3px 8px;
+        border-radius: 6px;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+    .card-img-wrapper:hover .zoom-hint-pill { opacity: 1; }
 
-    .thumb-box {
-        width: 72px;
-        height: 72px;
-        border-radius: 12px;
-        object-fit: cover;
-        border: 2px solid #e2e8f0;
-        cursor: zoom-in;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-        background-color: #f8fafc;
+    /* Nội dung thẻ */
+    .card-content {
+        padding: 16px 18px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
     }
-    .thumb-box:hover {
-        transform: scale(1.07);
-        box-shadow: 0 5px 14px rgba(0, 0, 0, 0.14);
-    }
-    .thumb-empty {
-        width: 72px;
-        height: 72px;
-        border-radius: 12px;
-        border: 1px dashed #cbd5e1;
-        background-color: #f8fafc;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        color: #94a3b8;
-        font-size: 0.74rem;
-    }
-
-    .item-name-title {
+    .card-item-title {
+        font-size: 1.08rem;
         font-weight: 800;
         color: #0f172a;
-        font-size: 1rem;
-        margin-bottom: 6px;
-        text-align: center;
+        margin-bottom: 8px;
+        line-height: 1.3;
     }
-    .badge-group-center {
+    .chip-row {
         display: flex;
-        justify-content: center;
-        align-items: center;
         flex-wrap: wrap;
         gap: 6px;
+        margin-bottom: 12px;
     }
-    .cat-soft-badge {
+    .soft-chip {
         background-color: #f1f5f9;
         color: #334155;
-        border: 1px solid #cbd5e1;
-        font-size: 0.76rem;
+        border: 1px solid #e2e8f0;
+        font-size: 0.75rem;
         font-weight: 600;
         padding: 3px 9px;
-        border-radius: 6px;
-        display: inline-block;
+        border-radius: 7px;
     }
 
-    .status-pill-searching {
-        background-color: #fffbeb;
-        color: #b45309;
-        border: 1px solid #fde68a;
-        font-weight: 700;
-        font-size: 0.78rem;
-        padding: 5px 13px;
-        border-radius: 999px;
-        display: inline-block;
-        white-space: nowrap;
-    }
-    .status-pill-found {
-        background-color: #f0fdf4;
-        color: #15803d;
-        border: 1px solid #bbf7d0;
-        font-weight: 700;
-        font-size: 0.78rem;
-        padding: 5px 13px;
-        border-radius: 999px;
-        display: inline-block;
-        white-space: nowrap;
+    .meta-box {
+        background-color: #f8fafc;
+        border: 1px solid #f1f5f9;
+        border-radius: 10px;
+        padding: 9px 12px;
+        font-size: 0.82rem;
+        color: #475569;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 14px;
     }
 
-    .btn-match-action {
+    /* Chân thẻ nút thao tác */
+    .card-actions {
+        display: flex;
+        gap: 6px;
+        padding-top: 10px;
+        border-top: 1px solid #f1f5f9;
+    }
+    .btn-card-match {
+        flex: 1;
         background: linear-gradient(135deg, #2563eb, #1d4ed8);
         color: #ffffff;
         border: none;
-        font-size: 0.78rem;
-        font-weight: 600;
-        padding: 6px 12px;
-        border-radius: 8px;
-        white-space: nowrap;
-        box-shadow: 0 2px 6px rgba(37, 99, 235, 0.2);
+        font-size: 0.8rem;
+        font-weight: 700;
+        padding: 7px 10px;
+        border-radius: 9px;
+        text-align: center;
         transition: all 0.15s ease;
     }
-    .btn-match-action:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 10px rgba(37, 99, 235, 0.3);
-        color: #ffffff;
-    }
+    .btn-card-match:hover { color: #ffffff; filter: brightness(1.08); }
 
-    .btn-icon-edit {
-        border: 1px solid #cbd5e1;
-        background-color: #ffffff;
+    .btn-card-edit {
+        background-color: #f8fafc;
         color: #334155;
-        font-size: 0.78rem;
+        border: 1px solid #cbd5e1;
+        font-size: 0.8rem;
         font-weight: 600;
-        padding: 5px 10px;
-        border-radius: 8px;
-        white-space: nowrap;
+        padding: 7px 11px;
+        border-radius: 9px;
         transition: all 0.15s ease;
     }
-    .btn-icon-edit:hover {
-        background-color: #f1f5f9;
-        border-color: #94a3b8;
-        color: #0f172a;
-    }
+    .btn-card-edit:hover { background-color: #e2e8f0; color: #0f172a; }
 
-    .btn-icon-delete {
-        border: 1px solid #fecaca;
+    .btn-card-delete {
         background-color: #fef2f2;
         color: #dc2626;
-        font-size: 0.78rem;
+        border: 1px solid #fecaca;
+        font-size: 0.8rem;
         font-weight: 600;
-        padding: 5px 9px;
-        border-radius: 8px;
-        white-space: nowrap;
+        padding: 7px 10px;
+        border-radius: 9px;
         transition: all 0.15s ease;
     }
-    .btn-icon-delete:hover {
-        background-color: #ef4444;
-        border-color: #ef4444;
-        color: #ffffff;
-    }
+    .btn-card-delete:hover { background-color: #ef4444; color: #ffffff; }
 </style>
 
-<div class="lost-list-container">
+<div class="lost-grid-container">
+    <!-- Banner đầu trang -->
     <div class="lost-hero">
         <div>
             <h2>📋 Danh Sách Đồ Thất Lạc</h2>
-            <p>Theo dõi, tìm kiếm và đối sánh AI các vật dụng học sinh báo mất trong trường.</p>
+            <p>Khám phá, lọc nhanh và kích hoạt đối sánh AI cho các vật dụng báo mất trong trường.</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
-            <a href="{{ url_for('lost') }}" class="btn btn-hero-primary">
+            <a href="{{ url_for('lost') }}" class="btn btn-hero-white">
                 ➕ Báo Mất Đồ Mới
             </a>
-            <a href="{{ url_for('search') }}" class="btn btn-hero-outline">
+            <a href="{{ url_for('search') }}" class="btn btn-hero-glass">
                 🔍 Tìm kiếm nâng cao
             </a>
         </div>
     </div>
 
     {% if items %}
-    <div class="modern-table-card">
-        <div class="table-responsive">
-            <table class="table modern-table text-center">
-                <thead>
-                    <tr>
-                        <th style="width: 75px;">STT</th>
-                        <th style="width: 105px;">Hình ảnh</th>
-                        <th>Thông tin đồ vật</th>
-                        <th style="width: 185px;">Nơi &amp; Ngày mất</th>
-                        <th style="width: 145px;">Trạng thái</th>
-                        <th style="width: 225px;">Thao tác</th>
-                    </tr>
-                </thead>
-                <tbody>
-                {% for item in items %}
-                    <tr>
-                        <td><span class="id-badge">#{{ item.id }}</span></td>
-                        <td>
-                            {% if item.hinh_anh %}
-                                {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
-                                <img src="{{ img_url }}" 
-                                     class="thumb-box" 
-                                     onclick="zoomImage('{{ img_url }}')"
-                                     title="Bấm để xem phóng to"
-                                     onerror="this.onerror=null; this.outerHTML='<div class=\'thumb-empty\'>Lỗi ảnh</div>';">
-                            {% else %}
-                                <div class="thumb-empty">Không ảnh</div>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <div class="item-name-title">{{ item.ten_do }}</div>
-                            <div class="badge-group-center">
-                                <span class="cat-soft-badge">{{ item.loai_do }}</span>
-                                {% if item.mau_sac and item.mau_sac != 'None' %}
-                                    <span class="cat-soft-badge">🎨 {{ item.mau_sac }}</span>
-                                {% endif %}
-                            </div>
-                        </td>
-                        <td style="white-space: nowrap;">
-                            <div class="fw-bold text-dark">
-                                📍 {{ item.noi_mat if (item.noi_mat and item.noi_mat != 'None') else 'Chưa rõ' }}
-                            </div>
-                            <div class="small text-muted mt-1">
-                                📅 {{ item.ngay_mat | vn_date }}
-                            </div>
-                        </td>
-                        <td>
-                            {% if item.trang_thai in ['DA_TIM', 'DA_TRA', 'Đã tìm thấy'] %}
-                                <span class="status-pill-found">✅ Đã tìm thấy</span>
-                            {% else %}
-                                <span class="status-pill-searching">🔑 Đang tìm</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if item.trang_thai in ['DA_TIM_THAY', 'DA_TRA'] %}
-                                <span class="cat-soft-badge">Lưu trữ</span>
-                            {% else %}
-                                <div class="d-flex justify-content-center align-items-center gap-1 flex-nowrap">
-                                    <a href="{{ url_for('match_items', item_id=item.id) }}" class="btn btn-match-action" title="Đối sánh AI">
-                                        🔍 Đối sánh
-                                    </a>
-                                    <a href="{{ url_for('edit_lost', item_id=item.id) }}" class="btn btn-icon-edit" title="Chỉnh sửa">
-                                        ✏️ Sửa
-                                    </a>
-                                    <a href="{{ url_for('delete_item', item_id=item.id) }}" class="btn btn-icon-delete" title="Xóa bài" onclick="confirmDeletePIN(event, this.href);">
-                                        🗑️
-                                    </a>
-                                </div>
-                            {% endif %}
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
+    <!-- Thanh tìm kiếm & lọc nhanh tức thì -->
+    <div class="quick-filter-bar">
+        <div class="d-flex align-items-center gap-2 flex-wrap flex-grow-1">
+            <input type="text" id="lostQuickSearch" class="form-control quick-search-input" placeholder="🔎 Gõ tên đồ vật, màu sắc hoặc nơi mất..." onkeyup="filterLostCards()">
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-primary active" onclick="filterLostStatus('all', this)">Tất cả ({{ items|length }})</button>
+                <button type="button" class="btn btn-outline-primary" onclick="filterLostStatus('searching', this)">🔑 Đang tìm</button>
+                <button type="button" class="btn btn-outline-primary" onclick="filterLostStatus('found', this)">✅ Đã tìm thấy</button>
+            </div>
         </div>
+        <div class="text-muted small fw-semibold">
+            Hiển thị <span id="visibleLostCount" class="text-primary fw-bold">{{ items|length }}</span> món đồ
+        </div>
+    </div>
+
+    <!-- Lưới thẻ Card hiện đại -->
+    <div class="row g-4" id="lostCardsGrid">
+        {% for item in items %}
+        {% set is_found = item.trang_thai in ['DA_TIM', 'DA_TRA', 'Đã tìm thấy', 'DA_TIM_THAY'] %}
+        <div class="col-12 col-sm-6 col-lg-4 col-xl-3 lost-card-col"
+             data-status="{{ 'found' if is_found else 'searching' }}"
+             data-search="{{ (item.ten_do ~ ' ' ~ item.loai_do ~ ' ' ~ (item.mau_sac or '') ~ ' ' ~ (item.noi_mat or '')) | lower }}">
+            <div class="item-card">
+                <!-- Khung ảnh -->
+                {% if item.hinh_anh %}
+                    {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
+                    <div class="card-img-wrapper" onclick="zoomImage('{{ img_url }}')">
+                        <img src="{{ img_url }}" alt="{{ item.ten_do }}" onerror="this.onerror=null; this.parentElement.outerHTML='<div class=\'card-no-img\'><span class=\'fs-2 mb-1\'>📷</span><span>Lỗi tải ảnh</span></div>';">
+                        <span class="floating-id">#{{ item.id }}</span>
+                        {% if is_found %}
+                            <span class="floating-status-found">✅ Đã tìm thấy</span>
+                        {% else %}
+                            <span class="floating-status-searching">🔑 Đang tìm</span>
+                        {% endif %}
+                        <span class="zoom-hint-pill">🔍 Phóng to</span>
+                    </div>
+                {% else %}
+                    <div class="card-img-wrapper" style="cursor: default;">
+                        <div class="card-no-img">
+                            <span class="fs-2 mb-1">🎒</span>
+                            <span>Chưa có hình ảnh</span>
+                        </div>
+                        <span class="floating-id">#{{ item.id }}</span>
+                        {% if is_found %}
+                            <span class="floating-status-found">✅ Đã tìm thấy</span>
+                        {% else %}
+                            <span class="floating-status-searching">🔑 Đang tìm</span>
+                        {% endif %}
+                    </div>
+                {% endif %}
+
+                <!-- Phần nội dung -->
+                <div class="card-content">
+                    <div>
+                        <div class="card-item-title text-truncate" title="{{ item.ten_do }}">{{ item.ten_do }}</div>
+                        <div class="chip-row">
+                            <span class="soft-chip">{{ item.loai_do }}</span>
+                            {% if item.mau_sac and item.mau_sac != 'None' %}
+                                <span class="soft-chip">🎨 {{ item.mau_sac }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="meta-box">
+                            <span class="text-truncate" style="max-width: 55%;" title="{{ item.noi_mat }}">
+                                📍 <strong>{{ item.noi_mat if (item.noi_mat and item.noi_mat != 'None') else 'Chưa rõ' }}</strong>
+                            </span>
+                            <span style="white-space: nowrap;">📅 {{ item.ngay_mat | vn_date }}</span>
+                        </div>
+
+                        <div class="card-actions">
+                            {% if item.trang_thai in ['DA_TIM_THAY', 'DA_TRA'] %}
+                                <span class="soft-chip w-100 text-center py-2">📁 Đã lưu trữ hồ sơ</span>
+                            {% else %}
+                                <a href="{{ url_for('match_items', item_id=item.id) }}" class="btn btn-card-match">
+                                    🔍 Đối sánh AI
+                                </a>
+                                <a href="{{ url_for('edit_lost', item_id=item.id) }}" class="btn btn-card-edit" title="Chỉnh sửa">
+                                    ✏️
+                                </a>
+                                <a href="{{ url_for('delete_item', item_id=item.id) }}" class="btn btn-card-delete" title="Xóa bài" onclick="confirmDeletePIN(event, this.href);">
+                                    🗑️
+                                </a>
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
     </div>
     {% else %}
         <div class="alert alert-light border text-center mt-3 py-5 rounded-4 shadow-sm text-muted">
@@ -363,6 +423,38 @@ Danh sách đồ thất lạc
 </div>
 
 <script>
+let currentLostStatus = 'all';
+
+function filterLostStatus(status, btn) {
+    currentLostStatus = status;
+    btn.parentElement.querySelectorAll('.btn').forEach(b => {
+        b.classList.remove('btn-primary', 'active');
+        b.classList.add('btn-outline-primary');
+    });
+    btn.classList.remove('btn-outline-primary');
+    btn.classList.add('btn-primary', 'active');
+    filterLostCards();
+}
+
+function filterLostCards() {
+    const keyword = (document.getElementById('lostQuickSearch')?.value || '').toLowerCase().trim();
+    let count = 0;
+    document.querySelectorAll('.lost-card-col').forEach(col => {
+        const st = col.getAttribute('data-status');
+        const text = col.getAttribute('data-search') || '';
+        const matchStatus = (currentLostStatus === 'all' || st === currentLostStatus);
+        const matchText = (!keyword || text.includes(keyword));
+        if (matchStatus && matchText) {
+            col.style.display = '';
+            count++;
+        } else {
+            col.style.display = 'none';
+        }
+    });
+    const countEl = document.getElementById('visibleLostCount');
+    if (countEl) countEl.innerText = count;
+}
+
 let pendingDeleteUrl = "";
 
 function confirmDeletePIN(event, deleteUrl) {
@@ -388,27 +480,14 @@ function submitPinCheck() {
         .catch(err => alert("❌ Lỗi kiểm tra mã PIN!"));
 }
 
-let scale = 1;
-let pointX = 0;
-let pointY = 0;
-let startX = 0;
-let startY = 0;
-let isDragging = false;
+let scale = 1, pointX = 0, pointY = 0, startX = 0, startY = 0, isDragging = false;
 
 function zoomImage(src) {
     const imgEl = document.getElementById('zoomModalImage');
-    
-    scale = 1;
-    pointX = 0;
-    pointY = 0;
-    isDragging = false;
+    scale = 1; pointX = 0; pointY = 0; isDragging = false;
     updateTransform(imgEl);
-    
     imgEl.src = src;
-
-    const modalEl = document.getElementById('imageZoomModal');
-    const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    bsModal.show();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('imageZoomModal')).show();
 }
 
 function updateTransform(img) {
@@ -419,18 +498,12 @@ document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
     e.preventDefault();
     const imgEl = document.getElementById('zoomModalImage');
     const delta = e.deltaY < 0 ? 0.25 : -0.25;
-    
     scale = Math.min(Math.max(1, scale + delta), 6);
-    
-    if (scale === 1) {
-        pointX = 0;
-        pointY = 0;
-    }
+    if (scale === 1) { pointX = 0; pointY = 0; }
     updateTransform(imgEl);
 }, { passive: false });
 
 const imgEl = document.getElementById('zoomModalImage');
-
 imgEl.addEventListener('mousedown', function(e) {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -449,10 +522,7 @@ window.addEventListener('mousemove', function(e) {
 });
 
 window.addEventListener('mouseup', function() {
-    if (isDragging) {
-        isDragging = false;
-        imgEl.style.cursor = 'grab';
-    }
+    if (isDragging) { isDragging = false; imgEl.style.cursor = 'grab'; }
 });
 </script>
 {% endblock %}
