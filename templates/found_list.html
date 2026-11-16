@@ -19,6 +19,7 @@
                             <th>Loại đồ</th>
                             <th>Nơi nhặt</th>
                             <th>Ngày nhặt</th>
+                            <th>Nơi lưu giữ / Liên hệ</th>
                             <th>Trạng thái</th>
                             <th>Thời điểm trả</th>
                             <th>Thao tác</th>
@@ -46,6 +47,13 @@
                             <td>{{ item.noi_nhat }}</td>
                             <td>{{ item.ngay_nhat | vn_date }}</td>
                             <td>
+                                {% if item.noi_luu_giu %}
+                                    <span class="badge bg-warning text-dark text-wrap px-2 py-1">{{ item.noi_luu_giu }}</span>
+                                {% else %}
+                                    <span class="text-muted small">Chưa cập nhật</span>
+                                {% endif %}
+                            </td>
+                            <td>
                                 {% if item.trang_thai == 'DA_TRA' %}
                                     <span class="badge bg-success">✅ Đã có người nhận</span>
                                 {% else %}
@@ -70,7 +78,7 @@
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="9" class="text-muted py-4">Chưa có dữ liệu đồ nhặt được.</td>
+                            <td colspan="10" class="text-muted py-4">Chưa có dữ liệu đồ nhặt được.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
