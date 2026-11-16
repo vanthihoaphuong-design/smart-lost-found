@@ -163,6 +163,7 @@ Tìm kiếm đồ thất lạc
                             <th>Màu sắc</th>
                             <th>Nơi nhặt</th>
                             <th>Ngày nhặt</th>
+                            <th>Nơi lưu giữ / Liên hệ</th>
                             <th>Trạng thái</th>
                         </tr>
                     </thead>
@@ -189,6 +190,13 @@ Tìm kiếm đồ thất lạc
                                 <td>{{ item.noi_nhat }}</td>
                                 <td>{{ item.ngay_nhat | vn_date }}</td>
                                 <td>
+                                    {% if item.noi_luu_giu %}
+                                        <span class="badge bg-warning text-dark text-wrap px-2 py-1">{{ item.noi_luu_giu }}</span>
+                                    {% else %}
+                                        <span class="text-muted small">Chưa cập nhật</span>
+                                    {% endif %}
+                                </td>
+                                <td>
                                     {% if item.trang_thai in ['DA_TRA', 'Đã hoàn trả'] %}
                                         <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã hoàn trả</span>
                                     {% else %}
@@ -199,7 +207,7 @@ Tìm kiếm đồ thất lạc
                             {% endfor %}
                         {% else %}
                             <tr>
-                                <td colspan="7" class="text-muted py-3">Không tìm thấy dữ liệu đồ báo nhặt phù hợp.</td>
+                                <td colspan="8" class="text-muted py-3">Không tìm thấy dữ liệu đồ báo nhặt phù hợp.</td>
                             </tr>
                         {% endif %}
                     </tbody>
