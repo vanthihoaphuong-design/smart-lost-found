@@ -6,10 +6,11 @@
 <style>
     .dashboard-page {
         width: 100%;
-        max-width: 1500px;
-        margin: 0 auto;
-        color: #263852;
-        font-size: 16px;
+        max-width: 1320px;
+        margin: 24px auto 40px auto;
+        padding: 0 15px;
+        color: #0f172a;
+        font-size: 15px;
     }
 
     .dashboard-page .dashboard-hero {
@@ -17,167 +18,254 @@
         align-items: center;
         justify-content: space-between;
         gap: 20px;
-        padding: 26px 30px;
-        margin-bottom: 24px;
-        border: 1px solid #d9e8fb;
+        padding: 24px 30px;
+        margin-bottom: 22px;
         border-radius: 18px;
-        background: linear-gradient(120deg, #0d6efd 0%, #0a58ca 100%);
+        background: linear-gradient(125deg, #1d4ed8 0%, #0ea5e9 100%);
         color: #fff;
+        box-shadow: 0 8px 24px rgba(29, 78, 216, 0.16);
     }
 
     .dashboard-page .dashboard-hero h2 {
-        margin: 0 0 8px;
+        margin: 0 0 6px;
         color: #ffffff;
-        font-size: clamp(1.5rem, 2vw, 2rem);
+        font-size: clamp(1.4rem, 2.3vw, 1.9rem);
         font-weight: 800;
     }
 
     .dashboard-page .dashboard-hero p {
         margin: 0;
-        color: rgba(255, 255, 255, 0.85);
-        font-size: 1rem;
+        color: rgba(255, 255, 255, 0.92);
+        font-size: 0.96rem;
     }
 
     .dashboard-page .hero-icon {
         display: flex;
-        flex: 0 0 64px;
+        flex: 0 0 60px;
         align-items: center;
         justify-content: center;
-        width: 64px;
-        height: 64px;
-        border-radius: 18px;
-        background: rgba(255, 255, 255, 0.2);
-        backdrop-filter: blur(5px);
-        font-size: 2rem;
+        width: 60px;
+        height: 60px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.18);
+        font-size: 1.85rem;
     }
 
     .dashboard-page .stat-card {
         position: relative;
         height: 100%;
-        min-height: 170px;
-        padding: 24px;
+        padding: 22px 24px;
         overflow: hidden;
-        border: 1px solid #dce8f7;
-        border-radius: 18px;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
         background: #fff;
-        box-shadow: 0 7px 22px rgba(35, 67, 105, .07);
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.045);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
     }
 
     .dashboard-page .stat-card::after {
         position: absolute;
-        top: -28px;
-        right: -22px;
-        width: 115px;
-        height: 115px;
+        top: -26px;
+        right: -20px;
+        width: 105px;
+        height: 105px;
         border-radius: 50%;
-        background: rgba(52, 120, 212, .08);
+        background: rgba(29, 78, 216, 0.06);
         content: "";
     }
 
     .dashboard-page .stat-label {
         position: relative;
         z-index: 1;
-        color: #586b84;
-        font-size: 1rem;
+        color: #475569;
+        font-size: 0.92rem;
         font-weight: 700;
     }
 
-    .dashboard-page .stat-number {
+    .dashboard-page .stat-number-row {
         position: relative;
         z-index: 1;
-        margin-top: 10px;
-        color: #1769d2;
-        font-size: clamp(2.5rem, 4vw, 3.5rem);
+        display: flex;
+        align-items: baseline;
+        gap: 12px;
+        margin: 10px 0 8px 0;
+    }
+
+    .dashboard-page .stat-number {
+        color: #1d4ed8;
+        font-size: clamp(2.3rem, 3.5vw, 3.1rem);
         font-weight: 800;
-        line-height: 1.1;
+        line-height: 1.05;
+    }
+
+    .dashboard-page .stat-subpill {
+        background-color: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #bfdbfe;
+        font-size: 0.78rem;
+        font-weight: 700;
+        padding: 4px 10px;
+        border-radius: 999px;
     }
 
     .dashboard-page .stat-note {
         position: relative;
         z-index: 1;
-        margin-top: 12px;
-        color: #75849a;
-        font-size: .9rem;
+        color: #64748b;
+        font-size: 0.85rem;
+        margin: 0;
+    }
+
+    .dashboard-page .export-form-box {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 10px;
+        margin: 12px 0 10px 0;
+    }
+
+    .dashboard-page .export-select {
+        border-radius: 10px;
+        border: 1px solid #cbd5e1;
+        padding: 7px 32px 7px 12px;
+        font-size: 0.88rem;
+        font-weight: 600;
+        color: #1e293b;
+        background-color: #f8fafc;
+        width: auto;
+    }
+    .dashboard-page .export-select:focus {
+        background-color: #ffffff;
+        border-color: #10b981;
+        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+    }
+
+    .dashboard-page .btn-export-excel {
+        background: linear-gradient(135deg, #10b981, #059669);
+        border: none;
+        color: #ffffff;
+        font-size: 0.88rem;
+        font-weight: 700;
+        padding: 8px 16px;
+        border-radius: 10px;
+        box-shadow: 0 3px 10px rgba(16, 185, 129, 0.22);
+        transition: all 0.2s ease;
+    }
+    .dashboard-page .btn-export-excel:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 5px 14px rgba(16, 185, 129, 0.3);
+        color: #ffffff;
+    }
+
+    .dashboard-page .ai-notice-card {
+        background: linear-gradient(90deg, #eff6ff 0%, #ffffff 100%);
+        border: 1px solid #bfdbfe;
+        border-left: 5px solid #2563eb;
+        border-radius: 14px;
+        padding: 16px 22px;
+        margin-bottom: 22px;
+        box-shadow: 0 3px 12px rgba(37, 99, 235, 0.05);
+    }
+
+    .dashboard-page .ai-notice-title {
+        font-weight: 800;
+        color: #1e3a8a;
+        font-size: 0.95rem;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
 
     .dashboard-page .dashboard-card {
         min-width: 0;
-        margin-bottom: 24px;
+        margin-bottom: 22px;
         overflow: hidden;
-        border: 1px solid #dfe8f3;
-        border-radius: 18px;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
         background: #fff;
-        box-shadow: 0 7px 22px rgba(35, 67, 105, .055);
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.045);
+        height: 100%;
     }
 
     .dashboard-page .dashboard-card-header {
         display: flex;
         align-items: center;
-        gap: 10px;
-        padding: 18px 24px;
-        border-bottom: 1px solid #e6edf5;
-        background: #f5f8fd;
-        color: #24578e;
-        font-size: 1.1rem;
+        gap: 9px;
+        padding: 16px 22px;
+        border-bottom: 1px solid #e2e8f0;
+        background: #f8fafc;
+        color: #0f172a;
+        font-size: 1.04rem;
         font-weight: 800;
     }
 
     .dashboard-page .dashboard-card-body {
-        padding: 22px 24px;
+        padding: 20px 22px;
     }
 
     .dashboard-page .table-responsive {
-        border: 1px solid #e7edf5;
+        border: 1px solid #e2e8f0;
         border-radius: 12px;
+        overflow: hidden;
     }
 
     .dashboard-page .table {
         width: 100%;
         margin: 0;
-        font-size: 1rem;
+        font-size: 0.94rem;
         vertical-align: middle;
     }
 
     .dashboard-page .table thead th {
-        padding: 15px 18px;
-        border-bottom: 1px solid #dce6f2;
-        background: #edf4fc;
-        color: #405571;
-        font-weight: 800;
+        padding: 13px 16px;
+        border-bottom: 2px solid #e2e8f0;
+        background: #f8fafc;
+        color: #475569;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        font-weight: 700;
         white-space: nowrap;
     }
 
     .dashboard-page .table tbody td {
-        padding: 14px 18px;
-        border-color: #edf1f6;
+        padding: 13px 16px;
+        border-color: #f1f5f9;
     }
 
     .dashboard-page .table tbody tr:hover > * {
-        background-color: #f7fbff;
+        background-color: #f8fafc;
     }
 
     .dashboard-page .row-number {
-        color: #7a8ba2;
-        font-weight: 600;
+        color: #64748b;
+        font-weight: 700;
     }
 
     .dashboard-page .category-badge {
         display: inline-block;
-        padding: 6px 11px;
-        border: 1px solid #d9e8fc;
-        border-radius: 9px;
-        background: #edf5ff;
-        color: #245da8;
-        font-weight: 700;
+        padding: 5px 11px;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        background: #f1f5f9;
+        color: #334155;
+        font-size: 0.85rem;
+        font-weight: 600;
     }
 
     .dashboard-page .quantity-pill {
         display: inline-block;
         min-width: 38px;
-        padding: 5px 10px;
-        border-radius: 9px;
-        background: #eaf8ef;
-        color: #21834a;
+        padding: 4px 10px;
+        border-radius: 8px;
+        background: #ecfdf5;
+        border: 1px solid #a7f3d0;
+        color: #065f46;
         font-weight: 800;
         text-align: center;
     }
@@ -185,34 +273,34 @@
     .dashboard-page .chart-area {
         position: relative;
         width: 100%;
-        height: 470px;
+        height: 360px;
     }
 
     .dashboard-page .chart-caption {
         margin-top: 12px;
-        color: #7b8ba1;
-        font-size: .9rem;
+        color: #64748b;
+        font-size: 0.85rem;
     }
 
     .dashboard-page .empty-state {
         padding: 36px 18px;
-        color: #718096;
+        color: #64748b;
         text-align: center;
     }
 
     .dashboard-page .dashboard-footer-note {
-        padding: 10px 0 2px;
-        color: #7b8ba1;
-        font-size: .9rem;
+        padding: 12px 0 2px;
+        color: #64748b;
+        font-size: 0.85rem;
         text-align: center;
     }
 
-    @media (min-width: 1200px) {
+    @media (min-width: 1100px) {
         .dashboard-page .dashboard-layout {
             display: grid;
-            grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr);
-            gap: 24px;
-            align-items: start;
+            grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+            gap: 20px;
+            align-items: stretch;
         }
     }
 </style>
@@ -235,74 +323,66 @@
     <header class="dashboard-hero">
         <div>
             <h2>📊 Dashboard thống kê</h2>
-            <p>Tổng quan tình hình đồ thất lạc trong trường học.</p>
+            <p>Tổng quan tình hình đồ thất lạc và báo cáo tổng hợp trong trường học.</p>
         </div>
-        <div class="hero-icon" aria-hidden="true">🎒</div>
+        <div class="hero-icon d-none d-sm-flex" aria-hidden="true">🎒</div>
     </header>
 
     <div class="row g-3 mb-4 align-items-stretch">
-        <div class="col-12 col-sm-6 col-xl-4">
+        <div class="col-12 col-lg-4">
             <div class="stat-card">
                 <div class="stat-label">🎒 Tổng số đồ mất</div>
-                <div class="stat-number">{{ total_cnt }}</div>
-                <div class="stat-note">Số bản ghi đồ bị mất trong hệ thống</div>
+                <div class="stat-number-row">
+                    <div class="stat-number">{{ total_cnt }}</div>
+                    <span class="stat-subpill">{{ stat_list|length }} nhóm đồ vật</span>
+                </div>
+                <p class="stat-note">Tổng số bản ghi đồ bị mất được ghi nhận trong hệ thống.</p>
             </div>
         </div>
 
-        <div class="col-12 col-sm-6 col-xl-8 d-flex align-items-center">
-            <div class="stat-card w-100 d-flex flex-column justify-content-center align-items-start">
+        <div class="col-12 col-lg-8">
+            <div class="stat-card">
                 <div class="stat-label">📑 Báo cáo quản lý dành cho BGH</div>
                 
-                <form action="{{ url_for('export_excel') if 'export_excel' in config else '/export-excel' }}" method="GET" class="row g-2 mt-2 align-items-center w-100">
-                    <div class="col-auto">
-                        <select name="status" class="form-select form-select-sm fw-bold border-success text-success">
-                            <option value="all">📁 Tất cả trạng thái</option>
-                            <option value="completed">✅ Chỉ đồ ĐÃ TÌM / ĐÃ TRẢ</option>
-                            <option value="pending">⏳ Chỉ đồ ĐANG TÌM / ĐANG LƯU GIỮ</option>
-                        </select>
-                    </div>
+                <form action="{{ url_for('export_excel') if 'export_excel' in config else '/export-excel' }}" method="GET" class="export-form-box">
+                    <select name="status" class="form-select export-select">
+                        <option value="all">📁 Tất cả trạng thái</option>
+                        <option value="completed">✅ Chỉ đồ ĐÃ TÌM / ĐÃ TRẢ</option>
+                        <option value="pending">⏳ Chỉ đồ ĐANG TÌM / ĐANG LƯU GIỮ</option>
+                    </select>
 
-                    <div class="col-auto">
-                        <select name="month" id="selectMonth" class="form-select form-select-sm fw-bold">
-                            <option value="">-- Tất cả tháng --</option>
-                            {% for m in range(1, 13) %}
-                            <option value="{{ m }}" {% if m == 10 %}selected{% endif %}>Tháng {{ m }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+                    <select name="month" id="selectMonth" class="form-select export-select">
+                        <option value="">-- Tất cả tháng --</option>
+                        {% for m in range(1, 13) %}
+                        <option value="{{ m }}" {% if m == 10 %}selected{% endif %}>Tháng {{ m }}</option>
+                        {% endfor %}
+                    </select>
 
-                    <div class="col-auto">
-                        <select name="year" id="selectYear" class="form-select form-select-sm" style="width: auto;">
-                            {% for y in range(2025, 2031) %}
-                                <option value="{{ y }}" {% if y == 2026 %}selected{% endif %}>
-                                    Năm {{ y }}
-                                </option>
-                            {% endfor %}
-                        </select>
-                    </div>
+                    <select name="year" id="selectYear" class="form-select export-select">
+                        {% for y in range(2025, 2031) %}
+                            <option value="{{ y }}" {% if y == 2026 %}selected{% endif %}>
+                                Năm {{ y }}
+                            </option>
+                        {% endfor %}
+                    </select>
 
-                    <div class="col-auto">
-                        <button type="submit" class="btn btn-success btn-sm fw-bold shadow-sm">
-                            📊 Xuất báo cáo Excel
-                        </button>
-                    </div>
+                    <button type="submit" class="btn btn-export-excel">
+                        📊 Xuất báo cáo Excel
+                    </button>
                 </form>
 
-                <div class="stat-note mt-2">Cho phép tùy chọn phạm vi dữ liệu và thời gian linh hoạt trước khi xuất báo cáo.</div>
+                <p class="stat-note">Cho phép tùy chọn phạm vi trạng thái và thời gian linh hoạt trước khi tải file báo cáo.</p>
             </div>
         </div>
     </div>
 
-    <div class="dashboard-card mb-4" style="border-left: 5px solid #0d6efd;">
-        <div class="dashboard-card-header" style="background: #eaf3ff; color: #084298;">
-            <span aria-hidden="true">🔔</span>
-            <span>Cảnh báo tự động từ Hệ thống AI</span>
+    <div class="ai-notice-card">
+        <div class="ai-notice-title">
+            <span>🔔 Cảnh báo tự động từ Hệ thống AI</span>
         </div>
-        <div class="dashboard-card-body">
-            <p class="mb-0 text-dark fw-bold">
-                ✅ Hệ thống AI tự động phát hiện các cặp đồ vật có độ tin cậy trùng khớp cao (&ge; 80 điểm) và sẵn sàng xuất báo cáo tổng hợp cho Ban BGH / Cán bộ quản lý.
-            </p>
-        </div>
+        <p class="mb-0 text-secondary" style="font-size: 0.92rem;">
+            ✅ Hệ thống AI tự động phát hiện các cặp đồ vật có độ tin cậy trùng khớp cao (&ge; 80 điểm) và sẵn sàng xuất báo cáo tổng hợp cho Ban Giám hiệu / Cán bộ quản lý.
+        </p>
     </div>
 
     <div class="dashboard-layout">
@@ -318,7 +398,7 @@
                     <table class="table table-hover">
                         <thead>
                             <tr>
-                                <th style="width: 70px;">STT</th>
+                                <th style="width: 65px;">STT</th>
                                 <th>Loại đồ</th>
                                 <th class="text-end">Số lượng</th>
                             </tr>
@@ -326,7 +406,7 @@
                         <tbody>
                             {% for item in stat_list %}
                             <tr>
-                                <td class="row-number">{{ loop.index }}</td>
+                                <td class="row-number">#{{ loop.index }}</td>
                                 <td><span class="category-badge">{{ item[0] if item is sequence else item }}</span></td>
                                 <td class="text-end">
                                     <span class="quantity-pill">{{ item[1] if item is sequence else 1 }}</span>
@@ -356,7 +436,7 @@
                             aria-label="Biểu đồ số lượng đồ mất theo từng loại"></canvas>
                 </div>
                 <p class="chart-caption mb-0">
-                    Các thanh càng dài thể hiện số lượng đồ mất càng nhiều.
+                    Các thanh càng dài thể hiện số lượng đồ mất thuộc nhóm đó càng nhiều.
                 </p>
                 {% else %}
                 <div class="empty-state">Chưa có dữ liệu để vẽ biểu đồ.</div>
@@ -391,26 +471,26 @@
                 label: "Số lượng đồ mất",
                 data: values,
                 backgroundColor: [
-                    "#3478d4",
-                    "#36a66b",
-                    "#0d6efd",
-                    "#6c757d",
-                    "#3478d4"
+                    "#2563eb",
+                    "#10b981",
+                    "#0ea5e9",
+                    "#64748b",
+                    "#3b82f6"
                 ],
-                borderRadius: 7,
+                borderRadius: 8,
                 borderSkipped: false,
                 maxBarThickness: 28,
-                barPercentage: 0.76,
-                categoryPercentage: 0.82
+                barPercentage: 0.72,
+                categoryPercentage: 0.8
             }]
         },
         options: {
             indexAxis: "y",
             responsive: true,
             maintainAspectRatio: false,
-            animation: { duration: 650 },
+            animation: { duration: 600 },
             layout: {
-                padding: { right: 35, top: 5, bottom: 5 }
+                padding: { right: 24, top: 4, bottom: 4 }
             },
             plugins: {
                 legend: { display: false },
@@ -428,20 +508,20 @@
                     ticks: {
                         precision: 0,
                         stepSize: 1,
-                        color: "#66758a"
+                        color: "#64748b"
                     },
                     title: {
                         display: true,
                         text: "Số lượng đồ mất",
-                        color: "#52657e",
+                        color: "#475569",
                         font: { size: 12, weight: "600" }
                     },
-                    grid: { color: "#edf1f7" },
+                    grid: { color: "#f1f5f9" },
                     border: { display: false }
                 },
                 y: {
                     ticks: {
-                        color: "#405571",
+                        color: "#334155",
                         font: { size: 12, weight: "600" }
                     },
                     grid: { display: false },
