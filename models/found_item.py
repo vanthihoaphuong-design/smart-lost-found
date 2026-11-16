@@ -9,6 +9,7 @@ class FoundItem(db.Model):
     noi_nhat = db.Column(db.String(200))
     ngay_nhat = db.Column(db.String(50))
     mau_sac = db.Column(db.String(50))
+    noi_luu_giu = db.Column(db.String(200), nullable=True)
     hinh_anh = db.Column(db.String(300))
     # JSON chứa pHash, ORB descriptors và HSV histogram.
     image_features = db.Column(db.Text, nullable=True)
