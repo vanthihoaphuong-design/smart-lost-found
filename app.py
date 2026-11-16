@@ -111,7 +111,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v20.json"
+CACHE_FILE = "feature_cache_v21.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -135,7 +135,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v20")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v21")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -213,10 +213,10 @@ def save_feature_cache(img_path, features):
 
 
 def _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024):
-    """Tải ảnh thu nhỏ siêu nhẹ (w_220) từ Cloudinary qua Session Keep-Alive."""
+    """Tải ảnh thu nhỏ nét (w_320) từ Cloudinary qua Session Keep-Alive."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_220,c_limit,q_auto:good,f_jpg/", 1)
+        value = value.replace("/image/upload/", "/image/upload/w_320,c_limit,q_auto:good,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
         response = HTTP_SESSION.get(value, timeout=(2.5, 5), verify=False)
         response.raise_for_status()
@@ -281,7 +281,7 @@ def _phash_from_gray(gray):
 
 
 def _fast_pil_features(canvas, visual_colors):
-    """Trích xuất biểu đồ màu HSV toàn cục + lưới 3x3 + dHash & aHash kép."""
+    """Trích xuất biểu đồ màu HS tách sáng + lưới 3x3 + dHash & aHash kép."""
     phashes = []
     ahashes = []
     gray_base = ImageOps.autocontrast(canvas.convert("L"))
@@ -306,7 +306,7 @@ def _fast_pil_features(canvas, visual_colors):
             a_val = (a_val << 1) | (1 if val >= avg_lum else 0)
         ahashes.append(a_val)
 
-    small_rgb = ImageOps.autocontrast(canvas).resize((36, 36), Image.Resampling.BILINEAR)
+    small_rgb = canvas.resize((36, 36), Image.Resampling.BILINEAR)
     pixels = list(small_rgb.getdata())
     global_bins = [0.0] * 36
     grid_hists = []
@@ -318,10 +318,9 @@ def _fast_pil_features(canvas, visual_colors):
                 for px_idx in range(c * 12, (c + 1) * 12):
                     rv, gv, bv = pixels[row_offset + px_idx]
                     h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
-                    h_bin = min(3, int(h * 4.0))
-                    s_bin = min(2, int(s * 3.0))
-                    v_bin = min(2, int(v * 3.0))
-                    idx = h_bin * 9 + s_bin * 3 + v_bin
+                    h_bin = min(8, int(h * 9.0))
+                    s_bin = min(3, int(s * 4.0))
+                    idx = h_bin * 4 + s_bin
                     bins[idx] += 1.0
                     global_bins[idx] += 1.0
             inv_s = 1.0 / 144.0
@@ -331,8 +330,8 @@ def _fast_pil_features(canvas, visual_colors):
     global_hist = [x * inv_all for x in global_bins]
 
     return {
-        "version": 20,
-        "type": "pil_v20_truecolor",
+        "version": 21,
+        "type": "pil_v21_truecolor",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
@@ -344,7 +343,7 @@ def _fast_pil_features(canvas, visual_colors):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng đa tầng cân bằng sáng CLAHE trên HSV + Cấu trúc biên."""
+    """Trích xuất đặc trưng sắc độ HS tách ánh sáng + đa tỉ lệ + cấu trúc biên."""
     if not check_real_image(img_path):
         return None
 
@@ -366,20 +365,18 @@ def calculate_image_features(img_path):
             visual_colors = _detect_visual_colors(image)
 
             if HAS_OPENCV:
-                normalized_img = image.resize((224, 224), Image.Resampling.BILINEAR)
+                normalized_img = image.resize((256, 256), Image.Resampling.BILINEAR)
                 rgb = np.asarray(normalized_img, dtype=np.uint8)
 
                 image_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
                 gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
 
-                clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(8, 8))
+                clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
                 gray_eq = clahe.apply(gray)
 
-                # ORB đặc trưng chi tiết (tăng nhạy cho vật thể trơn như thước, chuột)
-                orb = cv2.ORB_create(nfeatures=300, scaleFactor=1.2, nlevels=5, fastThreshold=8)
+                orb = cv2.ORB_create(nfeatures=350, scaleFactor=1.2, nlevels=6, fastThreshold=8)
                 _, descriptors = orb.detectAndCompute(gray_eq, None)
 
-                # pHash xoay 4 hướng trên ảnh đã cân bằng sáng CLAHE
                 phashes = [
                     _phash_from_gray(gray_eq),
                     _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_CLOCKWISE)),
@@ -387,43 +384,45 @@ def calculate_image_features(img_path):
                     _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_COUNTERCLOCKWISE)),
                 ]
 
-                # Cân bằng sáng kênh V (Value) của HSV để loại bỏ sai lệch bóng râm/đèn
+                # Dùng biểu đồ sắc độ 2D [Hue(12), Saturation(4)] bất biến với ánh sáng bóng râm/đèn
                 hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-                h_ch, s_ch, v_ch = cv2.split(hsv)
-                v_eq = clahe.apply(v_ch)
-                hsv_eq = cv2.merge([h_ch, s_ch, v_eq])
 
-                global_hist = cv2.calcHist([hsv_eq], [0, 1, 2], None, [6, 3, 3], [0, 180, 0, 256, 0, 256])
-                cv2.normalize(global_hist, global_hist, 1.0, 0.0, cv2.NORM_L1)
+                global_hs = cv2.calcHist([hsv], [0, 1], None, [12, 4], [0, 180, 0, 256])
+                cv2.normalize(global_hs, global_hs, 1.0, 0.0, cv2.NORM_L1)
 
-                center_hsv = hsv_eq[42:182, 42:182]
-                center_hist = cv2.calcHist([center_hsv], [0, 1, 2], None, [6, 3, 3], [0, 180, 0, 256, 0, 256])
-                cv2.normalize(center_hist, center_hist, 1.0, 0.0, cv2.NORM_L1)
+                # Vùng trung tâm 65% để bắt trọn vật thể dù chụp gần hay xa
+                center_hsv = hsv[45:211, 45:211]
+                center_hs = cv2.calcHist([center_hsv], [0, 1], None, [12, 4], [0, 180, 0, 256])
+                cv2.normalize(center_hs, center_hs, 1.0, 0.0, cv2.NORM_L1)
+
+                # Kênh độ sáng Value chuẩn hóa riêng
+                v_hist = cv2.calcHist([hsv], [2], None, [8], [0, 256])
+                cv2.normalize(v_hist, v_hist, 1.0, 0.0, cv2.NORM_L1)
 
                 grid_hists = []
-                step = 224 // 3
+                step = 256 // 3
                 for r in range(3):
                     for c in range(3):
-                        cell = hsv_eq[r * step:(r + 1) * step, c * step:(c + 1) * step]
-                        hist = cv2.calcHist([cell], [0, 1, 2], None, [6, 3, 3], [0, 180, 0, 256, 0, 256])
+                        cell = hsv[r * step:(r + 1) * step, c * step:(c + 1) * step]
+                        hist = cv2.calcHist([cell], [0, 1], None, [12, 4], [0, 180, 0, 256])
                         cv2.normalize(hist, hist, 1.0, 0.0, cv2.NORM_L1)
                         grid_hists.append(hist)
 
-                # Biểu đồ hướng biên Sobel (nhận diện đường thẳng cây thước, cạnh sách, viền dây chuyền)
                 gx = cv2.Sobel(gray_eq, cv2.CV_32F, 1, 0, ksize=3)
                 gy = cv2.Sobel(gray_eq, cv2.CV_32F, 0, 1, ksize=3)
-                mag, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
+                _, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
                 edge_hist = cv2.calcHist([ang.astype(np.float32)], [0], None, [12], [0, 360])
                 cv2.normalize(edge_hist, edge_hist, 1.0, 0.0, cv2.NORM_L1)
 
                 features = {
-                    "version": 20,
-                    "type": "opencv_v20_truecolor",
+                    "version": 21,
+                    "type": "opencv_v21_truecolor",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
-                    "global_hist": global_hist,
-                    "center_hist": center_hist,
+                    "global_hs": global_hs,
+                    "center_hs": center_hs,
+                    "v_hist": v_hist,
                     "grid_hists": grid_hists,
                     "edge_hist": edge_hist,
                     "visual_colors": list(visual_colors),
@@ -453,7 +452,7 @@ def image_score(
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác thuần túy (0–50) bền vững với ánh sáng, góc chụp và vật thể trong suốt."""
+    """Chấm điểm thị giác (0–50) ổn định với cả ảnh chụp nghiêng, xa/gần và trong suốt."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -467,12 +466,17 @@ def image_score(
             return 0, 0.0
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
-            # 1. Giao nhau màu HSV đã cân bằng sáng CLAHE (tối đa 24 điểm)
-            gh1, gh2 = f1.get("global_hist"), f2.get("global_hist")
+            # 1. Giao nhau sắc độ HS (bất biến ánh sáng bóng râm/đèn) - tối đa 28 điểm
+            gh1, gh2 = f1.get("global_hs"), f2.get("global_hs")
             global_inter = float(cv2.compareHist(gh1, gh2, cv2.HISTCMP_INTERSECT)) if (gh1 is not None and gh2 is not None) else 0.0
 
-            ch1, ch2 = f1.get("center_hist"), f2.get("center_hist")
+            ch1, ch2 = f1.get("center_hs"), f2.get("center_hs")
             center_inter = float(cv2.compareHist(ch1, ch2, cv2.HISTCMP_INTERSECT)) if (ch1 is not None and ch2 is not None) else global_inter
+
+            # So khớp chéo toàn ảnh <-> trung tâm (giúp ảnh chụp xa khớp ảnh chụp gần)
+            cross1 = float(cv2.compareHist(gh1, ch2, cv2.HISTCMP_INTERSECT)) if (gh1 is not None and ch2 is not None) else global_inter
+            cross2 = float(cv2.compareHist(ch1, gh2, cv2.HISTCMP_INTERSECT)) if (ch1 is not None and gh2 is not None) else global_inter
+            best_scale_inter = max(global_inter, center_inter, cross1, cross2)
 
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
             best_grid_inter = 0.0
@@ -485,22 +489,25 @@ def image_score(
                         best_grid_inter = weighted
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-            color_sim = 0.45 * global_inter + 0.30 * center_inter + 0.25 * best_grid_inter
-            color_points = max(0, min(24, int(round(((color_sim - 0.16) / 0.38) * 24))))
+            vh1, vh2 = f1.get("v_hist"), f2.get("v_hist")
+            v_inter = float(cv2.compareHist(vh1, vh2, cv2.HISTCMP_INTERSECT)) if (vh1 is not None and vh2 is not None) else 0.5
 
-            # 2. Cấu trúc hình dáng pHash + Hướng biên Sobel (tối đa 16 điểm)
+            color_sim = 0.45 * best_scale_inter + 0.35 * best_grid_inter + 0.20 * v_inter
+            color_points = max(0, min(28, int(round(((color_sim - 0.24) / 0.44) * 28))))
+
+            # 2. Cấu trúc hình dáng pHash + Hướng biên Sobel - tối đa 14 điểm
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
             min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
             phash_score = max(0.0, 1.0 - min_hamming / 63.0)
-            phash_pts = max(0, min(10, int(round(((phash_score - 0.32) / 0.32) * 10))))
+            phash_pts = max(0, min(8, int(round(((phash_score - 0.30) / 0.34) * 8))))
 
             eh1, eh2 = f1.get("edge_hist"), f2.get("edge_hist")
-            edge_inter = float(cv2.compareHist(eh1, eh2, cv2.HISTCMP_INTERSECT)) if (eh1 is not None and eh2 is not None) else 0.5
+            edge_inter = float(cv2.compareHist(eh1, eh2, cv2.HISTCMP_INTERSECT)) if (eh1 is not None and eh2 is not None) else 0.6
             edge_pts = max(0, min(6, int(round(((edge_inter - 0.55) / 0.35) * 6))))
             shape_points = phash_pts + edge_pts
 
-            # 3. Điểm đặc trưng chi tiết ORB (tối đa 10 điểm)
+            # 3. Điểm đặc trưng chi tiết ORB - tối đa 8 điểm
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
             if d1 is not None and d2 is not None and len(d1) >= 2 and len(d2) >= 2:
@@ -512,12 +519,12 @@ def image_score(
                 reverse_pairs = {(m.trainIdx, m.queryIdx) for m in good_r}
                 mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
 
-                if mutual >= 5:
-                    orb_points = 10
-                elif mutual >= 2:
+                if mutual >= 4:
                     orb_points = 8
+                elif mutual >= 2:
+                    orb_points = 6
                 elif mutual >= 1:
-                    orb_points = 5
+                    orb_points = 4
 
             raw_total = color_points + shape_points + orb_points
 
@@ -546,7 +553,7 @@ def image_score(
                     curr_g2 = _rotate_grid_90(curr_g2)
 
             combined_inter = 0.55 * global_inter + 0.45 * best_inter
-            color_points = max(0, min(28, int(round(((combined_inter - 0.16) / 0.36) * 28))))
+            color_points = max(0, min(30, int(round(((combined_inter - 0.22) / 0.40) * 30))))
 
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
@@ -557,7 +564,7 @@ def image_score(
             min_a = min((a1 ^ int(a2)).bit_count() for a2 in a2_list)
 
             combined_dist = (min_d + min_a) / 2.0
-            shape_points = max(0, min(19, int(round(((34.0 - combined_dist) / 24.0) * 19))))
+            shape_points = max(0, min(17, int(round(((34.0 - combined_dist) / 24.0) * 17))))
 
             total = min(47, color_points + shape_points)
 
@@ -1104,7 +1111,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát chính xác: Cân bằng sáng HSV + Cấu trúc biên, tách bạch điểm thị giác."""
+    """Đối sánh tổng quát chính xác: Biểu đồ sắc độ HS tách sáng + Đa tỉ lệ."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
