@@ -19,7 +19,7 @@ from difflib import SequenceMatcher
 import cloudinary
 import cloudinary.uploader
 
-from PIL import Image, ImageOps, ImageFile
+from PIL import Image, ImageOps, ImageFile, ImageChops
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -111,7 +111,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v11.json"
+CACHE_FILE = "feature_cache_v19.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -135,7 +135,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v10")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v19")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -156,11 +156,25 @@ STOP_WORDS_VN = {
 COLOR_WORDS_VN = ["đen", "đỏ", "xanh", "vàng", "trắng", "hồng", "tím", "nâu", "xám", "cam", "bạc"]
 
 
+def normalize_location_text(loc):
+    """Chuẩn hóa tên địa điểm (sửa Căng tin -> Căn tin)."""
+    if not loc:
+        return ""
+    s = str(loc).strip()
+    if s.lower() in {"none", "null", ""}:
+        return ""
+    return re.sub(r'căng\s*tin', 'Căn tin', s, flags=re.IGNORECASE)
+
+
 def extract_colors(text):
     if not text:
         return set()
     t = str(text).lower()
-    return {c for c in COLOR_WORDS_VN if re.search(rf'\b{c}\b', t)}
+    found = {c for c in COLOR_WORDS_VN if re.search(rf'\b{c}\b', t)}
+    # Gộp nhóm màu kim loại sáng (trắng / bạc / xám nhạt)
+    if "bạc" in found or "trắng" in found:
+        found.update({"trắng", "bạc"})
+    return found
 
 
 def check_real_image(img_path):
@@ -200,10 +214,10 @@ def save_feature_cache(img_path, features):
 
 
 def _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024):
-    """Tải ảnh thu nhỏ siêu nhẹ (w_160) từ Cloudinary qua Session Keep-Alive."""
+    """Tải ảnh thu nhỏ siêu nhẹ (w_220) từ Cloudinary qua Session Keep-Alive."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_160,c_limit,q_auto:low,f_jpg/", 1)
+        value = value.replace("/image/upload/", "/image/upload/w_220,c_limit,q_auto:good,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
         response = HTTP_SESSION.get(value, timeout=(2.5, 5), verify=False)
         response.raise_for_status()
@@ -220,6 +234,77 @@ def _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024):
         return file.read(max_bytes + 1)
 
 
+def _smart_trim_object(pil_img):
+    """Tự động cắt bỏ viền trắng/sáng đồng nhất (như ảnh sản phẩm dây chuyền, sách bìa trắng)."""
+    w, h = pil_img.size
+    if w < 30 or h < 30:
+        return pil_img
+    try:
+        corners = [
+            pil_img.getpixel((2, 2)),
+            pil_img.getpixel((w - 3, 2)),
+            pil_img.getpixel((2, h - 3)),
+            pil_img.getpixel((w - 3, h - 3)),
+        ]
+        bright_corners = [c for c in corners if c[0] > 215 and c[1] > 215 and c[2] > 215]
+        if len(bright_corners) >= 3:
+            avg_r = sum(c[0] for c in bright_corners) // len(bright_corners)
+            avg_g = sum(c[1] for c in bright_corners) // len(bright_corners)
+            avg_b = sum(c[2] for c in bright_corners) // len(bright_corners)
+            bg = Image.new("RGB", pil_img.size, (avg_r, avg_g, avg_b))
+            diff = ImageChops.difference(pil_img, bg).convert("L")
+            mask = diff.point(lambda p: 255 if p > 20 else 0)
+            bbox = mask.getbbox()
+            if bbox:
+                bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                if bw >= w * 0.10 and bh >= h * 0.10:
+                    pad_x, pad_y = max(3, int(bw * 0.04)), max(3, int(bh * 0.04))
+                    return pil_img.crop((
+                        max(0, bbox[0] - pad_x),
+                        max(0, bbox[1] - pad_y),
+                        min(w, bbox[2] + pad_x),
+                        min(h, bbox[3] + pad_y)
+                    ))
+    except Exception:
+        pass
+    return pil_img
+
+
+def _detect_visual_colors(pil_img):
+    """Nhận diện màu sắc chủ đạo của vật thể ở vùng trung tâm ảnh khi thiếu dữ liệu chữ."""
+    try:
+        w, h = pil_img.size
+        crop = pil_img.crop((int(w * 0.2), int(h * 0.2), int(w * 0.8), int(h * 0.8))).resize((32, 32))
+        detected = set()
+        for r, g, b in crop.getdata():
+            hue, sat, val = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+            if val < 0.22:
+                detected.add("đen")
+            elif sat < 0.18 and val > 0.78:
+                detected.update({"trắng", "bạc"})
+            elif sat < 0.22:
+                detected.update({"xám", "bạc"})
+            else:
+                deg = hue * 360.0
+                if deg < 18 or deg >= 340:
+                    detected.add("đỏ")
+                elif deg < 42:
+                    detected.add("cam")
+                elif deg < 68:
+                    detected.add("vàng")
+                elif deg < 165:
+                    detected.add("xanh")
+                elif deg < 255:
+                    detected.add("xanh")
+                elif deg < 310:
+                    detected.add("tím")
+                else:
+                    detected.add("hồng")
+        return detected
+    except Exception:
+        return set()
+
+
 def _phash_from_gray(gray):
     """Perceptual hash 64-bit dựa trên DCT, ổn định với thay đổi kích thước."""
     small = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA).astype("float32")
@@ -234,19 +319,8 @@ def _phash_from_gray(gray):
     return result
 
 
-def _center_crop_for_matching(pil_img, keep_ratio=0.72):
-    """Cắt vùng trung tâm ảnh (72%) để tập trung vào vật thể."""
-    w, h = pil_img.size
-    if w < 40 or h < 40:
-        return pil_img
-    cw, ch = int(w * keep_ratio), int(h * keep_ratio)
-    left = (w - cw) // 2
-    top = (h - ch) // 2
-    return pil_img.crop((left, top, left + cw, top + ch))
-
-
-def _fast_pil_features(canvas):
-    """Trích xuất biểu đồ màu HSV gốc (4x3x3 = 36 bins/ô) + dHash & aHash kép."""
+def _fast_pil_features(canvas, visual_colors):
+    """Trích xuất biểu đồ màu HSV toàn cục + lưới 3x3 + dHash & aHash kép."""
     phashes = []
     ahashes = []
     gray_base = canvas.convert("L")
@@ -273,6 +347,7 @@ def _fast_pil_features(canvas):
 
     small_rgb = canvas.resize((36, 36), Image.Resampling.BILINEAR)
     pixels = list(small_rgb.getdata())
+    global_bins = [0.0] * 36
     grid_hists = []
     for r in range(3):
         for c in range(3):
@@ -285,23 +360,30 @@ def _fast_pil_features(canvas):
                     h_bin = min(3, int(h * 4.0))
                     s_bin = min(2, int(s * 3.0))
                     v_bin = min(2, int(v * 3.0))
-                    bins[h_bin * 9 + s_bin * 3 + v_bin] += 1.0
+                    idx = h_bin * 9 + s_bin * 3 + v_bin
+                    bins[idx] += 1.0
+                    global_bins[idx] += 1.0
             inv_s = 1.0 / 144.0
             grid_hists.append([x * inv_s for x in bins])
 
+    inv_all = 1.0 / 1296.0
+    global_hist = [x * inv_all for x in global_bins]
+
     return {
-        "version": 10,
-        "type": "pil_v10_truecolor",
+        "version": 19,
+        "type": "pil_v19_truecolor",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
         "ahashes": ahashes,
+        "global_hist": global_hist,
         "grid_hists": grid_hists,
+        "visual_colors": list(visual_colors),
     }
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng lai tốc độ cao (hỗ trợ cả OpenCV lẫn thuần Pillow)."""
+    """Trích xuất đặc trưng đa tầng chuẩn hóa khung hình 224x224."""
     if not check_real_image(img_path):
         return None
 
@@ -315,22 +397,17 @@ def calculate_image_features(img_path):
             return None
 
         with Image.open(io.BytesIO(data)) as source:
-            try:
-                source.draft("RGB", (180, 180))
-            except Exception:
-                pass
             width, height = source.size
             if width < 2 or height < 2 or width * height > 12_000_000:
                 return None
 
             image = ImageOps.exif_transpose(source).convert("RGB")
-            focused = _center_crop_for_matching(image, keep_ratio=0.72)
+            trimmed = _smart_trim_object(image)
+            visual_colors = _detect_visual_colors(trimmed)
 
             if HAS_OPENCV:
-                focused.thumbnail((240, 240), Image.Resampling.BILINEAR)
-                canvas = Image.new("RGB", (240, 240), (245, 245, 245))
-                canvas.paste(focused, ((240 - focused.width) // 2, (240 - focused.height) // 2))
-                rgb = np.asarray(canvas, dtype=np.uint8)
+                normalized_img = trimmed.resize((224, 224), Image.Resampling.BILINEAR)
+                rgb = np.asarray(normalized_img, dtype=np.uint8)
 
                 image_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
                 gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
@@ -338,7 +415,7 @@ def calculate_image_features(img_path):
                 clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
                 gray_eq = clahe.apply(gray)
 
-                orb = cv2.ORB_create(nfeatures=200, scaleFactor=1.2, nlevels=5, fastThreshold=12)
+                orb = cv2.ORB_create(nfeatures=250, scaleFactor=1.2, nlevels=5, fastThreshold=10)
                 _, descriptors = orb.detectAndCompute(gray_eq, None)
 
                 phashes = [
@@ -349,28 +426,36 @@ def calculate_image_features(img_path):
                 ]
 
                 hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
+                global_hist = cv2.calcHist([hsv], [0, 1, 2], None, [6, 3, 3], [0, 180, 0, 256, 0, 256])
+                cv2.normalize(global_hist, global_hist, 1.0, 0.0, cv2.NORM_L1)
+
+                center_hsv = hsv[45:179, 45:179]
+                center_hist = cv2.calcHist([center_hsv], [0, 1, 2], None, [6, 3, 3], [0, 180, 0, 256, 0, 256])
+                cv2.normalize(center_hist, center_hist, 1.0, 0.0, cv2.NORM_L1)
+
                 grid_hists = []
-                step = 240 // 3
+                step = 224 // 3
                 for r in range(3):
                     for c in range(3):
                         cell = hsv[r * step:(r + 1) * step, c * step:(c + 1) * step]
-                        hist = cv2.calcHist([cell], [0, 1, 2], None, [8, 4, 4], [0, 180, 0, 256, 0, 256])
+                        hist = cv2.calcHist([cell], [0, 1, 2], None, [6, 3, 3], [0, 180, 0, 256, 0, 256])
                         cv2.normalize(hist, hist, 1.0, 0.0, cv2.NORM_L1)
                         grid_hists.append(hist)
 
                 features = {
-                    "version": 14,
-                    "type": "opencv_v14_truecolor",
+                    "version": 19,
+                    "type": "opencv_v19_truecolor",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
+                    "global_hist": global_hist,
+                    "center_hist": center_hist,
                     "grid_hists": grid_hists,
+                    "visual_colors": list(visual_colors),
                 }
             else:
-                focused.thumbnail((120, 120), Image.Resampling.BILINEAR)
-                canvas = Image.new("RGB", (120, 120), (245, 245, 245))
-                canvas.paste(focused, ((120 - focused.width) // 2, (120 - focused.height) // 2))
-                features = _fast_pil_features(canvas)
+                normalized_img = trimmed.resize((120, 120), Image.Resampling.BILINEAR)
+                features = _fast_pil_features(normalized_img, visual_colors)
 
         save_feature_cache(img_path, features)
         return features
@@ -391,10 +476,9 @@ def image_score(
     img1_filename,
     img2_filename,
     is_same_keyword=False,
-    context_match_strong=False,
     color_conflict=False
 ):
-    """Chấm điểm hình ảnh: Trùng file đạt 50/50, khác góc chụp đạt tối đa 47/50."""
+    """Chấm điểm thị giác thuần túy (0–50), tuyệt đối không bị điểm văn bản ép lên."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -408,24 +492,31 @@ def image_score(
             return 0, 0.0
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
+            gh1, gh2 = f1.get("global_hist"), f2.get("global_hist")
+            global_inter = float(cv2.compareHist(gh1, gh2, cv2.HISTCMP_INTERSECT)) if (gh1 is not None and gh2 is not None) else 0.0
+
+            ch1, ch2 = f1.get("center_hist"), f2.get("center_hist")
+            center_inter = float(cv2.compareHist(ch1, ch2, cv2.HISTCMP_INTERSECT)) if (ch1 is not None and ch2 is not None) else global_inter
+
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
-            best_corr = 0.0
+            best_grid_inter = 0.0
             if len(g1) == 9 and len(g2) == 9:
                 curr_g2 = g2
                 for _ in range(4):
-                    corrs = [max(0.0, float(cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))) for h1, h2 in zip(g1, curr_g2)]
-                    weighted_corr = (sum(corrs) + corrs[4] * 3.0) / 12.0
-                    if weighted_corr > best_corr:
-                        best_corr = weighted_corr
+                    inters = [float(cv2.compareHist(h1, h2, cv2.HISTCMP_INTERSECT)) for h1, h2 in zip(g1, curr_g2)]
+                    weighted = (sum(inters) + inters[4] * 3.0) / 12.0
+                    if weighted > best_grid_inter:
+                        best_grid_inter = weighted
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-            color_points = max(0, min(22, int(round(((best_corr - 0.12) / 0.42) * 22))))
+            color_sim = 0.45 * global_inter + 0.30 * center_inter + 0.25 * best_grid_inter
+            color_points = max(0, min(26, int(round(((color_sim - 0.20) / 0.45) * 26))))
 
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
             min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
             phash_score = max(0.0, 1.0 - min_hamming / 63.0)
-            shape_points = max(0, min(14, int(round(((phash_score - 0.40) / 0.32) * 14))))
+            shape_points = max(0, min(12, int(round(((phash_score - 0.36) / 0.34) * 12))))
 
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
@@ -438,21 +529,17 @@ def image_score(
                 reverse_pairs = {(m.trainIdx, m.queryIdx) for m in good_r}
                 mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
 
-                if mutual >= 7:
-                    orb_points = 14
+                if mutual >= 6:
+                    orb_points = 12
                 elif mutual >= 3:
-                    orb_points = 11
+                    orb_points = 9
                 elif mutual >= 1:
-                    orb_points = 8
-
-            if color_points <= 5 and orb_points > 4:
-                orb_points = 4
+                    orb_points = 5
 
             raw_total = color_points + shape_points + orb_points
-            if context_match_strong and not color_conflict and raw_total >= 12:
-                raw_total = max(raw_total, 40)
-            if color_conflict and raw_total > 12:
-                raw_total = 12
+
+            if color_conflict and raw_total > 10:
+                raw_total = 10
             if not is_same_keyword and raw_total > 12:
                 raw_total = 12
 
@@ -460,6 +547,10 @@ def image_score(
             return int(total), float(total / 50.0)
 
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
+            gh1 = f1.get("global_hist", [])
+            gh2 = f2.get("global_hist", [])
+            global_inter = sum(min(a, b) for a, b in zip(gh1, gh2)) if (gh1 and gh2) else 0.0
+
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
             best_inter = 0.0
             if len(g1) == 9 and len(g2) == 9:
@@ -471,7 +562,8 @@ def image_score(
                         best_inter = weighted_inter
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-            color_points = max(0, min(25, int(round(((best_inter - 0.22) / 0.34) * 25))))
+            combined_inter = 0.55 * global_inter + 0.45 * best_inter
+            color_points = max(0, min(30, int(round(((combined_inter - 0.20) / 0.42) * 30))))
 
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
@@ -482,18 +574,12 @@ def image_score(
             min_a = min((a1 ^ int(a2)).bit_count() for a2 in a2_list)
 
             combined_dist = (min_d + min_a) / 2.0
-            shape_points = max(0, min(22, int(round(((28.0 - combined_dist) / 23.0) * 22))))
-
-            if color_points <= 5 and shape_points > 6:
-                shape_points = 6
+            shape_points = max(0, min(17, int(round(((32.0 - combined_dist) / 24.0) * 17))))
 
             total = min(47, color_points + shape_points)
 
             if color_conflict:
                 total = min(total, 10)
-            elif context_match_strong and total >= 12:
-                total = max(total, 40)
-
             if not is_same_keyword and total > 12:
                 total = 12
 
@@ -585,8 +671,8 @@ def similarity(text1, text2):
     return SequenceMatcher(None, t1, t2).ratio()
 
 
-def evaluate_color_match(lost_item, found_item, is_same_key):
-    """Tính điểm màu sắc (0–15) và báo hiệu xung đột màu."""
+def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None, visual_colors2=None):
+    """Tính điểm màu sắc (0–15), tự bổ sung màu nhận diện từ ảnh nếu bài đăng thiếu màu chữ."""
     m1 = str(lost_item.mau_sac or "").strip().lower()
     m2 = str(found_item.mau_sac or "").strip().lower()
     has_m1 = m1 not in ["none", "null", ""]
@@ -594,6 +680,11 @@ def evaluate_color_match(lost_item, found_item, is_same_key):
 
     colors1 = extract_colors(m1) | extract_colors(lost_item.ten_do)
     colors2 = extract_colors(m2) | extract_colors(found_item.ten_do)
+
+    if not colors1 and visual_colors1:
+        colors1 = set(visual_colors1)
+    if not colors2 and visual_colors2:
+        colors2 = set(visual_colors2)
 
     if colors1 and colors2:
         if colors1.intersection(colors2):
@@ -609,10 +700,10 @@ def evaluate_color_match(lost_item, found_item, is_same_key):
 
 
 def location_score(loc1, loc2):
-    """Chấm điểm vị trí (0–10), nhận diện cả phòng/lớp liền kề."""
-    v1 = str(loc1 or "").strip().lower()
-    v2 = str(loc2 or "").strip().lower()
-    if v1 in ["none", "null", ""] or v2 in ["none", "null", ""]:
+    """Chấm điểm vị trí (0–10), nhận diện cả phòng/lớp liền kề và chuẩn hóa Căn tin."""
+    v1 = normalize_location_text(loc1).lower()
+    v2 = normalize_location_text(loc2).lower()
+    if not v1 or not v2:
         return 0
     if v1 == v2:
         return 10
@@ -715,7 +806,7 @@ def lost():
                 ten_do=request.form.get("ten_do", ""),
                 loai_do=request.form.get("loai_do", ""),
                 mau_sac=request.form.get("mau_sac", ""),
-                noi_mat=request.form.get("noi_mat", ""),
+                noi_mat=normalize_location_text(request.form.get("noi_mat", "")),
                 ngay_mat=request.form.get("ngay_mat", ""),
                 hinh_anh=filename,
                 trang_thai="DANG_TIM"
@@ -753,9 +844,9 @@ def found():
                 ten_do=request.form.get("ten_do", ""),
                 loai_do=request.form.get("loai_do", ""),
                 mau_sac=request.form.get("mau_sac", ""),
-                noi_nhat=request.form.get("noi_nhat", ""),
+                noi_nhat=normalize_location_text(request.form.get("noi_nhat", "")),
                 ngay_nhat=request.form.get("ngay_nhat", ""),
-                noi_luu_giu=request.form.get("noi_luu_giu", "").strip(),
+                noi_luu_giu=normalize_location_text(request.form.get("noi_luu_giu", "")),
                 hinh_anh=filename,
                 trang_thai="DANG_LUU_GIU"
             )
@@ -781,6 +872,8 @@ def uploaded_file(filename):
 def list_items():
     try:
         items = LostItem.query.order_by(LostItem.id.desc()).all()
+        for item in items:
+            item.noi_mat = normalize_location_text(item.noi_mat)
     except Exception:
         items = []
     return render_template("list_items.html", items=items)
@@ -790,6 +883,9 @@ def list_items():
 def found_list():
     try:
         items = FoundItem.query.order_by(FoundItem.id.desc()).all()
+        for item in items:
+            item.noi_nhat = normalize_location_text(item.noi_nhat)
+            item.noi_luu_giu = normalize_location_text(item.noi_luu_giu)
     except Exception:
         items = []
     return render_template("found_list.html", items=items)
@@ -799,7 +895,7 @@ def found_list():
 def search():
     keyword = request.args.get("keyword", "").strip()
     category = request.args.get("category", "").strip()
-    location = request.args.get("location", "").strip()
+    location = normalize_location_text(request.args.get("location", ""))
     color = request.args.get("color", "").strip()
     status = request.args.get("status", "").strip()
 
@@ -810,7 +906,7 @@ def search():
         if category:
             lost_query = lost_query.filter(LostItem.loai_do == category)
         if location:
-            lost_query = lost_query.filter(LostItem.noi_mat == location)
+            lost_query = lost_query.filter(LostItem.noi_mat.ilike(f"%{location}%"))
         if color:
             lost_query = lost_query.filter(LostItem.mau_sac.ilike(f"%{color}%"))
 
@@ -830,7 +926,7 @@ def search():
         if category:
             found_query = found_query.filter(FoundItem.loai_do == category)
         if location:
-            found_query = found_query.filter(FoundItem.noi_nhat == location)
+            found_query = found_query.filter(FoundItem.noi_nhat.ilike(f"%{location}%"))
         if color:
             found_query = found_query.filter(FoundItem.mau_sac.ilike(f"%{color}%"))
 
@@ -883,7 +979,7 @@ def edit_lost(item_id):
         item.ten_do = request.form.get("ten_do")
         item.loai_do = request.form.get("loai_do")
         item.mau_sac = request.form.get("mau_sac")
-        item.noi_mat = request.form.get("noi_mat")
+        item.noi_mat = normalize_location_text(request.form.get("noi_mat", ""))
         item.ngay_mat = request.form.get("ngay_mat")
 
         file = request.files.get("hinh_anh")
@@ -917,9 +1013,9 @@ def edit_found(item_id):
         item.ten_do = request.form.get("ten_do")
         item.loai_do = request.form.get("loai_do")
         item.mau_sac = request.form.get("mau_sac")
-        item.noi_nhat = request.form.get("noi_nhat")
+        item.noi_nhat = normalize_location_text(request.form.get("noi_nhat", ""))
         item.ngay_nhat = request.form.get("ngay_nhat")
-        item.noi_luu_giu = request.form.get("noi_luu_giu", "").strip()
+        item.noi_luu_giu = normalize_location_text(request.form.get("noi_luu_giu", ""))
 
         file = request.files.get("hinh_anh")
         if file and file.filename != "":
@@ -987,12 +1083,22 @@ def heatmap():
         "10A1", "10A2", "10A3", "11A1", "11A2", "12A1", "12A2"
     ]
     try:
-        db_data = db.session.query(LostItem.noi_mat, func.count(LostItem.id)).group_by(LostItem.noi_mat).all()
-        count_dict = dict(db_data)
+        all_lost = LostItem.query.all()
+        count_dict = {area: 0 for area in areas}
+        unknown_count = 0
+        for item in all_lost:
+            loc = normalize_location_text(item.noi_mat)
+            if loc in count_dict:
+                count_dict[loc] += 1
+            else:
+                unknown_count += 1
     except Exception:
-        count_dict = {}
+        count_dict = {area: 0 for area in areas}
+        unknown_count = 0
 
     data = [(area, count_dict.get(area, 0)) for area in areas]
+    if unknown_count > 0:
+        data.append(("Chưa rõ khu vực", unknown_count))
     return render_template("heatmap.html", data=data)
 
 
@@ -1015,7 +1121,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát chính xác: Hiển thị ngày dd-mm-yyyy và phân tách điểm rõ ràng."""
+    """Đối sánh tổng quát chính xác: Tách bạch điểm thị giác và văn bản, nhận diện màu từ ảnh."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1035,8 +1141,11 @@ def match_items(item_id=None):
 
         for obj in lost_items:
             obj.has_image = check_real_image(obj.hinh_anh)
+            obj.noi_mat = normalize_location_text(obj.noi_mat)
         for obj in found_items:
             obj.has_image = check_real_image(obj.hinh_anh)
+            obj.noi_nhat = normalize_location_text(obj.noi_nhat)
+            obj.noi_luu_giu = normalize_location_text(obj.noi_luu_giu)
 
         candidates = []
         sequence = 0
@@ -1087,7 +1196,7 @@ def match_items(item_id=None):
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
-        eval_limit = min(total_matches, page * per_page + 5)
+        eval_limit = min(total_matches, page * per_page + 10)
         top_candidates = candidates[:eval_limit]
 
         urls_to_fetch = set()
@@ -1106,18 +1215,27 @@ def match_items(item_id=None):
         evaluated_matches = []
         for item in top_candidates:
             lost, found = item["lost"], item["found"]
-            strong_ctx = (item["score_name"] >= 13 and item["score_color"] >= 15 and item["score_location"] >= 7)
+            v_cols1, v_cols2 = None, None
+            if lost.has_image and found.has_image:
+                f1 = get_feature_cache(lost.hinh_anh)
+                f2 = get_feature_cache(found.hinh_anh)
+                v_cols1 = f1.get("visual_colors") if f1 else None
+                v_cols2 = f2.get("visual_colors") if f2 else None
+
+            mau_score, color_conflict = evaluate_color_match(
+                lost, found, item["is_same_key"], v_cols1, v_cols2
+            )
+
             if lost.has_image and found.has_image:
                 anh_score, _ = image_score(
                     lost.hinh_anh, found.hinh_anh,
                     is_same_keyword=item["is_same_key"],
-                    context_match_strong=strong_ctx,
-                    color_conflict=item["color_conflict"]
+                    color_conflict=color_conflict
                 )
             else:
                 anh_score = 0
 
-            total_score = item["base_score"] + anh_score
+            total_score = item["score_name"] + mau_score + item["score_location"] + item["score_date"] + anh_score
             if total_score >= 75:
                 ket_luan = "🟢 Khả năng trùng khớp cao"
             elif total_score >= 55:
@@ -1134,7 +1252,7 @@ def match_items(item_id=None):
                 "ket_luan": ket_luan,
                 "score_image": anh_score,
                 "score_name": item["score_name"],
-                "score_color": item["score_color"],
+                "score_color": mau_score,
                 "score_location": item["score_location"],
                 "score_date": item["score_date"],
             })
@@ -1170,6 +1288,9 @@ def teacher_check(lost_id, found_id):
     try:
         lost = LostItem.query.get_or_404(lost_id)
         found = FoundItem.query.get_or_404(found_id)
+        lost.noi_mat = normalize_location_text(lost.noi_mat)
+        found.noi_nhat = normalize_location_text(found.noi_nhat)
+        found.noi_luu_giu = normalize_location_text(found.noi_luu_giu)
     except Exception:
         return redirect(url_for("match_items"))
 
@@ -1182,17 +1303,22 @@ def teacher_check(lost_id, found_id):
     is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
 
     ten_score = 15 if ten_sim >= 0.85 else int(ten_sim * 15)
-    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
+
+    v_cols1, v_cols2 = None, None
+    if has1 and has2:
+        f1 = calculate_image_features(lost.hinh_anh)
+        f2 = calculate_image_features(found.hinh_anh)
+        v_cols1 = f1.get("visual_colors") if f1 else None
+        v_cols2 = f2.get("visual_colors") if f2 else None
+
+    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key, v_cols1, v_cols2)
     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-
-    strong_ctx = (ten_score >= 13 and mau_score >= 15 and vi_tri_score >= 7)
 
     if has1 and has2:
         anh_score, image_ratio = image_score(
             lost.hinh_anh, found.hinh_anh,
             is_same_keyword=is_same_key,
-            context_match_strong=strong_ctx,
             color_conflict=color_conflict
         )
     else:
@@ -1307,7 +1433,7 @@ def export_excel():
             "Tên đồ vật": item.ten_do,
             "Loại đồ": item.loai_do,
             "Màu sắc": item.mau_sac,
-            "Nơi mất": item.noi_mat,
+            "Nơi mất": normalize_location_text(item.noi_mat),
             "Ngày mất": format_vn_date(item.ngay_mat),
             "Trạng thái": "Đã tìm thấy" if item.trang_thai in ["DA_TIM", "Đã tìm thấy"] else "Đang tìm"
         } for i, item in enumerate(lost_items)]
@@ -1317,9 +1443,9 @@ def export_excel():
             "Tên đồ vật": item.ten_do,
             "Loại đồ": item.loai_do,
             "Màu sắc": item.mau_sac,
-            "Nơi nhặt": item.noi_nhat,
+            "Nơi nhặt": normalize_location_text(item.noi_nhat),
             "Ngày nhặt": format_vn_date(item.ngay_nhat),
-            "Nơi lưu giữ / Liên hệ": item.noi_luu_giu or "",
+            "Nơi lưu giữ / Liên hệ": normalize_location_text(item.noi_luu_giu),
             "Trạng thái": "Đã hoàn trả" if item.trang_thai in ["DA_TRA", "Đã hoàn trả"] else "Đang lưu giữ"
         } for i, item in enumerate(found_items)]
 
