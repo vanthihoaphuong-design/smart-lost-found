@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
 {% block title %}
-Chỉnh sửa đồ thất lạc
+{% if is_lost is defined and not is_lost %}Chỉnh sửa đồ nhặt được{% else %}Chỉnh sửa đồ thất lạc{% endif %}
 {% endblock %}
 
 {% block content %}
 
 <h2 class="mb-4 text-primary fw-bold">
-✏️ Chỉnh sửa thông tin đồ vật
+✏️ {% if is_lost is defined and not is_lost %}Chỉnh sửa thông tin đồ nhặt được{% else %}Chỉnh sửa thông tin đồ thất lạc{% endif %}
 </h2>
 
 <form method="POST" enctype="multipart/form-data">
@@ -55,8 +55,10 @@ Chỉnh sửa đồ thất lạc
         </div>
 
         <div class="col-md-6">
-            <label class="form-label fw-bold">Nơi mất / Nơi nhặt</label>
-            <select name="noi_mat" class="form-select" required>
+            <label class="form-label fw-bold">
+                {% if is_lost is defined and not is_lost %}Nơi nhặt{% else %}Nơi mất{% endif %}
+            </label>
+            <select name="{% if is_lost is defined and not is_lost %}noi_nhat{% else %}noi_mat{% endif %}" class="form-select" required>
                 {% set current_noi = item.noi_mat if item.noi_mat else (item.noi_nhat if item.noi_nhat else item.location) %}
                 <option {% if current_noi == 'Sân trường' %}selected{% endif %}>Sân trường</option>
                 <option {% if current_noi == 'Nhà xe' %}selected{% endif %}>Nhà xe</option>
@@ -86,15 +88,51 @@ Chỉnh sửa đồ thất lạc
         </div>
     </div>
 
+    {% if is_lost is defined and not is_lost %}
+    <br>
+    <div class="row">
+        <div class="col-md-12">
+            <label class="form-label fw-bold">📦 Nơi đang gửi đồ / Liên hệ người nhặt</label>
+            <input 
+                type="text" 
+                name="noi_luu_giu" 
+                id="editNoiLuuGiuInput"
+                list="editStorageSuggestions"
+                class="form-control" 
+                value="{{ item.noi_luu_giu or '' }}" 
+                placeholder="Phòng Bảo vệ, Phòng Đoàn - Đội, hoặc Tên + Lớp..." 
+                required>
+            <datalist id="editStorageSuggestions">
+                <option value="Phòng Bảo vệ">
+                <option value="Phòng Đoàn - Đội">
+            </datalist>
+            <div class="mt-2 d-flex flex-wrap gap-2">
+                <small class="text-muted align-self-center">Chọn nhanh:</small>
+                <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" onclick="document.getElementById('editNoiLuuGiuInput').value='Phòng Bảo vệ'">
+                    🛡️ Phòng Bảo vệ
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-success rounded-pill" onclick="document.getElementById('editNoiLuuGiuInput').value='Phòng Đoàn - Đội'">
+                    🚩 Phòng Đoàn - Đội
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill" onclick="let el=document.getElementById('editNoiLuuGiuInput'); el.value=''; el.focus();">
+                    ✍️ Nhập tên người giữ
+                </button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <br>
 
     <div class="row">
-        <!-- 5. Ngày mất -->
+        <!-- 5. Ngày mất / Ngày nhặt -->
         <div class="col-md-6">
-            <label class="form-label fw-bold">Ngày mất / Ngày nhặt</label>
+            <label class="form-label fw-bold">
+                {% if is_lost is defined and not is_lost %}Ngày nhặt{% else %}Ngày mất{% endif %}
+            </label>
             <input 
                 type="date" 
-                name="ngay_mat" 
+                name="{% if is_lost is defined and not is_lost %}ngay_nhat{% else %}ngay_mat{% endif %}" 
                 class="form-control" 
                 value="{{ item.ngay_mat if item.ngay_mat else (item.ngay_nhat if item.ngay_nhat else item.date_lost) }}" 
                 required>
@@ -114,7 +152,7 @@ Chỉnh sửa đồ thất lạc
 
     <br>
 
-    <!-- Hiển thị ảnh xem trước / ảnh hiện tại (Tự động nhận diện Cloudinary URL) -->
+    <!-- Hiển thị ảnh xem trước / ảnh hiện tại -->
     <div class="text-center p-3 bg-light rounded border mb-3">
         {% set img_file = item.hinh_anh if item.hinh_anh else item.image_path %}
         {% set img_url = img_file if (img_file and img_file.startswith('http')) else (url_for('uploaded_file', filename=img_file) if img_file else '') %}
@@ -134,7 +172,7 @@ Chỉnh sửa đồ thất lạc
         <button type="submit" class="btn btn-success btn-lg px-4 fw-bold">
             💾 Lưu thay đổi
         </button>
-        <a href="/lost-list" class="btn btn-secondary btn-lg px-4">
+        <a href="{% if is_lost is defined and not is_lost %}/found-list{% else %}/lost-list{% endif %}" class="btn btn-secondary btn-lg px-4">
             📋 Danh sách
         </a>
     </div>
