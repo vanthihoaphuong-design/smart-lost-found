@@ -218,7 +218,7 @@ Danh sách đồ thất lạc
                 <tbody>
                 {% for item in items %}
                     <tr>
-                        <td><span class="stt-pill">{{ loop.index }}</span></td>
+                        <td><span class="stt-pill">{{ items|length - loop.index0 }}</span></td>
                         <td>
                             {% if item.hinh_anh %}
                                 {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
