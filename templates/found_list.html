@@ -6,327 +6,412 @@ Danh sách đồ nhặt được
 
 {% block content %}
 <style>
-    .found-list-container { max-width: 1260px; margin: 24px auto 40px auto; padding: 0 15px; }
+    .found-grid-container { max-width: 1320px; margin: 24px auto 48px auto; padding: 0 16px; }
 
-    /* Banner đầu trang nổi bật đồng bộ */
+    /* Banner đầu trang */
     .found-hero {
         display: flex;
         justify-content: space-between;
         align-items: center;
         flex-wrap: wrap;
         gap: 16px;
-        padding: 24px 30px;
-        margin-bottom: 22px;
-        border-radius: 18px;
-        background: linear-gradient(125deg, #059669 0%, #10b981 100%);
+        padding: 26px 32px;
+        margin-bottom: 24px;
+        border-radius: 20px;
+        background: linear-gradient(125deg, #065f46 0%, #059669 55%, #10b981 100%);
         color: #ffffff;
-        box-shadow: 0 8px 24px rgba(5, 150, 105, 0.18);
+        box-shadow: 0 10px 28px rgba(5, 150, 105, 0.2);
     }
-    .found-hero h2 { margin: 0 0 4px 0; font-weight: 800; font-size: 1.65rem; color: #ffffff; }
-    .found-hero p { margin: 0; font-size: 0.94rem; color: rgba(255, 255, 255, 0.92); }
+    .found-hero h2 { margin: 0 0 6px 0; font-weight: 800; font-size: 1.75rem; letter-spacing: -0.3px; }
+    .found-hero p { margin: 0; font-size: 0.96rem; color: rgba(255, 255, 255, 0.92); }
 
-    .btn-hero-found {
+    .btn-hero-white {
         background-color: #ffffff;
         color: #059669;
         font-weight: 700;
-        padding: 9px 18px;
-        border-radius: 10px;
+        padding: 10px 20px;
+        border-radius: 12px;
         border: none;
-        box-shadow: 0 3px 10px rgba(0, 0, 0, 0.12);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
         transition: all 0.2s ease;
     }
-    .btn-hero-found:hover {
-        background-color: #ecfdf5;
-        color: #047857;
-        transform: translateY(-1px);
-    }
-    .btn-hero-outline {
-        background-color: rgba(255, 255, 255, 0.15);
+    .btn-hero-white:hover { background-color: #ecfdf5; color: #047857; transform: translateY(-2px); }
+
+    .btn-hero-glass {
+        background-color: rgba(255, 255, 255, 0.16);
+        backdrop-filter: blur(6px);
         color: #ffffff;
         font-weight: 700;
-        padding: 9px 16px;
-        border-radius: 10px;
-        border: 1px solid rgba(255, 255, 255, 0.4);
+        padding: 10px 18px;
+        border-radius: 12px;
+        border: 1px solid rgba(255, 255, 255, 0.35);
         transition: all 0.2s ease;
     }
-    .btn-hero-outline:hover {
-        background-color: rgba(255, 255, 255, 0.25);
-        color: #ffffff;
-    }
+    .btn-hero-glass:hover { background-color: rgba(255, 255, 255, 0.26); color: #ffffff; }
 
-    .modern-table-card {
+    /* Thanh lọc nhanh trên giao diện */
+    .quick-filter-bar {
         background: #ffffff;
+        border: 1px solid #e2e8f0;
         border-radius: 16px;
-        box-shadow: 0 6px 22px rgba(15, 23, 42, 0.06);
-        border: 1px solid #d1fae5;
+        padding: 14px 18px;
+        margin-bottom: 24px;
+        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.04);
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        justify-content: space-between;
+    }
+    .quick-search-input {
+        max-width: 340px;
+        border-radius: 10px;
+        border: 1px solid #cbd5e1;
+        padding: 8px 14px;
+        font-size: 0.9rem;
+    }
+    .quick-search-input:focus {
+        border-color: #059669;
+        box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.15);
+    }
+
+    /* Thẻ Card Đồ Vật */
+    .item-card {
+        background: #ffffff;
+        border-radius: 18px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
         overflow: hidden;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
     }
-    .modern-table { margin-bottom: 0; vertical-align: middle; }
-    .modern-table thead th {
-        background-color: #ecfdf5;
-        color: #065f46;
-        font-weight: 800;
-        font-size: 0.82rem;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        padding: 15px 12px;
-        border-bottom: 2px solid #a7f3d0;
-        text-align: center;
-        white-space: nowrap;
+    .item-card:hover {
+        transform: translateY(-4px);
+        box-shadow: 0 14px 30px rgba(15, 23, 42, 0.11);
+        border-color: #6ee7b7;
     }
-    .modern-table tbody td {
-        padding: 15px 12px;
-        border-bottom: 1px solid #f1f5f9;
-        color: #1e293b;
-        font-size: 0.92rem;
-        text-align: center;
-        vertical-align: middle;
-    }
-    .modern-table tbody tr:hover { background-color: #f8fafc; }
 
-    .id-badge {
+    .card-img-wrapper {
+        position: relative;
+        width: 100%;
+        height: 195px;
         background-color: #f1f5f9;
-        color: #334155;
-        font-weight: 800;
-        font-size: 0.84rem;
-        padding: 4px 10px;
-        border-radius: 8px;
-        display: inline-block;
-    }
-
-    .thumb-box {
-        width: 72px;
-        height: 72px;
-        border-radius: 12px;
-        object-fit: cover;
-        border: 2px solid #e2e8f0;
+        overflow: hidden;
         cursor: zoom-in;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-        background-color: #f8fafc;
     }
-    .thumb-box:hover {
-        transform: scale(1.07);
-        box-shadow: 0 5px 14px rgba(0, 0, 0, 0.14);
+    .card-img-wrapper img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        transition: transform 0.35s ease;
     }
-    .thumb-empty {
-        width: 72px;
-        height: 72px;
-        border-radius: 12px;
-        border: 1px dashed #cbd5e1;
-        background-color: #f8fafc;
-        display: inline-flex;
+    .item-card:hover .card-img-wrapper img { transform: scale(1.05); }
+
+    .card-no-img {
+        width: 100%;
+        height: 195px;
+        background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+        display: flex;
+        flex-direction: column;
         align-items: center;
         justify-content: center;
-        color: #94a3b8;
-        font-size: 0.74rem;
+        color: #64748b;
+        font-size: 0.85rem;
+        font-weight: 600;
     }
 
-    .item-name-title {
+    /* Nhãn nổi trên ảnh */
+    .floating-id {
+        position: absolute;
+        top: 12px;
+        left: 12px;
+        background: rgba(15, 23, 42, 0.72);
+        backdrop-filter: blur(4px);
+        color: #ffffff;
+        font-size: 0.75rem;
+        font-weight: 800;
+        padding: 4px 10px;
+        border-radius: 8px;
+    }
+    .floating-status-holding {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: #dbeafe;
+        color: #1e40af;
+        border: 1px solid #93c5fd;
+        font-size: 0.75rem;
+        font-weight: 800;
+        padding: 4px 11px;
+        border-radius: 999px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    }
+    .floating-status-returned {
+        position: absolute;
+        top: 12px;
+        right: 12px;
+        background: #dcfce7;
+        color: #166534;
+        border: 1px solid #86efac;
+        font-size: 0.75rem;
+        font-weight: 800;
+        padding: 4px 11px;
+        border-radius: 999px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+    }
+    .zoom-hint-pill {
+        position: absolute;
+        bottom: 10px;
+        right: 10px;
+        background: rgba(15, 23, 42, 0.7);
+        color: #ffffff;
+        font-size: 0.7rem;
+        padding: 3px 8px;
+        border-radius: 6px;
+        opacity: 0;
+        transition: opacity 0.2s ease;
+    }
+    .card-img-wrapper:hover .zoom-hint-pill { opacity: 1; }
+
+    /* Nội dung thẻ */
+    .card-content {
+        padding: 16px 18px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+    .card-item-title {
+        font-size: 1.08rem;
         font-weight: 800;
         color: #0f172a;
-        font-size: 1rem;
-        margin-bottom: 6px;
-        text-align: center;
+        margin-bottom: 8px;
+        line-height: 1.3;
     }
-    .badge-group-center {
+    .chip-row {
         display: flex;
-        justify-content: center;
-        align-items: center;
         flex-wrap: wrap;
         gap: 6px;
+        margin-bottom: 10px;
     }
-    .cat-soft-badge {
+    .soft-chip {
         background-color: #f1f5f9;
         color: #334155;
-        border: 1px solid #cbd5e1;
-        font-size: 0.76rem;
+        border: 1px solid #e2e8f0;
+        font-size: 0.75rem;
         font-weight: 600;
         padding: 3px 9px;
-        border-radius: 6px;
-        display: inline-block;
+        border-radius: 7px;
     }
 
-    .storage-soft-badge {
+    .meta-box {
+        background-color: #f8fafc;
+        border: 1px solid #f1f5f9;
+        border-radius: 10px;
+        padding: 8px 12px;
+        font-size: 0.81rem;
+        color: #475569;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 8px;
+    }
+
+    .storage-box-active {
         background-color: #ecfdf5;
         color: #065f46;
-        border: 1px solid #6ee7b7;
+        border: 1px solid #a7f3d0;
+        border-radius: 10px;
+        padding: 7px 12px;
         font-size: 0.8rem;
         font-weight: 700;
-        padding: 5px 12px;
-        border-radius: 8px;
-        display: inline-block;
+        margin-bottom: 12px;
+        text-align: center;
     }
-    .storage-empty-badge {
+    .storage-box-empty {
         background-color: #f8fafc;
         color: #94a3b8;
-        border: 1px solid #e2e8f0;
+        border: 1px dashed #cbd5e1;
+        border-radius: 10px;
+        padding: 7px 12px;
         font-size: 0.78rem;
-        padding: 4px 10px;
-        border-radius: 8px;
-        display: inline-block;
+        margin-bottom: 12px;
+        text-align: center;
     }
 
-    .status-pill-holding {
-        background-color: #eff6ff;
-        color: #1d4ed8;
-        border: 1px solid #bfdbfe;
-        font-weight: 700;
-        font-size: 0.78rem;
-        padding: 4px 12px;
-        border-radius: 999px;
-        display: inline-block;
-        white-space: nowrap;
+    /* Chân thẻ nút thao tác */
+    .card-actions {
+        display: flex;
+        gap: 6px;
+        padding-top: 10px;
+        border-top: 1px solid #f1f5f9;
     }
-    .status-pill-returned {
-        background-color: #f0fdf4;
-        color: #15803d;
-        border: 1px solid #bbf7d0;
-        font-weight: 700;
-        font-size: 0.78rem;
-        padding: 4px 12px;
-        border-radius: 999px;
-        display: inline-block;
-        white-space: nowrap;
-    }
-
-    .btn-return-action {
+    .btn-card-return {
+        flex: 1;
         background: linear-gradient(135deg, #10b981, #059669);
         color: #ffffff;
         border: none;
-        font-size: 0.76rem;
-        font-weight: 600;
-        padding: 5px 11px;
-        border-radius: 8px;
-        white-space: nowrap;
-        box-shadow: 0 2px 6px rgba(16, 185, 129, 0.2);
+        font-size: 0.8rem;
+        font-weight: 700;
+        padding: 7px 10px;
+        border-radius: 9px;
+        text-align: center;
         transition: all 0.15s ease;
     }
-    .btn-return-action:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 10px rgba(16, 185, 129, 0.3);
-        color: #ffffff;
+    .btn-card-return:hover { color: #ffffff; filter: brightness(1.06); }
+
+    .returned-time-chip {
+        flex: 1;
+        background-color: #f0fdf4;
+        color: #15803d;
+        border: 1px solid #bbf7d0;
+        font-size: 0.76rem;
+        font-weight: 700;
+        padding: 7px 8px;
+        border-radius: 9px;
+        text-align: center;
+        white-space: nowrap;
     }
 
-    .btn-edit-action {
-        border: 1px solid #cbd5e1;
-        background-color: #ffffff;
+    .btn-card-edit {
+        background-color: #f8fafc;
         color: #334155;
-        font-size: 0.78rem;
+        border: 1px solid #cbd5e1;
+        font-size: 0.8rem;
         font-weight: 600;
-        padding: 5px 12px;
-        border-radius: 8px;
-        white-space: nowrap;
+        padding: 7px 12px;
+        border-radius: 9px;
         transition: all 0.15s ease;
     }
-    .btn-edit-action:hover {
-        background-color: #f1f5f9;
-        border-color: #94a3b8;
-        color: #0f172a;
-    }
+    .btn-card-edit:hover { background-color: #e2e8f0; color: #0f172a; }
 </style>
 
-<div class="found-list-container">
+<div class="found-grid-container">
+    <!-- Banner đầu trang -->
     <div class="found-hero">
         <div>
             <h2>📦 Danh Sách Đồ Nhặt Được</h2>
-            <p>Quản lý vật dụng nhặt được, nơi lưu giữ và xác nhận hoàn trả cho học sinh.</p>
+            <p>Tra cứu vật dụng nhặt được, điểm lưu giữ và xác nhận hoàn trả cho học sinh.</p>
         </div>
         <div class="d-flex gap-2 flex-wrap">
-            <a href="{{ url_for('found') }}" class="btn btn-hero-found">
+            <a href="{{ url_for('found') }}" class="btn btn-hero-white">
                 ➕ Báo Nhặt Đồ Mới
             </a>
-            <a href="{{ url_for('search') }}" class="btn btn-hero-outline">
+            <a href="{{ url_for('search') }}" class="btn btn-hero-glass">
                 🔍 Tìm kiếm nâng cao
             </a>
         </div>
     </div>
 
-    <div class="modern-table-card">
-        <div class="table-responsive">
-            <table class="table modern-table text-center">
-                <thead>
-                    <tr>
-                        <th style="width: 75px;">STT</th>
-                        <th style="width: 105px;">Hình ảnh</th>
-                        <th>Thông tin đồ vật</th>
-                        <th style="width: 175px;">Nơi &amp; Ngày nhặt</th>
-                        <th style="width: 195px;">Nơi lưu giữ / Liên hệ</th>
-                        <th style="width: 165px;">Trạng thái</th>
-                        <th style="width: 105px;">Thao tác</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for item in items %}
-                    <tr>
-                        <td><span class="id-badge">#{{ item.id }}</span></td>
-                        <td>
-                            {% if item.hinh_anh %}
-                                {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
-                                <img src="{{ img_url }}" 
-                                     class="thumb-box" 
-                                     onclick="zoomImage('{{ img_url }}')"
-                                     title="Bấm để xem phóng to"
-                                     onerror="this.onerror=null; this.outerHTML='<div class=\'thumb-empty\'>Lỗi ảnh</div>';">
-                            {% else %}
-                                <div class="thumb-empty">Không ảnh</div>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <div class="item-name-title">{{ item.ten_do }}</div>
-                            <div class="badge-group-center">
-                                <span class="cat-soft-badge">{{ item.loai_do }}</span>
-                                {% if item.mau_sac and item.mau_sac != 'None' %}
-                                    <span class="cat-soft-badge">🎨 {{ item.mau_sac }}</span>
-                                {% endif %}
-                            </div>
-                        </td>
-                        <td style="white-space: nowrap;">
-                            <div class="fw-bold text-dark">
-                                📍 {{ item.noi_nhat if (item.noi_nhat and item.noi_nhat != 'None') else 'Chưa rõ' }}
-                            </div>
-                            <div class="small text-muted mt-1">
-                                📅 {{ item.ngay_nhat | vn_date }}
-                            </div>
-                        </td>
-                        <td>
-                            {% if item.noi_luu_giu and item.noi_luu_giu != 'None' %}
-                                <span class="storage-soft-badge">📦 {{ item.noi_luu_giu }}</span>
-                            {% else %}
-                                <span class="storage-empty-badge">Chưa cập nhật</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            {% if item.trang_thai == 'DA_TRA' %}
-                                <span class="status-pill-returned">✅ Đã có người nhận</span>
-                                {% if item.thoi_diem_tra %}
-                                    <div class="small text-muted mt-1" style="white-space: nowrap;">
-                                        🕒 {{ item.thoi_diem_tra.strftime("%d-%m-%Y %H:%M") }}
-                                    </div>
-                                {% endif %}
-                            {% else %}
-                                <div class="d-flex flex-column align-items-center gap-1">
-                                    <span class="status-pill-holding">📦 Đang lưu giữ</span>
-                                    <button type="button" class="btn btn-return-action mt-1" onclick="confirmReturn('{{ item.id }}', '{{ item.ten_do }}')">
-                                        ✓ Đánh dấu đã trả
-                                    </button>
-                                </div>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <a href="{{ url_for('edit_found', item_id=item.id) }}" class="btn btn-edit-action">
-                                ✏️ Sửa
-                            </a>
-                        </td>
-                    </tr>
-                    {% else %}
-                    <tr>
-                        <td colspan="7" class="text-muted py-5">Chưa có dữ liệu đồ nhặt được.</td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+    {% if items %}
+    <!-- Thanh tìm kiếm & lọc nhanh tức thì -->
+    <div class="quick-filter-bar">
+        <div class="d-flex align-items-center gap-2 flex-wrap flex-grow-1">
+            <input type="text" id="foundQuickSearch" class="form-control quick-search-input" placeholder="🔎 Gõ tên đồ vật, nơi nhặt hoặc nơi gửi..." onkeyup="filterFoundCards()">
+            <div class="btn-group btn-group-sm" role="group">
+                <button type="button" class="btn btn-success active" onclick="filterFoundStatus('all', this)">Tất cả ({{ items|length }})</button>
+                <button type="button" class="btn btn-outline-success" onclick="filterFoundStatus('holding', this)">📦 Đang lưu giữ</button>
+                <button type="button" class="btn btn-outline-success" onclick="filterFoundStatus('returned', this)">✅ Đã trả</button>
+            </div>
+        </div>
+        <div class="text-muted small fw-semibold">
+            Hiển thị <span id="visibleFoundCount" class="text-success fw-bold">{{ items|length }}</span> món đồ
         </div>
     </div>
+
+    <!-- Lưới thẻ Card hiện đại -->
+    <div class="row g-4" id="foundCardsGrid">
+        {% for item in items %}
+        {% set is_returned = (item.trang_thai == 'DA_TRA') %}
+        <div class="col-12 col-sm-6 col-lg-4 col-xl-3 found-card-col"
+             data-status="{{ 'returned' if is_returned else 'holding' }}"
+             data-search="{{ (item.ten_do ~ ' ' ~ item.loai_do ~ ' ' ~ (item.mau_sac or '') ~ ' ' ~ (item.noi_nhat or '') ~ ' ' ~ (item.noi_luu_giu or '')) | lower }}">
+            <div class="item-card">
+                <!-- Khung ảnh -->
+                {% if item.hinh_anh %}
+                    {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
+                    <div class="card-img-wrapper" onclick="zoomImage('{{ img_url }}')">
+                        <img src="{{ img_url }}" alt="{{ item.ten_do }}" onerror="this.onerror=null; this.parentElement.outerHTML='<div class=\'card-no-img\'><span class=\'fs-2 mb-1\'>📷</span><span>Lỗi tải ảnh</span></div>';">
+                        <span class="floating-id">#{{ item.id }}</span>
+                        {% if is_returned %}
+                            <span class="floating-status-returned">✅ Đã có người nhận</span>
+                        {% else %}
+                            <span class="floating-status-holding">📦 Đang lưu giữ</span>
+                        {% endif %}
+                        <span class="zoom-hint-pill">🔍 Phóng to</span>
+                    </div>
+                {% else %}
+                    <div class="card-img-wrapper" style="cursor: default;">
+                        <div class="card-no-img">
+                            <span class="fs-2 mb-1">📦</span>
+                            <span>Chưa có hình ảnh</span>
+                        </div>
+                        <span class="floating-id">#{{ item.id }}</span>
+                        {% if is_returned %}
+                            <span class="floating-status-returned">✅ Đã có người nhận</span>
+                        {% else %}
+                            <span class="floating-status-holding">📦 Đang lưu giữ</span>
+                        {% endif %}
+                    </div>
+                {% endif %}
+
+                <!-- Phần nội dung -->
+                <div class="card-content">
+                    <div>
+                        <div class="card-item-title text-truncate" title="{{ item.ten_do }}">{{ item.ten_do }}</div>
+                        <div class="chip-row">
+                            <span class="soft-chip">{{ item.loai_do }}</span>
+                            {% if item.mau_sac and item.mau_sac != 'None' %}
+                                <span class="soft-chip">🎨 {{ item.mau_sac }}</span>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <div>
+                        <div class="meta-box">
+                            <span class="text-truncate" style="max-width: 55%;" title="{{ item.noi_nhat }}">
+                                📍 <strong>{{ item.noi_nhat if (item.noi_nhat and item.noi_nhat != 'None') else 'Chưa rõ' }}</strong>
+                            </span>
+                            <span style="white-space: nowrap;">📅 {{ item.ngay_nhat | vn_date }}</span>
+                        </div>
+
+                        {% if item.noi_luu_giu and item.noi_luu_giu != 'None' %}
+                            <div class="storage-box-active text-truncate" title="{{ item.noi_luu_giu }}">
+                                📦 Nơi gửi: {{ item.noi_luu_giu }}
+                            </div>
+                        {% else %}
+                            <div class="storage-box-empty">
+                                📦 Nơi gửi: Chưa cập nhật
+                            </div>
+                        {% endif %}
+
+                        <div class="card-actions">
+                            {% if is_returned %}
+                                <span class="returned-time-chip">
+                                    🕒 {{ item.thoi_diem_tra.strftime("%d-%m-%Y %H:%M") if item.thoi_diem_tra else 'Đã hoàn trả' }}
+                                </span>
+                            {% else %}
+                                <button type="button" class="btn btn-card-return" onclick="confirmReturn('{{ item.id }}', '{{ item.ten_do }}')">
+                                    ✓ Đánh dấu đã trả
+                                </button>
+                            {% endif %}
+                            <a href="{{ url_for('edit_found', item_id=item.id) }}" class="btn btn-card-edit" title="Chỉnh sửa">
+                                ✏️ Sửa
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+        <div class="alert alert-light border text-center mt-3 py-5 rounded-4 shadow-sm text-muted">
+            Chưa có dữ liệu đồ nhặt được.
+        </div>
+    {% endif %}
 </div>
 
 <!-- Modal Nhập PIN Xác Nhận Hoàn Trả -->
@@ -373,6 +458,38 @@ Danh sách đồ nhặt được
 </div>
 
 <script>
+let currentFoundStatus = 'all';
+
+function filterFoundStatus(status, btn) {
+    currentFoundStatus = status;
+    btn.parentElement.querySelectorAll('.btn').forEach(b => {
+        b.classList.remove('btn-success', 'active');
+        b.classList.add('btn-outline-success');
+    });
+    btn.classList.remove('btn-outline-success');
+    btn.classList.add('btn-success', 'active');
+    filterFoundCards();
+}
+
+function filterFoundCards() {
+    const keyword = (document.getElementById('foundQuickSearch')?.value || '').toLowerCase().trim();
+    let count = 0;
+    document.querySelectorAll('.found-card-col').forEach(col => {
+        const st = col.getAttribute('data-status');
+        const text = col.getAttribute('data-search') || '';
+        const matchStatus = (currentFoundStatus === 'all' || st === currentFoundStatus);
+        const matchText = (!keyword || text.includes(keyword));
+        if (matchStatus && matchText) {
+            col.style.display = '';
+            count++;
+        } else {
+            col.style.display = 'none';
+        }
+    });
+    const countEl = document.getElementById('visibleFoundCount');
+    if (countEl) countEl.innerText = count;
+}
+
 let selectedReturnId = null;
 
 function confirmReturn(id, name) {
@@ -398,27 +515,14 @@ function submitReturn() {
         .catch(err => alert("Lỗi kết nối máy chủ!"));
 }
 
-let scale = 1;
-let pointX = 0;
-let pointY = 0;
-let startX = 0;
-let startY = 0;
-let isDragging = false;
+let scale = 1, pointX = 0, pointY = 0, startX = 0, startY = 0, isDragging = false;
 
 function zoomImage(src) {
     const imgEl = document.getElementById('zoomModalImage');
-    
-    scale = 1;
-    pointX = 0;
-    pointY = 0;
-    isDragging = false;
+    scale = 1; pointX = 0; pointY = 0; isDragging = false;
     updateTransform(imgEl);
-    
     imgEl.src = src;
-
-    const modalEl = document.getElementById('imageZoomModal');
-    const bsModal = bootstrap.Modal.getOrCreateInstance(modalEl);
-    bsModal.show();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('imageZoomModal')).show();
 }
 
 function updateTransform(img) {
@@ -429,18 +533,12 @@ document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
     e.preventDefault();
     const imgEl = document.getElementById('zoomModalImage');
     const delta = e.deltaY < 0 ? 0.25 : -0.25;
-    
     scale = Math.min(Math.max(1, scale + delta), 6);
-    
-    if (scale === 1) {
-        pointX = 0;
-        pointY = 0;
-    }
+    if (scale === 1) { pointX = 0; pointY = 0; }
     updateTransform(imgEl);
 }, { passive: false });
 
 const imgEl = document.getElementById('zoomModalImage');
-
 imgEl.addEventListener('mousedown', function(e) {
     if (e.button !== 0) return;
     e.preventDefault();
@@ -459,10 +557,7 @@ window.addEventListener('mousemove', function(e) {
 });
 
 window.addEventListener('mouseup', function() {
-    if (isDragging) {
-        isDragging = false;
-        imgEl.style.cursor = 'grab';
-    }
+    if (isDragging) { isDragging = false; imgEl.style.cursor = 'grab'; }
 });
 </script>
 {% endblock %}
