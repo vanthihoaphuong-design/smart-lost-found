@@ -111,7 +111,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v17.json"
+CACHE_FILE = "feature_cache_v18.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -135,7 +135,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v17")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v18")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -221,7 +221,7 @@ def _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024):
 
 
 def _smart_trim_object(pil_img):
-    """Tự động cắt bỏ viền trắng/sáng bao quanh (R,G,B > 220) để chuẩn hóa tỷ lệ vật thể."""
+    """Tự động cắt bỏ viền trắng/sáng bao quanh (R,G,B > 218) để chuẩn hóa tỷ lệ vật thể."""
     w, h = pil_img.size
     if w < 30 or h < 30:
         return pil_img
@@ -232,7 +232,6 @@ def _smart_trim_object(pil_img):
             pil_img.getpixel((2, h - 3)),
             pil_img.getpixel((w - 3, h - 3)),
         ]
-        # Kiểm tra ít nhất 3/4 góc là nền trắng/sáng đồng nhất
         bright_corners = [c for c in corners if c[0] > 218 and c[1] > 218 and c[2] > 218]
         if len(bright_corners) >= 3:
             avg_r = sum(c[0] for c in bright_corners) // len(bright_corners)
@@ -272,7 +271,7 @@ def _phash_from_gray(gray):
 
 
 def _fast_pil_features(canvas):
-    """Trích xuất biểu đồ màu HSV gốc + dHash & aHash kép."""
+    """Trích xuất biểu đồ màu HSV toàn cục + lưới 3x3 + dHash & aHash kép."""
     phashes = []
     ahashes = []
     gray_base = canvas.convert("L")
@@ -299,6 +298,7 @@ def _fast_pil_features(canvas):
 
     small_rgb = canvas.resize((36, 36), Image.Resampling.BILINEAR)
     pixels = list(small_rgb.getdata())
+    global_bins = [0.0] * 36
     grid_hists = []
     for r in range(3):
         for c in range(3):
@@ -311,23 +311,29 @@ def _fast_pil_features(canvas):
                     h_bin = min(3, int(h * 4.0))
                     s_bin = min(2, int(s * 3.0))
                     v_bin = min(2, int(v * 3.0))
-                    bins[h_bin * 9 + s_bin * 3 + v_bin] += 1.0
+                    idx = h_bin * 9 + s_bin * 3 + v_bin
+                    bins[idx] += 1.0
+                    global_bins[idx] += 1.0
             inv_s = 1.0 / 144.0
             grid_hists.append([x * inv_s for x in bins])
 
+    inv_all = 1.0 / 1296.0
+    global_hist = [x * inv_all for x in global_bins]
+
     return {
-        "version": 17,
-        "type": "pil_v17_truecolor",
+        "version": 18,
+        "type": "pil_v18_truecolor",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
         "ahashes": ahashes,
+        "global_hist": global_hist,
         "grid_hists": grid_hists,
     }
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng chuẩn hóa khung hình 224x224 (chống lệch tỷ lệ chụp gần/xa)."""
+    """Trích xuất đặc trưng đa tầng (Histogram giao nhau HSV + pHash + ORB) chống lệch góc nghiêng."""
     if not check_real_image(img_path):
         return None
 
@@ -349,7 +355,6 @@ def calculate_image_features(img_path):
             trimmed = _smart_trim_object(image)
 
             if HAS_OPENCV:
-                # Chuẩn hóa trực tiếp vật thể đã cắt viền về khung 224x224 (không chèn viền xám giả)
                 normalized_img = trimmed.resize((224, 224), Image.Resampling.BILINEAR)
                 rgb = np.asarray(normalized_img, dtype=np.uint8)
 
@@ -370,25 +375,32 @@ def calculate_image_features(img_path):
                 ]
 
                 hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-                global_hist = cv2.calcHist([hsv], [0, 1, 2], None, [10, 4, 4], [0, 180, 0, 256, 0, 256])
+                # Histogram giao nhau (HISTCMP_INTERSECT) chuẩn hóa về [0..1], bền vững với góc nghiêng
+                global_hist = cv2.calcHist([hsv], [0, 1, 2], None, [6, 3, 3], [0, 180, 0, 256, 0, 256])
                 cv2.normalize(global_hist, global_hist, 1.0, 0.0, cv2.NORM_L1)
+
+                # Vùng trung tâm 60% ảnh (nơi tập trung vật thể chính)
+                center_hsv = hsv[45:179, 45:179]
+                center_hist = cv2.calcHist([center_hsv], [0, 1, 2], None, [6, 3, 3], [0, 180, 0, 256, 0, 256])
+                cv2.normalize(center_hist, center_hist, 1.0, 0.0, cv2.NORM_L1)
 
                 grid_hists = []
                 step = 224 // 3
                 for r in range(3):
                     for c in range(3):
                         cell = hsv[r * step:(r + 1) * step, c * step:(c + 1) * step]
-                        hist = cv2.calcHist([cell], [0, 1, 2], None, [8, 4, 4], [0, 180, 0, 256, 0, 256])
+                        hist = cv2.calcHist([cell], [0, 1, 2], None, [6, 3, 3], [0, 180, 0, 256, 0, 256])
                         cv2.normalize(hist, hist, 1.0, 0.0, cv2.NORM_L1)
                         grid_hists.append(hist)
 
                 features = {
-                    "version": 17,
-                    "type": "opencv_v17_truecolor",
+                    "version": 18,
+                    "type": "opencv_v18_truecolor",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
                     "global_hist": global_hist,
+                    "center_hist": center_hist,
                     "grid_hists": grid_hists,
                 }
             else:
@@ -417,7 +429,7 @@ def image_score(
     context_match_strong=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác thuần túy: Same item (sách, dây chuyền, bút) 38–47/50; khác mẫu (2 balo khác) < 22/50."""
+    """Chấm điểm thị giác chuẩn xác (0–50) bằng Histogram Intersection đa tầng + Cấu trúc."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -431,35 +443,38 @@ def image_score(
             return 0, 0.0
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
-            # 1. Tương quan màu lưới 3x3 (chú trọng họa tiết cục bộ phân biệt 2 balo đen khác nhau)
+            # 1. Giao nhau màu toàn cục (chống xoay/nghiêng mọi góc như con chuột, cây thước, bút)
+            gh1, gh2 = f1.get("global_hist"), f2.get("global_hist")
+            global_inter = float(cv2.compareHist(gh1, gh2, cv2.HISTCMP_INTERSECT)) if (gh1 is not None and gh2 is not None) else 0.0
+
+            # 2. Giao nhau màu vùng trung tâm vật thể (phân biệt 2 balo đen khác kết cấu/độ sáng)
+            ch1, ch2 = f1.get("center_hist"), f2.get("center_hist")
+            center_inter = float(cv2.compareHist(ch1, ch2, cv2.HISTCMP_INTERSECT)) if (ch1 is not None and ch2 is not None) else global_inter
+
+            # 3. Giao nhau màu lưới 3x3 xoay 4 hướng
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
-            best_corr = 0.0
+            best_grid_inter = 0.0
             if len(g1) == 9 and len(g2) == 9:
                 curr_g2 = g2
                 for _ in range(4):
-                    corrs = [max(0.0, float(cv2.compareHist(h1, h2, cv2.HISTCMP_CORREL))) for h1, h2 in zip(g1, curr_g2)]
-                    weighted_corr = (sum(corrs) + corrs[4] * 3.0) / 12.0
-                    if weighted_corr > best_corr:
-                        best_corr = weighted_corr
+                    inters = [float(cv2.compareHist(h1, h2, cv2.HISTCMP_INTERSECT)) for h1, h2 in zip(g1, curr_g2)]
+                    weighted = (sum(inters) + inters[4] * 3.0) / 12.0
+                    if weighted > best_grid_inter:
+                        best_grid_inter = weighted
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-            # 2. Tương quan màu toàn cục (chống lệch góc nghiêng như dây chuyền)
-            gh1, gh2 = f1.get("global_hist"), f2.get("global_hist")
-            global_corr = 0.0
-            if gh1 is not None and gh2 is not None:
-                global_corr = max(0.0, float(cv2.compareHist(gh1, gh2, cv2.HISTCMP_CORREL)))
+            # Kết hợp điểm phân bố màu (tối đa 28 điểm)
+            color_sim = 0.45 * global_inter + 0.30 * center_inter + 0.25 * best_grid_inter
+            color_points = max(0, min(28, int(round(((color_sim - 0.22) / 0.45) * 28))))
 
-            combined_corr = 0.70 * best_corr + 0.30 * global_corr
-            color_points = max(0, min(20, int(round(((combined_corr - 0.15) / 0.50) * 20))))
-
-            # 3. Hình dáng tổng thể (pHash)
+            # 4. Hình dáng tổng thể pHash (tối đa 12 điểm)
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
             min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
             phash_score = max(0.0, 1.0 - min_hamming / 63.0)
-            shape_points = max(0, min(15, int(round(((phash_score - 0.42) / 0.34) * 15))))
+            shape_points = max(0, min(12, int(round(((phash_score - 0.36) / 0.34) * 12))))
 
-            # 4. Điểm đặc trưng chi tiết (ORB) - phân biệt rõ cùng quyển sách vs 2 balo khác nhau
+            # 5. Điểm đặc trưng chi tiết ORB (tối đa 10 điểm)
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
             if d1 is not None and d2 is not None and len(d1) >= 2 and len(d2) >= 2:
@@ -471,12 +486,10 @@ def image_score(
                 reverse_pairs = {(m.trainIdx, m.queryIdx) for m in good_r}
                 mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
 
-                if mutual >= 8:
-                    orb_points = 15
-                elif mutual >= 5:
-                    orb_points = 12
+                if mutual >= 6:
+                    orb_points = 10
                 elif mutual >= 3:
-                    orb_points = 9
+                    orb_points = 8
                 elif mutual >= 1:
                     orb_points = 5
 
@@ -491,6 +504,10 @@ def image_score(
             return int(total), float(total / 50.0)
 
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
+            gh1 = f1.get("global_hist", [])
+            gh2 = f2.get("global_hist", [])
+            global_inter = sum(min(a, b) for a, b in zip(gh1, gh2)) if (gh1 and gh2) else 0.0
+
             g1, g2 = f1.get("grid_hists", []), f2.get("grid_hists", [])
             best_inter = 0.0
             if len(g1) == 9 and len(g2) == 9:
@@ -502,7 +519,8 @@ def image_score(
                         best_inter = weighted_inter
                     curr_g2 = _rotate_grid_90(curr_g2)
 
-            color_points = max(0, min(25, int(round(((best_inter - 0.25) / 0.40) * 25))))
+            combined_inter = 0.55 * global_inter + 0.45 * best_inter
+            color_points = max(0, min(30, int(round(((combined_inter - 0.22) / 0.42) * 30))))
 
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
@@ -513,7 +531,7 @@ def image_score(
             min_a = min((a1 ^ int(a2)).bit_count() for a2 in a2_list)
 
             combined_dist = (min_d + min_a) / 2.0
-            shape_points = max(0, min(22, int(round(((28.0 - combined_dist) / 23.0) * 22))))
+            shape_points = max(0, min(17, int(round(((32.0 - combined_dist) / 24.0) * 17))))
 
             total = min(47, color_points + shape_points)
 
