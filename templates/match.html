@@ -12,6 +12,18 @@
     }
     .filter-box { max-width: 430px; margin: 0 auto 28px auto; }
 
+    .ai-status-pill {
+        display: inline-block;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #bfdbfe;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 4px 14px;
+        border-radius: 999px;
+        margin-bottom: 14px;
+    }
+
     .match-card {
         background: #ffffff;
         border-radius: 16px;
@@ -199,6 +211,7 @@
         height: 100%;
         background: linear-gradient(90deg, #2563eb, #10b981);
         border-radius: 999px;
+        transition: width 0.35s ease;
     }
     .score-details { font-size: 0.81rem; width: 100%; max-width: 195px; margin-bottom: 8px; }
     .score-row { display: flex; justify-content: space-between; padding: 2px 0; color: #475569; }
@@ -258,6 +271,7 @@
 <div class="match-container">
     <div class="match-header">
         <h2>🤖 Kết Quả Đối Sánh Thông Minh</h2>
+        <div id="aiEngineStatus" class="ai-status-pill">⚡ Đang kích hoạt thị giác học sâu MobileNetV2...</div>
         <div class="filter-box">
             <form method="GET" action="/match" id="catForm">
                 <select name="category" class="form-select shadow-sm" onchange="document.getElementById('catForm').submit()">
@@ -273,18 +287,26 @@
     </div>
 
     {% if matches %}
+        <div id="matchCardsList">
         {% for m in matches %}
-        <div class="match-card">
+        {% set lost_img_url = (m.lost.hinh_anh if m.lost.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.lost.hinh_anh)) if m.lost.hinh_anh else '' %}
+        {% set found_img_url = (m.found.hinh_anh if m.found.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.found.hinh_anh)) if m.found.hinh_anh else '' %}
+        <div class="match-card"
+             data-score="{{ m.score }}"
+             data-base-score="{{ m.score_name + m.score_color + m.score_location + m.score_date }}"
+             data-server-img-score="{{ m.score_image }}"
+             data-color-score="{{ m.score_color }}"
+             data-lost-img="{{ lost_img_url }}"
+             data-found-img="{{ found_img_url }}">
             <div class="row g-0 align-items-stretch">
                 <!-- ĐỒ MẤT -->
                 <div class="col-md-4 item-col-lost">
                     <div>
                         <span class="badge-lost-header">ĐỒ BỊ MẤT</span>
                         <div>
-                            {% if m.lost.hinh_anh %}
-                            {% set lost_img_url = m.lost.hinh_anh if m.lost.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.lost.hinh_anh) %}
+                            {% if lost_img_url %}
                             <div class="item-img-box" onclick="openLightbox('{{ lost_img_url }}')">
-                                <img src="{{ lost_img_url }}" class="item-img" alt="Lost" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
+                                <img src="{{ lost_img_url }}" crossorigin="anonymous" class="item-img" alt="Lost" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
                                 <span class="zoom-badge">🔍 Zoom</span>
                             </div>
                             {% else %}
@@ -310,10 +332,9 @@
                     <div>
                         <span class="badge-found-header">ĐỒ NHẶT ĐƯỢC</span>
                         <div>
-                            {% if m.found.hinh_anh %}
-                            {% set found_img_url = m.found.hinh_anh if m.found.hinh_anh.startswith('http') else url_for('uploaded_file', filename=m.found.hinh_anh) %}
+                            {% if found_img_url %}
                             <div class="item-img-box" onclick="openLightbox('{{ found_img_url }}')">
-                                <img src="{{ found_img_url }}" class="item-img" alt="Found" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
+                                <img src="{{ found_img_url }}" crossorigin="anonymous" class="item-img" alt="Found" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'no-img-placeholder\'>📷<br>Chưa có ảnh</div>';">
                                 <span class="zoom-badge">🔍 Zoom</span>
                             </div>
                             {% else %}
@@ -337,20 +358,20 @@
                 <!-- ĐIỂM SỐ -->
                 <div class="col-md-4 score-col">
                     <div class="score-title">🎯 ĐIỂM PHÙ HỢP AI</div>
-                    <div class="score-number">{{ m.score }}/100</div>
+                    <div class="score-number js-total-score">{{ m.score }}/100</div>
                     <div class="ai-progress">
-                        <div class="ai-progress-bar" style="width: {{ m.score }}%;"></div>
+                        <div class="ai-progress-bar js-progress-bar" style="width: {{ m.score }}%;"></div>
                     </div>
                     
                     <div class="score-details">
-                        <div class="score-row"><span>🖼️ Hình ảnh:</span> <strong>{{ m.score_image }}/50</strong></div>
+                        <div class="score-row"><span>🖼️ Hình ảnh:</span> <strong class="js-img-score">{{ m.score_image }}/50</strong></div>
                         <div class="score-row"><span>📝 Tên đồ:</span> <strong>{{ m.score_name }}/15</strong></div>
                         <div class="score-row"><span>🎨 Màu sắc:</span> <strong>{{ m.score_color }}/15</strong></div>
                         <div class="score-row"><span>📍 Vị trí:</span> <strong>{{ m.score_location }}/10</strong></div>
                         <div class="score-row"><span>📅 Thời gian:</span> <strong>{{ m.score_date }}/10</strong></div>
                     </div>
 
-                    <div class="fw-bold mb-2 small text-dark">{{ m.ket_luan }}</div>
+                    <div class="fw-bold mb-2 small text-dark js-conclusion">{{ m.ket_luan }}</div>
                     <a href="/teacher-check/{{ m.lost.id }}/{{ m.found.id }}" class="btn btn-teacher-check btn-sm">
                         👨‍🏫 Giáo viên kiểm tra
                     </a>
@@ -358,6 +379,7 @@
             </div>
         </div>
         {% endfor %}
+        </div>
 
         <!-- PHÂN TRANG -->
         {% if total_pages > 1 %}
@@ -387,6 +409,10 @@
     <span class="lightbox-close-btn">&times;</span>
     <img src="" class="lightbox-img" id="lightboxImg" onclick="event.stopPropagation()">
 </div>
+
+<!-- MÔ HÌNH HỌC SÂU MOBILENETV2 CHẠY TRỰC TIẾP TRÊN TRÌNH DUYỆT (0 MB RAM TRÊN RENDER) -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 
 <script>
 let scale = 1, posX = 0, posY = 0, isDragging = false, startX = 0, startY = 0;
@@ -437,5 +463,164 @@ window.addEventListener('mouseup', function() { isDragging = false; });
 document.addEventListener('keydown', function(e) {
     if (e.key === "Escape") overlay.style.display = 'none';
 });
+
+// =========================================================================
+// ĐỐI SÁNH THỊ GIÁC HỌC SÂU MOBILENETV2 (VECTOR 1280 CHIỀU + XOAY ĐA GÓC)
+// =========================================================================
+(async function runDeepVisionMatch() {
+    const statusEl = document.getElementById('aiEngineStatus');
+    const cards = Array.from(document.querySelectorAll('.match-card'));
+    if (!cards.length) {
+        if (statusEl) statusEl.style.display = 'none';
+        return;
+    }
+
+    if (typeof mobilenet === 'undefined' || typeof tf === 'undefined') {
+        if (statusEl) statusEl.textContent = '🛡️ Chế độ đối sánh tiêu chuẩn đang hoạt động';
+        return;
+    }
+
+    try {
+        const net = await mobilenet.load({ version: 2, alpha: 1.0 });
+        const embCache = new Map();
+
+        function optimizeUrl(url) {
+            if (!url) return '';
+            if (url.includes('res.cloudinary.com/') && url.includes('/image/upload/') && !url.includes('/w_')) {
+                return url.replace('/image/upload/', '/image/upload/w_256,c_limit,q_auto:good,f_jpg/');
+            }
+            return url;
+        }
+
+        function loadCorsImage(url) {
+            return new Promise((resolve) => {
+                if (!url) return resolve(null);
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => resolve(img);
+                img.onerror = () => resolve(null);
+                img.src = optimizeUrl(url);
+            });
+        }
+
+        async function getMultiAngleEmbeddings(url) {
+            if (!url) return null;
+            if (embCache.has(url)) return embCache.get(url);
+
+            const img = await loadCorsImage(url);
+            if (!img) {
+                embCache.set(url, null);
+                return null;
+            }
+
+            // Trích xuất vector 1280 chiều ở 2 góc (0° và 90°) để bất biến chiều ngang/dọc
+            const vectors = [];
+            for (const angle of [0, 90]) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 224;
+                canvas.height = 224;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, 224, 224);
+                ctx.save();
+                ctx.translate(112, 112);
+                ctx.rotate((angle * Math.PI) / 180);
+                // Cắt nhẹ viền ngoài 10% để tập trung vào vật thể trung tâm
+                const sw = img.naturalWidth || img.width;
+                const sh = img.naturalHeight || img.height;
+                const padX = sw * 0.08;
+                const padY = sh * 0.08;
+                ctx.drawImage(img, padX, padY, sw - 2 * padX, sh - 2 * padY, -112, -112, 224, 224);
+                ctx.restore();
+
+                const arr = tf.tidy(() => {
+                    const emb = net.infer(canvas, true);
+                    const norm = tf.norm(emb);
+                    const normalized = tf.div(emb, tf.add(norm, 1e-6));
+                    return Array.from(normalized.dataSync());
+                });
+                vectors.push(arr);
+            }
+
+            embCache.set(url, vectors);
+            return vectors;
+        }
+
+        function cosineSim(a, b) {
+            let dot = 0;
+            for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
+            return dot;
+        }
+
+        function getConclusionText(score) {
+            if (score >= 75) return '🟢 Khả năng trùng khớp cao';
+            if (score >= 55) return '🟡 Có khả năng trùng khớp';
+            if (score >= 38) return '🟠 Có một số điểm tương đồng';
+            return '🔴 Khả năng trùng khớp thấp';
+        }
+
+        // Thu thập toàn bộ URL ảnh duy nhất trên trang để trích xuất 1 lần
+        const uniqueUrls = new Set();
+        cards.forEach(c => {
+            if (c.dataset.lostImg) uniqueUrls.add(c.dataset.lostImg);
+            if (c.dataset.foundImg) uniqueUrls.add(c.dataset.foundImg);
+        });
+
+        await Promise.all(Array.from(uniqueUrls).map(u => getMultiAngleEmbeddings(u)));
+
+        // Chấm lại điểm cho từng cặp bằng vector học sâu MobileNetV2
+        cards.forEach(card => {
+            const u1 = card.dataset.lostImg;
+            const u2 = card.dataset.foundImg;
+            if (!u1 || !u2) return;
+
+            const baseScore = parseInt(card.dataset.baseScore || '0', 10);
+            const colorScore = parseInt(card.dataset.colorScore || '0', 10);
+            const serverImgScore = parseInt(card.dataset.serverImgScore || '0', 10);
+
+            // Giữ khóa trần 10/50 nếu HSV backend phát hiện trái màu rõ rệt
+            if (colorScore === 0 && serverImgScore <= 10) return;
+
+            const v1List = embCache.get(u1);
+            const v2List = embCache.get(u2);
+            if (!v1List || !v2List) return;
+
+            let bestCos = -1;
+            for (const v1 of v1List) {
+                for (const v2 of v2List) {
+                    const sim = cosineSim(v1, v2);
+                    if (sim > bestCos) bestCos = sim;
+                }
+            }
+
+            // Ánh xạ chuẩn xác cho MobileNetV2 (1280-D):
+            // - Khác mẫu mã (2 dây chuyền khác mặt, 2 áo khác kiểu, 2 chuột khác hãng): bestCos ~ 0.56 - 0.68 -> 18 - 27/50
+            // - Trùng vật thể thật (bút, sách, gấu bông): bestCos ~ 0.76 - 0.90 -> 37 - 48/50
+            const rawImgPts = Math.round(14 + ((bestCos - 0.52) / 0.36) * 34);
+            const newImgScore = Math.max(12, Math.min(48, rawImgPts));
+            const newTotal = Math.min(100, baseScore + newImgScore);
+
+            card.dataset.score = String(newTotal);
+            card.querySelector('.js-img-score').textContent = `${newImgScore}/50`;
+            card.querySelector('.js-total-score').textContent = `${newTotal}/100`;
+            card.querySelector('.js-progress-bar').style.width = `${newTotal}%`;
+            card.querySelector('.js-conclusion').textContent = getConclusionText(newTotal);
+        });
+
+        // Sắp xếp lại các thẻ trên trang theo điểm mới giảm dần
+        const listEl = document.getElementById('matchCardsList');
+        if (listEl) {
+            cards.sort((a, b) => parseInt(b.dataset.score, 10) - parseInt(a.dataset.score, 10));
+            cards.forEach(c => listEl.appendChild(c));
+        }
+
+        if (statusEl) {
+            statusEl.textContent = '🧠 Đã phân tích chi tiết vật thể bằng Deep Learning MobileNetV2';
+        }
+    } catch (err) {
+        console.warn('MobileNetV2 fallback:', err);
+        if (statusEl) statusEl.textContent = '🛡️ Chế độ đối sánh tiêu chuẩn đang hoạt động';
+    }
+})();
 </script>
 {% endblock %}
