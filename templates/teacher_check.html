@@ -140,22 +140,12 @@ function openLightbox(src) {
     updateImgStyle();
     overlay.style.display = 'flex';
 }
-
-function closeLightbox(e) {
-    overlay.style.display = 'none';
-}
-
-function updateImgStyle() {
-    lbImg.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
-}
+function closeLightbox(e) { overlay.style.display = 'none'; }
+function updateImgStyle() { lbImg.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`; }
 
 overlay.addEventListener('wheel', function(e) {
     e.preventDefault();
-    if (e.deltaY < 0) {
-        scale = Math.min(scale * 1.15, 6);
-    } else {
-        scale = Math.max(scale / 1.15, 0.8);
-    }
+    scale = e.deltaY < 0 ? Math.min(scale * 1.15, 6) : Math.max(scale / 1.15, 0.8);
     updateImgStyle();
 }, { passive: false });
 
@@ -165,20 +155,18 @@ lbImg.addEventListener('mousedown', function(e) {
     startX = e.clientX - posX;
     startY = e.clientY - posY;
 });
-
 window.addEventListener('mousemove', function(e) {
     if (!isDragging) return;
     posX = e.clientX - startX;
     posY = e.clientY - startY;
     updateImgStyle();
 });
-
 window.addEventListener('mouseup', function() { isDragging = false; });
+document.addEventListener('keydown', function(e) { if (e.key === "Escape") overlay.style.display = 'none'; });
 
-document.addEventListener('keydown', function(e) {
-    if (e.key === "Escape") overlay.style.display = 'none';
-});
-
+// =========================================================================
+// ĐỒNG BỘ ĐIỂM MOBILENETV2 ALPHA 1.0 (1280-D) + CÂN BẰNG SÁNG + LỌC NỀN TRẮNG
+// =========================================================================
 (async function syncTeacherCheckDeepVision() {
     const card = document.getElementById('teacherCheckCard');
     if (!card || typeof mobilenet === 'undefined' || typeof tf === 'undefined') return;
@@ -193,7 +181,7 @@ document.addEventListener('keydown', function(e) {
     if (colorScore === 0 && serverImgScore <= 10) return;
 
     try {
-        const net = await mobilenet.load({ version: 2, alpha: 0.50 });
+        const net = await mobilenet.load({ version: 2, alpha: 1.0 });
 
         function optimizeUrl(url) {
             if (url.includes('res.cloudinary.com/') && url.includes('/image/upload/') && !url.includes('/w_')) {
@@ -206,14 +194,14 @@ document.addEventListener('keydown', function(e) {
             return new Promise((resolve) => {
                 const img = new Image();
                 img.crossOrigin = 'anonymous';
-                const timer = setTimeout(() => resolve(null), 6000);
+                const timer = setTimeout(() => resolve(null), 7000);
                 img.onload = () => { clearTimeout(timer); resolve(img); };
                 img.onerror = () => { clearTimeout(timer); resolve(null); };
                 img.src = optimizeUrl(url);
             });
         }
 
-        function detectObjectBox(img) {
+        function analyzeObjectAndBox(img) {
             const probeSize = 64;
             const pCanvas = document.createElement('canvas');
             pCanvas.width = probeSize;
@@ -227,40 +215,48 @@ document.addEventListener('keydown', function(e) {
             corners.forEach(idx => { bgR += data[idx]; bgG += data[idx + 1]; bgB += data[idx + 2]; });
             bgR /= 4; bgG /= 4; bgB /= 4;
 
-            let minX = probeSize, minY = probeSize, maxX = 0, maxY = 0, fgCount = 0;
+            let minX = probeSize, minY = probeSize, maxX = 0, maxY = 0, fgCount = 0, edgeEnergy = 0;
             for (let y = 2; y < probeSize - 2; y++) {
                 for (let x = 2; x < probeSize - 2; x++) {
                     const idx = (y * probeSize + x) * 4;
                     const dr = data[idx] - bgR, dg = data[idx + 1] - bgG, db = data[idx + 2] - bgB;
-                    if (dr * dr + dg * dg + db * db > 1400) {
+                    if (dr * dr + dg * dg + db * db > 1200) {
                         fgCount++;
                         if (x < minX) minX = x;
                         if (x > maxX) maxX = x;
                         if (y < minY) minY = y;
                         if (y > maxY) maxY = y;
+
+                        const rightIdx = idx + 4;
+                        const downIdx = idx + probeSize * 4;
+                        edgeEnergy += Math.abs(data[idx] - data[rightIdx]) + Math.abs(data[idx] - data[downIdx]);
                     }
                 }
             }
 
+            const fgRatio = fgCount / (probeSize * probeSize);
+            const avgDetail = edgeEnergy / Math.max(1, fgCount);
             const sw = img.naturalWidth || img.width;
             const sh = img.naturalHeight || img.height;
-            if (fgCount < 20 || maxX <= minX + 3 || maxY <= minY + 3) {
-                return { sx: sw * 0.12, sy: sh * 0.12, sWidth: sw * 0.76, sHeight: sh * 0.76 };
+
+            if (fgCount < 15 || maxX <= minX + 2 || maxY <= minY + 2) {
+                return { sx: sw * 0.12, sy: sh * 0.12, sWidth: sw * 0.76, sHeight: sh * 0.76, fgRatio, avgDetail };
             }
 
-            const padX = (maxX - minX) * 0.08, padY = (maxY - minY) * 0.08;
+            const padX = (maxX - minX) * 0.06, padY = (maxY - minY) * 0.06;
             const x0 = Math.max(0, ((minX - padX) / probeSize) * sw);
             const y0 = Math.max(0, ((minY - padY) / probeSize) * sh);
             const x1 = Math.min(sw, ((maxX + padX) / probeSize) * sw);
             const y1 = Math.min(sh, ((maxY + padY) / probeSize) * sh);
-            return { sx: x0, sy: y0, sWidth: Math.max(10, x1 - x0), sHeight: Math.max(10, y1 - y0) };
+            return { sx: x0, sy: y0, sWidth: Math.max(10, x1 - x0), sHeight: Math.max(10, y1 - y0), fgRatio, avgDetail };
         }
 
-        async function getEmbeddings(url) {
+        async function getRichFeatures(url) {
             const img = await loadCorsImage(url);
             if (!img) return null;
-            const box = detectObjectBox(img);
+            const info = analyzeObjectAndBox(img);
             const vectors = [];
+
             for (const angle of [0, 90]) {
                 const canvas = document.createElement('canvas');
                 canvas.width = 224;
@@ -268,10 +264,11 @@ document.addEventListener('keydown', function(e) {
                 const ctx = canvas.getContext('2d');
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, 224, 224);
+                ctx.filter = 'contrast(1.12) saturate(1.08)';
                 ctx.save();
                 ctx.translate(112, 112);
                 ctx.rotate((angle * Math.PI) / 180);
-                ctx.drawImage(img, box.sx, box.sy, box.sWidth, box.sHeight, -112, -112, 224, 224);
+                ctx.drawImage(img, info.sx, info.sy, info.sWidth, info.sHeight, -112, -112, 224, 224);
                 ctx.restore();
 
                 const arr = tf.tidy(() => {
@@ -281,22 +278,28 @@ document.addEventListener('keydown', function(e) {
                 });
                 vectors.push(arr);
             }
-            return vectors;
+            return { vectors, fgRatio: info.fgRatio, avgDetail: info.avgDetail };
         }
 
-        const [v1List, v2List] = await Promise.all([getEmbeddings(u1), getEmbeddings(u2)]);
-        if (!v1List || !v2List) return;
+        const [f1, f2] = await Promise.all([getRichFeatures(u1), getRichFeatures(u2)]);
+        if (!f1 || !f2) return;
 
         let bestCos = -1;
-        for (const v1 of v1List) {
-            for (const v2 of v2List) {
+        for (const v1 of f1.vectors) {
+            for (const v2 of f2.vectors) {
                 let dot = 0;
                 for (let i = 0; i < v1.length; i++) dot += v1[i] * v2[i];
                 if (dot > bestCos) bestCos = dot;
             }
         }
 
-        const rawImgPts = Math.round(12 + ((bestCos - 0.60) / 0.28) * 36);
+        let penalty = 0;
+        if (f1.fgRatio < 0.22 && f2.fgRatio < 0.22) {
+            const detailDiff = Math.abs(f1.avgDetail - f2.avgDetail) / Math.max(10, Math.max(f1.avgDetail, f2.avgDetail));
+            penalty = Math.round(8 + detailDiff * 14);
+        }
+
+        const rawImgPts = Math.round(14 + ((bestCos - 0.56) / 0.30) * 34) - penalty;
         const newImgScore = Math.max(12, Math.min(48, rawImgPts));
         const newTotal = Math.min(100, baseScore + newImgScore);
 
