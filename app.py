@@ -27,13 +27,26 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 VN_TZ = timezone(timedelta(hours=7))
 
+HAS_NUMPY = False
+try:
+    import numpy as np
+    HAS_NUMPY = True
+except Exception as e:
+    print(f"Cảnh báo NumPy không khả dụng: {e}")
+
+HAS_ONNX = False
+try:
+    import onnxruntime as ort
+    HAS_ONNX = True
+except Exception as e:
+    print(f"Cảnh báo ONNXRuntime không khả dụng, sử dụng bộ đối sánh không gian 4x4: {e}")
+
 HAS_OPENCV = False
 try:
     import cv2
-    import numpy as np
     HAS_OPENCV = True
 except Exception as e:
-    print(f"Cảnh báo OpenCV không khả dụng, sử dụng bộ xử lý thị giác cấu trúc PIL: {e}")
+    print(f"Cảnh báo OpenCV không khả dụng: {e}")
 
 cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
 api_key = os.environ.get("CLOUDINARY_API_KEY", "")
@@ -71,7 +84,10 @@ def format_vn_date(date_val):
 
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
+MODEL_DIR = os.path.join("static", "models")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(MODEL_DIR, exist_ok=True)
+
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 12_000_000
@@ -112,7 +128,66 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v34.json"
+# ==============================================================================
+# KHỞI TẠO MÔ HÌNH THỊ GIÁC HỌC SÂU NHẸ (MobileNetV3-Small ONNX ~10MB)
+# ==============================================================================
+ONNX_MODEL_PATH = os.path.join(MODEL_DIR, "mobilenetv3_small_100.onnx")
+ONNX_MODEL_URLS = [
+    "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-12.onnx",
+    "https://huggingface.co/onnx-community/mobilenetv3_small_100.lamb_in1k/resolve/main/onnx/model.onnx",
+]
+ONNX_SESSION = None
+ONNX_INPUT_NAME = None
+ONNX_LOCK = threading.Lock()
+
+
+def _get_onnx_session():
+    """Tải 1 lần và khởi tạo InferenceSession nhẹ RAM cho MobileNet ONNX."""
+    global ONNX_SESSION, ONNX_INPUT_NAME
+    if not (HAS_ONNX and HAS_NUMPY):
+        return None, None
+    if ONNX_SESSION is not None:
+        return ONNX_SESSION, ONNX_INPUT_NAME
+
+    with ONNX_LOCK:
+        if ONNX_SESSION is not None:
+            return ONNX_SESSION, ONNX_INPUT_NAME
+
+        if not os.path.isfile(ONNX_MODEL_PATH) or os.path.getsize(ONNX_MODEL_PATH) < 500_000:
+            for url in ONNX_MODEL_URLS:
+                try:
+                    resp = requests.get(url, timeout=(5, 25), verify=False)
+                    if resp.status_code == 200 and len(resp.content) > 500_000:
+                        with open(ONNX_MODEL_PATH, "wb") as f:
+                            f.write(resp.content)
+                        break
+                except Exception as dl_err:
+                    print(f"Thử tải ONNX model từ {url} thất bại: {dl_err}")
+
+        if os.path.isfile(ONNX_MODEL_PATH) and os.path.getsize(ONNX_MODEL_PATH) > 500_000:
+            try:
+                opts = ort.SessionOptions()
+                opts.intra_op_num_threads = 1
+                opts.inter_op_num_threads = 1
+                opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
+                sess = ort.InferenceSession(
+                    ONNX_MODEL_PATH,
+                    sess_options=opts,
+                    providers=["CPUExecutionProvider"]
+                )
+                ONNX_INPUT_NAME = sess.get_inputs()[0].name
+                ONNX_SESSION = sess
+                print("Đã nạp thành công mô hình thị giác học sâu ONNX!")
+            except Exception as ort_err:
+                print(f"Lỗi khởi tạo ONNX session: {ort_err}")
+
+    return ONNX_SESSION, ONNX_INPUT_NAME
+
+
+# Nạp sẵn mô hình ở luồng nền ngay khi khởi động server
+threading.Thread(target=_get_onnx_session, daemon=True).start()
+
+CACHE_FILE = "feature_cache_v35.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 600
 
@@ -136,7 +211,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v34")
+            if isinstance(v, dict) and v.get("version") == 35
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -214,12 +289,12 @@ def save_feature_cache(img_path, features):
 
 
 def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
-    """Tải ảnh thu nhỏ siêu nhanh (w_160) từ Cloudinary qua Session Keep-Alive."""
+    """Tải ảnh thu nhỏ nét (w_224) từ Cloudinary qua Session Keep-Alive."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_160,c_limit,q_auto:low,f_jpg/", 1)
+        value = value.replace("/image/upload/", "/image/upload/w_224,c_limit,q_auto:good,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
-        response = HTTP_SESSION.get(value, timeout=(2.0, 4.0), verify=False)
+        response = HTTP_SESSION.get(value, timeout=(2.5, 5.0), verify=False)
         response.raise_for_status()
         if len(response.content) > max_bytes:
             return None
@@ -235,7 +310,7 @@ def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
 
 
 def _extract_foreground_pil(pil_img):
-    """Tách nền nhanh trên lưới 48x48, bắt trọn cả vật thể mảnh (bút bi, bút đỏ) trên nền sáng."""
+    """Tách nền tự động và cắt gọn khung bao quanh vật thể chính."""
     size = 48
     small = pil_img.resize((size, size), Image.Resampling.BILINEAR)
     px = list(small.getdata())
@@ -292,16 +367,16 @@ def _extract_foreground_pil(pil_img):
 
     if fg_count < 12 or max_x <= min_x + 1 or max_y <= min_y + 1:
         w, h = pil_img.size
-        cropped = pil_img.crop((int(w * 0.22), int(h * 0.22), int(w * 0.78), int(h * 0.78)))
+        cropped = pil_img.crop((int(w * 0.18), int(h * 0.18), int(w * 0.82), int(h * 0.82)))
         fallback_mask = [
-            (10 <= (i % size) < 38 and 10 <= (i // size) < 38)
+            (9 <= (i % size) < 39 and 9 <= (i // size) < 39)
             for i in range(size * size)
         ]
         return cropped, small, fallback_mask
 
     w, h = pil_img.size
-    pad_x = max(1, int((max_x - min_x) * 0.04))
-    pad_y = max(1, int((max_y - min_y) * 0.04))
+    pad_x = max(1, int((max_x - min_x) * 0.06))
+    pad_y = max(1, int((max_y - min_y) * 0.06))
     x0 = max(0, int(((min_x - pad_x) / size) * w))
     y0 = max(0, int(((min_y - pad_y) / size) * h))
     x1 = min(w, int(((max_x + pad_x) / size) * w))
@@ -312,7 +387,7 @@ def _extract_foreground_pil(pil_img):
 
 
 def _detect_visual_colors_masked(small_48, fg_mask):
-    """Chỉ giữ lại màu chủ đạo (chiếm >= 18% điểm ảnh vật thể), loại bỏ logo/vết nhiễu góc ảnh."""
+    """Nhận diện màu sắc chủ đạo của vật thể (loại bỏ vết nhiễu/logo góc < 18% diện tích)."""
     try:
         px = list(small_48.getdata())
         counts = {}
@@ -357,240 +432,79 @@ def _detect_visual_colors_masked(small_48, fg_mask):
         return set()
 
 
-def _compute_hu_moments_pil(gray_32):
-    """Tính 7 Mô-men bất biến Hu nhanh trên lưới 32x32."""
-    px = list(gray_32.getdata())
-    m00 = 0.0
-    m10 = 0.0
-    m01 = 0.0
-    for y in range(32):
-        off = y * 32
-        for x in range(32):
-            val = float(px[off + x])
-            m00 += val
-            m10 += x * val
-            m01 += y * val
-    if m00 <= 1e-6:
-        return [0.0] * 7
+def _extract_onnx_embeddings(fg_crop):
+    """
+    Trích xuất vector đặc trưng ngữ nghĩa chuẩn hóa L2 từ MobileNet ONNX
+    trên 2 góc (0° và 90°) để bất biến hoàn toàn với chiều chụp ngang/dọc.
+    """
+    sess, input_name = _get_onnx_session()
+    if sess is None or input_name is None or not HAS_NUMPY:
+        return None
 
-    cx = m10 / m00
-    cy = m01 / m00
+    try:
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-    mu20 = mu02 = mu11 = mu30 = mu03 = mu21 = mu12 = 0.0
-    for y in range(32):
-        dy = y - cy
-        dy2 = dy * dy
-        off = y * 32
-        for x in range(32):
-            val = float(px[off + x])
-            if val == 0.0:
-                continue
-            dx = x - cx
-            dx2 = dx * dx
-            mu20 += dx2 * val
-            mu02 += dy2 * val
-            mu11 += dx * dy * val
-            mu30 += dx2 * dx * val
-            mu03 += dy2 * dy * val
-            mu21 += dx2 * dy * val
-            mu12 += dx * dy2 * val
+        embeddings = []
+        base_224 = ImageOps.autocontrast(fg_crop, cutoff=1).resize((224, 224), Image.Resampling.BILINEAR)
+        for angle in (0, 90):
+            img_rot = base_224.rotate(angle) if angle else base_224
+            arr = np.asarray(img_rot, dtype=np.float32) / 255.0
+            arr = (arr - mean) / std
+            tensor = np.transpose(arr, (2, 0, 1))[None, ...]
 
-    inv_m00_2 = 1.0 / (m00 * m00)
-    inv_m00_25 = 1.0 / (m00 ** 2.5)
+            out = sess.run(None, {input_name: tensor})[0].flatten().astype(np.float32)
+            # Chuẩn hóa L2 và giảm bớt nhiễu logit cực nhỏ
+            out = np.maximum(out, -2.0)
+            norm = float(np.linalg.norm(out))
+            if norm > 1e-6:
+                out = out / norm
+            embeddings.append(out.tolist())
 
-    n20 = mu20 * inv_m00_2
-    n02 = mu02 * inv_m00_2
-    n11 = mu11 * inv_m00_2
-    n30 = mu30 * inv_m00_25
-    n03 = mu03 * inv_m00_25
-    n21 = mu21 * inv_m00_25
-    n12 = mu12 * inv_m00_25
-
-    h1 = n20 + n02
-    h2 = (n20 - n02) ** 2 + 4.0 * (n11 ** 2)
-    h3 = (n30 - 3.0 * n12) ** 2 + (3.0 * n21 - n03) ** 2
-    h4 = (n30 + n12) ** 2 + (n21 + n03) ** 2
-    h5 = (
-        (n30 - 3.0 * n12) * (n30 + n12) * ((n30 + n12) ** 2 - 3.0 * (n21 + n03) ** 2) +
-        (3.0 * n21 - n03) * (n21 + n03) * (3.0 * (n30 + n12) ** 2 - (n21 + n03) ** 2)
-    )
-    h6 = (n20 - n02) * ((n30 + n12) ** 2 - (n21 + n03) ** 2) + 4.0 * n11 * (n30 + n12) * (n21 + n03)
-    h7 = (
-        (3.0 * n21 - n03) * (n30 + n12) * ((n30 + n12) ** 2 - 3.0 * (n21 + n03) ** 2) -
-        (n30 - 3.0 * n12) * (n21 + n03) * (3.0 * (n30 + n12) ** 2 - (n21 + n03) ** 2)
-    )
-
-    raw_hu = [h1, h2, h3, h4, h5, h6, h7]
-    log_hu = []
-    for h in raw_hu:
-        if abs(h) > 1e-30:
-            log_hu.append(-math.copysign(1.0, h) * math.log10(abs(h)))
-        else:
-            log_hu.append(0.0)
-    return log_hu
+        return embeddings
+    except Exception as emb_err:
+        print(f"Lỗi suy luận ONNX embedding: {emb_err}")
+        return None
 
 
-def _phash_from_gray(gray):
-    """Perceptual hash 64-bit dựa trên DCT."""
-    small = cv2.resize(gray, (32, 32), interpolation=cv2.INTER_AREA).astype("float32")
-    dct = cv2.dct(small)
-    low = dct[:8, :8].flatten()
-    values = low[1:]
-    median = float(np.median(values))
-    bits = values > median
-    result = 0
-    for bit in bits:
-        result = (result << 1) | int(bit)
-    return result
+def _compute_spatial_grid_4x4(fg_crop):
+    """Dự phòng cấu trúc không gian lưới 4x4 khi ONNX chưa sẵn sàng."""
+    img_64 = ImageOps.autocontrast(fg_crop, cutoff=2).resize((64, 64), Image.Resampling.BILINEAR)
+    px = list(img_64.getdata())
+    gray_px = list(img_64.convert("L").getdata())
 
-
-def _compute_masked_color_stats(small_48, fg_mask):
-    """Tính histogram màu sắc và độ sáng/bão hòa trên đúng các điểm ảnh vật thể (fg_mask)."""
-    eq_48 = ImageOps.autocontrast(small_48, cutoff=2)
-    px_eq = list(eq_48.getdata())
-    px_raw = list(small_48.getdata())
-
-    fg_indices = [i for i, m in enumerate(fg_mask) if m]
-    if not fg_indices:
-        fg_indices = list(range(48 * 48))
-
-    bins = [0.0] * 28
-    count = 0.0
-    s_sum = 0.0
-    v_sum = 0.0
-    sv_count = 0
-
-    for idx_px in fg_indices:
-        rv, gv, bv = px_eq[idx_px]
-        h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
-
-        rr, rg, rb = px_raw[idx_px]
-        _, raw_s, raw_v = colorsys.rgb_to_hsv(rr / 255.0, rg / 255.0, rb / 255.0)
-        if not (raw_v > 0.90 and raw_s < 0.16):
-            s_sum += raw_s
-            v_sum += raw_v
-            sv_count += 1
-
-        if v > 0.92 and s < 0.16:
-            continue
-
-        if s < 0.16:
-            idx = min(3, int(v * 4.0))
-            bins[idx] += 1.0
-        else:
-            h_pos = (h * 12.0) % 12.0
-            h0 = int(h_pos)
-            frac = h_pos - h0
-            h1 = (h0 + 1) % 12
-            bins[4 + h0] += (1.0 - frac * 0.45)
-            bins[4 + h1] += (frac * 0.45)
-
-        rgb_sum = float(rv + gv + bv)
-        if rgb_sum > 30.0:
-            rn = rv / rgb_sum
-            gn = gv / rgb_sum
-            r_bin = min(3, int(rn * 4.0))
-            g_bin = min(2, int(gn * 3.0))
-            bins[16 + r_bin * 3 + g_bin] += 0.8
-
-        count += 1.0
-
-    if count <= 0.0:
-        hist = [1.0 / 28.0] * 28
-    else:
-        inv = 1.0 / count
-        hist = [x * inv for x in bins]
-
-    fg_mean_s = (s_sum / sv_count) if sv_count > 0 else 0.25
-    fg_mean_v = (v_sum / sv_count) if sv_count > 0 else 0.45
-    return hist, fg_mean_s, fg_mean_v
-
-
-def _fast_pil_features(raw_img, fg_crop, small_48, fg_mask, visual_colors):
-    """Trích xuất đặc trưng siêu nhanh v34 trên PIL thuần."""
-    fg_only_hist, fg_mean_s, fg_mean_v = _compute_masked_color_stats(small_48, fg_mask)
-
-    fg_canvas = fg_crop.resize((64, 64), Image.Resampling.BILINEAR)
-    gray_fg = ImageOps.equalize(fg_canvas.convert("L"))
-
-    phashes = []
-    ahashes = []
-    for angle in (0, 90, 180, 270):
-        rot_g = gray_fg.rotate(angle) if angle else gray_fg
-
-        tiny_d = rot_g.resize((9, 8), Image.Resampling.BILINEAR)
-        px_d = list(tiny_d.getdata())
-        d_val = 0
-        for row in range(8):
-            base = row * 9
-            for col in range(8):
-                d_val = (d_val << 1) | (1 if px_d[base + col] > px_d[base + col + 1] else 0)
-        phashes.append(d_val)
-
-        tiny_a = rot_g.resize((8, 8), Image.Resampling.BILINEAR)
-        px_a = list(tiny_a.getdata())
-        avg_lum = sum(px_a) / 64.0
-        a_val = 0
-        for val in px_a:
-            a_val = (a_val << 1) | (1 if val >= avg_lum else 0)
-        ahashes.append(a_val)
-
-    raw_gray_32 = fg_canvas.convert("L").resize((32, 32), Image.Resampling.BILINEAR)
-    rg_px = list(raw_gray_32.getdata())
-    core_grad_sum = 0.0
-    core_grad_n = 0
-    for r in range(7, 25):
-        off = r * 32
-        for c in range(7, 25):
-            gx = abs(float(rg_px[off + c + 1] - rg_px[off + c - 1]))
-            gy = abs(float(rg_px[off + 32 + c] - rg_px[off - 32 + c]))
-            core_grad_sum += math.hypot(gx, gy)
-            core_grad_n += 1
-    core_surface_detail = (core_grad_sum / max(1, core_grad_n)) / 100.0
-
-    g_32 = gray_fg.resize((32, 32), Image.Resampling.BILINEAR)
-    g_px = list(g_32.getdata())
-    edge_bins = [0.0] * 12
-    edge_sum = 0.0
-
-    for r in range(1, 31):
-        row_off = r * 32
-        for c in range(1, 31):
-            gx = float(g_px[row_off + c + 1] - g_px[row_off + c - 1])
-            gy = float(g_px[row_off + 32 + c] - g_px[row_off - 32 + c])
-            mag = math.hypot(gx, gy)
-            if mag > 12.0:
-                ang = (math.degrees(math.atan2(gy, gx)) + 180.0) % 180.0
-                ebin = min(11, int(ang / 15.0))
-                edge_bins[ebin] += mag
-                edge_sum += mag
-
-    edge_hist = [x / edge_sum for x in edge_bins] if edge_sum > 0 else [1.0 / 12.0] * 12
-    hu_moments = _compute_hu_moments_pil(g_32)
-
-    cw, ch = fg_crop.size
-    aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
-
-    return {
-        "version": 34,
-        "type": "pil_v34_fast",
-        "dhash": phashes[0],
-        "phashes": phashes,
-        "ahash": ahashes[0],
-        "ahashes": ahashes,
-        "fg_only_hist": fg_only_hist,
-        "fg_mean_s": fg_mean_s,
-        "fg_mean_v": fg_mean_v,
-        "core_surface_detail": core_surface_detail,
-        "edge_hist": edge_hist,
-        "hu_moments": hu_moments,
-        "aspect_ratio": aspect_ratio,
-        "visual_colors": list(visual_colors),
-    }
+    grid_vec = []
+    for gy in range(4):
+        for gx in range(4):
+            r_sum = g_sum = b_sum = lum_sum = grad_sum = 0.0
+            cnt = 0
+            for y in range(gy * 16, (gy + 1) * 16):
+                row_off = y * 64
+                for x in range(gx * 16, (gx + 1) * 16):
+                    r, g, b = px[row_off + x]
+                    r_sum += r
+                    g_sum += g
+                    b_sum += b
+                    lum_sum += gray_px[row_off + x]
+                    if 0 < x < 63 and 0 < y < 63:
+                        dx = abs(gray_px[row_off + x + 1] - gray_px[row_off + x - 1])
+                        dy = abs(gray_px[row_off + 64 + x] - gray_px[row_off - 64 + x])
+                        grad_sum += (dx + dy) * 0.5
+                    cnt += 1
+            mean_lum = lum_sum / max(1, cnt)
+            mean_grad = grad_sum / max(1, cnt)
+            rgb_tot = max(1.0, r_sum + g_sum + b_sum)
+            grid_vec.extend([
+                r_sum / rgb_tot,
+                g_sum / rgb_tot,
+                mean_lum / 255.0,
+                mean_grad / 128.0
+            ])
+    return grid_vec
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng v34: Tốc độ siêu nhanh + lọc nhiễu logo góc ảnh."""
+    """Trích xuất đặc trưng ngữ nghĩa ONNX + lưới không gian 4x4 + màu chủ đạo."""
     if not check_real_image(img_path):
         return None
 
@@ -611,82 +525,19 @@ def calculate_image_features(img_path):
             image = ImageOps.exif_transpose(source).convert("RGB")
             fg_crop, small_48, fg_mask = _extract_foreground_pil(image)
             visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
+            onnx_embs = _extract_onnx_embeddings(fg_crop)
+            spatial_4x4 = _compute_spatial_grid_4x4(fg_crop)
 
-            if HAS_OPENCV:
-                fg_only_hist, fg_mean_s, fg_mean_v = _compute_masked_color_stats(small_48, fg_mask)
+            cw, ch = fg_crop.size
+            aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
-                normalized_img = fg_crop.resize((128, 128), Image.Resampling.BILINEAR)
-                rgb = np.asarray(normalized_img, dtype=np.uint8)
-
-                image_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-                gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-
-                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-                gray_eq = clahe.apply(gray)
-
-                orb = cv2.ORB_create(nfeatures=250, scaleFactor=1.2, nlevels=6, fastThreshold=8)
-                _, descriptors = orb.detectAndCompute(gray_eq, None)
-
-                phashes = [
-                    _phash_from_gray(gray_eq),
-                    _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_CLOCKWISE)),
-                    _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_180)),
-                    _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_COUNTERCLOCKWISE)),
-                ]
-
-                mask_u8 = np.array([255 if m else 0 for m in fg_mask], dtype=np.uint8).reshape((48, 48))
-                bgr_48 = cv2.cvtColor(np.asarray(small_48, dtype=np.uint8), cv2.COLOR_RGB2BGR)
-                hsv_48 = cv2.cvtColor(bgr_48, cv2.COLOR_BGR2HSV)
-                non_glare = cv2.inRange(hsv_48, (0, 0, 15), (180, 255, 232))
-                obj_mask = cv2.bitwise_and(mask_u8, non_glare)
-                if cv2.countNonZero(obj_mask) < 10:
-                    obj_mask = mask_u8
-
-                global_h = cv2.calcHist([hsv_48], [0], obj_mask, [16], [0, 180])
-                cv2.normalize(global_h, global_h, 1.0, 0.0, cv2.NORM_L1)
-
-                lab_48 = cv2.cvtColor(bgr_48, cv2.COLOR_BGR2LAB)
-                ab_hist = cv2.calcHist([lab_48], [1, 2], obj_mask, [8, 8], [0, 256, 0, 256])
-                cv2.normalize(ab_hist, ab_hist, 1.0, 0.0, cv2.NORM_L1)
-
-                core_gray = gray[28:100, 28:100]
-                cgx = cv2.Sobel(core_gray, cv2.CV_32F, 1, 0, ksize=3)
-                cgy = cv2.Sobel(core_gray, cv2.CV_32F, 0, 1, ksize=3)
-                cmag, _ = cv2.cartToPolar(cgx, cgy, angleInDegrees=True)
-                core_surface_detail = float(np.mean(cmag)) / 100.0
-
-                moments = cv2.moments(gray_eq)
-                hu = cv2.HuMoments(moments).flatten()
-                hu_log = [-math.copysign(1.0, float(h)) * math.log10(abs(float(h))) if abs(float(h)) > 1e-30 else 0.0 for h in hu]
-
-                gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-                gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-                _, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
-                edge_hist = cv2.calcHist([ang.astype(np.float32)], [0], None, [12], [0, 360])
-                cv2.normalize(edge_hist, edge_hist, 1.0, 0.0, cv2.NORM_L1)
-
-                cw, ch = fg_crop.size
-                aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
-
-                features = {
-                    "version": 34,
-                    "type": "opencv_v34_fast",
-                    "phash": phashes[0],
-                    "phashes": phashes,
-                    "orb_descriptors": descriptors,
-                    "global_h": global_h,
-                    "ab_hist": ab_hist,
-                    "fg_only_hist": fg_only_hist,
-                    "fg_mean_s": fg_mean_s,
-                    "fg_mean_v": fg_mean_v,
-                    "core_surface_detail": core_surface_detail,
-                    "hu_moments": hu_log,
-                    "edge_hist": edge_hist.flatten().tolist(),
-                    "aspect_ratio": aspect_ratio,
-                    "visual_colors": list(visual_colors),
-                }
-            else:
-                features = _fast_pil_features(image, fg_crop, small_48, fg_mask, visual_colors)
+            features = {
+                "version": 35,
+                "onnx_embs": onnx_embs,
+                "spatial_4x4": spatial_4x4,
+                "aspect_ratio": aspect_ratio,
+                "visual_colors": list(visual_colors),
+            }
 
         save_feature_cache(img_path, features)
         return features
@@ -695,44 +546,18 @@ def calculate_image_features(img_path):
         return None
 
 
-def _circular_edge_similarity(eh1, eh2):
-    if not eh1 or not eh2 or len(eh1) != len(eh2):
-        return 0.65
-    n = len(eh1)
-    best = 0.0
-    for shift in range(n):
-        inter = sum(min(eh1[i], eh2[(i + shift) % n]) for i in range(n))
-        if inter > best:
-            best = inter
-    return best
-
-
-def _hu_moments_similarity(hu1, hu2):
-    if not hu1 or not hu2 or len(hu1) != len(hu2):
-        return 0.65
-    dist = sum(abs(float(a) - float(b)) for a, b in zip(hu1[:5], hu2[:5]))
-    return max(0.0, min(1.0, 1.0 - (dist / 14.0)))
-
-
-def _model_contradiction_penalty(f1, f2):
-    penalty = 0
-
-    s1 = float(f1.get("fg_mean_s", 0.25))
-    s2 = float(f2.get("fg_mean_s", 0.25))
-    if abs(s1 - s2) > 0.20:
-        penalty += min(15, int(round((abs(s1 - s2) - 0.18) * 70)))
-
-    v1 = float(f1.get("fg_mean_v", 0.45))
-    v2 = float(f2.get("fg_mean_v", 0.45))
-    if max(s1, s2) < 0.28 and abs(v1 - v2) > 0.18:
-        penalty += min(15, int(round((abs(v1 - v2) - 0.16) * 65)))
-
-    d1 = float(f1.get("core_surface_detail", 0.35))
-    d2 = float(f2.get("core_surface_detail", 0.35))
-    if abs(d1 - d2) > 0.17:
-        penalty += min(14, int(round((abs(d1 - d2) - 0.15) * 60)))
-
-    return min(22, penalty)
+def _cosine_sim(v1, v2):
+    if not v1 or not v2 or len(v1) != len(v2):
+        return 0.0
+    if HAS_NUMPY:
+        a = np.asarray(v1, dtype=np.float32)
+        b = np.asarray(v2, dtype=np.float32)
+        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+        return float(np.dot(a, b) / denom) if denom > 1e-6 else 0.0
+    dot = sum(x * y for x, y in zip(v1, v2))
+    n1 = math.sqrt(sum(x * x for x in v1))
+    n2 = math.sqrt(sum(y * y for y in v2))
+    return (dot / (n1 * n2)) if (n1 > 1e-6 and n2 > 1e-6) else 0.0
 
 
 def image_score(
@@ -741,7 +566,11 @@ def image_score(
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác (0–50)."""
+    """
+    Chấm điểm thị giác học sâu (0–50):
+    - Ưu tiên độ tương đồng ngữ nghĩa Cosine từ MobileNet ONNX (tự hiểu cấu trúc vật thể, logo, LED, bìa sách, bút).
+    - Khóa trần 10/50 nếu xung đột màu sắc rõ rệt (bút đen vs bút đỏ).
+    """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -754,92 +583,34 @@ def image_score(
         if f1 is None or f2 is None:
             return 0, 0.0
 
-        ar1 = float(f1.get("aspect_ratio", 0.7))
-        ar2 = float(f2.get("aspect_ratio", 0.7))
-        aspect_sim = max(0.0, 1.0 - max(0.0, abs(ar1 - ar2) - 0.15))
+        embs1 = f1.get("onnx_embs")
+        embs2 = f2.get("onnx_embs")
 
-        hu_sim = _hu_moments_similarity(f1.get("hu_moments", []), f2.get("hu_moments", []))
-        circ_edge_sim = _circular_edge_similarity(f1.get("edge_hist", []), f2.get("edge_hist", []))
-        contra_penalty = _model_contradiction_penalty(f1, f2)
+        if embs1 and embs2:
+            # Lấy độ tương đồng Cosine lớn nhất giữa các góc xoay (0° và 90°)
+            best_cos = max(
+                _cosine_sim(e1, e2)
+                for e1 in embs1
+                for e2 in embs2
+            )
+            # Ánh xạ tuyến tính ngưỡng Cosine thực tế của MobileNet:
+            # 0.35 -> 12đ | 0.55 -> 25đ | 0.72 -> 38đ | >= 0.85 -> 48đ
+            raw_pts = int(round(10 + ((best_cos - 0.32) / 0.53) * 38))
+            total = max(10, min(48, raw_pts))
+        else:
+            # Dự phòng bằng cấu trúc không gian lưới 4x4
+            s1 = f1.get("spatial_4x4", [])
+            s2 = f2.get("spatial_4x4", [])
+            grid_sim = _cosine_sim(s1, s2)
+            raw_pts = int(round(10 + ((grid_sim - 0.78) / 0.20) * 36))
+            total = max(10, min(46, raw_pts))
 
-        fg1 = f1.get("fg_only_hist", [])
-        fg2 = f2.get("fg_only_hist", [])
-        masked_inter = sum(min(a, b) for a, b in zip(fg1, fg2)) if (fg1 and fg2) else 0.0
+        if color_conflict:
+            total = min(total, 10)
+        if not is_same_keyword and total > 12:
+            total = 12
 
-        if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
-            h_inter = float(cv2.compareHist(f1["global_h"], f2["global_h"], cv2.HISTCMP_INTERSECT))
-            ab_inter = float(cv2.compareHist(f1["ab_hist"], f2["ab_hist"], cv2.HISTCMP_INTERSECT))
-            cv_color = 0.50 * h_inter + 0.50 * ab_inter
-            color_sim = max(cv_color, masked_inter)
-            color_points = max(0, min(26, int(round(((color_sim - 0.16) / 0.36) * 26))))
-
-            p1 = int(f1["phash"])
-            p2_list = f2.get("phashes", [int(f2["phash"])])
-            min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
-            phash_score = max(0.0, 1.0 - min_hamming / 63.0)
-            phash_pts = max(0, min(7, int(round(((phash_score - 0.25) / 0.34) * 7))))
-
-            hu_pts = max(0, min(6, int(round(hu_sim * 6))))
-            edge_pts = max(0, min(5, int(round(((circ_edge_sim - 0.50) / 0.36) * 5))))
-            aspect_pts = max(0, min(2, int(round(aspect_sim * 2))))
-
-            d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
-            orb_points = 0
-            if d1 is not None and d2 is not None and len(d1) >= 2 and len(d2) >= 2:
-                matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
-                forward = matcher.knnMatch(d1, d2, k=2)
-                reverse = matcher.knnMatch(d2, d1, k=2)
-                good_f = [p[0] for p in forward if len(p) == 2 and p[0].distance < 0.76 * p[1].distance]
-                good_r = [p[0] for p in reverse if len(p) == 2 and p[0].distance < 0.76 * p[1].distance]
-                reverse_pairs = {(m.trainIdx, m.queryIdx) for m in good_r}
-                mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
-
-                if mutual >= 5:
-                    orb_points = 4
-                elif mutual >= 3:
-                    orb_points = 2
-                elif mutual >= 1:
-                    orb_points = 1
-
-            raw_total = max(8, color_points + phash_pts + hu_pts + edge_pts + aspect_pts + orb_points - contra_penalty)
-
-            if color_conflict and raw_total > 10:
-                raw_total = 10
-            if not is_same_keyword and raw_total > 12:
-                raw_total = 12
-
-            total = min(48, raw_total)
-            return int(total), float(total / 50.0)
-
-        if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
-            color_points = max(0, min(26, int(round(((masked_inter - 0.16) / 0.36) * 26))))
-
-            d1 = int(f1.get("dhash", 0))
-            d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
-            min_d = min((d1 ^ int(d2)).bit_count() for d2 in d2_list)
-
-            a1 = int(f1.get("ahash", d1))
-            a2_list = f2.get("ahashes", d2_list)
-            min_a = min((a1 ^ int(a2)).bit_count() for a2 in a2_list)
-
-            combined_dist = (min_d + min_a) / 2.0
-            hash_points = max(0, min(8, int(round(((36.0 - combined_dist) / 24.0) * 8))))
-
-            hu_points = max(0, min(7, int(round(hu_sim * 7))))
-            edge_points = max(0, min(6, int(round(((circ_edge_sim - 0.50) / 0.36) * 6))))
-            aspect_points = max(0, min(3, int(round(aspect_sim * 3))))
-
-            raw_total = max(8, color_points + hash_points + hu_points + edge_points + aspect_points - contra_penalty)
-            total = min(48, raw_total)
-
-            if color_conflict:
-                total = min(total, 10)
-            if not is_same_keyword and total > 12:
-                total = 12
-
-            return int(total), float(total / 50.0)
-
-        return 0, 0.0
+        return int(total), float(total / 50.0)
     except Exception as exc:
         print(f"Lỗi tính điểm hình ảnh: {exc}")
         return 0, 0.0
@@ -1374,7 +1145,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh siêu nhanh v34: Chỉ tải ảnh của đúng 10 cặp trên trang hiện tại + lọc nhiễu logo góc."""
+    """Đối sánh ngữ nghĩa học sâu v35: MobileNet ONNX + đối chiếu màu chủ đạo."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1479,7 +1250,7 @@ def match_items(item_id=None):
                     urls_to_fetch.add(item["found"].hinh_anh)
 
         if urls_to_fetch:
-            with ThreadPoolExecutor(max_workers=16) as executor:
+            with ThreadPoolExecutor(max_workers=12) as executor:
                 list(executor.map(calculate_image_features, urls_to_fetch))
             _persist_disk_cache()
 
