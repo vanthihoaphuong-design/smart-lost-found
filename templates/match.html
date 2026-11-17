@@ -410,7 +410,7 @@
     <img src="" class="lightbox-img" id="lightboxImg" onclick="event.stopPropagation()">
 </div>
 
-<!-- MÔ HÌNH HỌC SÂU MOBILENETV2 ALPHA 0.50 (TẢI 1 GIÂY - PHÂN TẦNG 3 NẤC) -->
+<!-- MÔ HÌNH HỌC SÂU MOBILENETV2 ALPHA 0.50 (CÂN BẰNG SÁNG + PHÂN TẦNG 3 NẤC) -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 
@@ -450,7 +450,7 @@ window.addEventListener('mouseup', function() { isDragging = false; });
 document.addEventListener('keydown', function(e) { if (e.key === "Escape") overlay.style.display = 'none'; });
 
 // =========================================================================
-// MOBILENETV2 ALPHA 0.50 (TẢI 1 GIÂY) - PHÂN TẦNG 3 NẤC TỐI ƯU
+// MOBILENETV2 ALPHA 0.50 (TẢI 1 GIÂY) - CÂN BẰNG SÁNG + PHÂN TẦNG 3 NẤC
 // =========================================================================
 (async function runDeepVisionMatch() {
     const statusEl = document.getElementById('aiEngineStatus');
@@ -507,6 +507,8 @@ document.addEventListener('keydown', function(e) { if (e.key === "Escape") overl
                 const ctx = canvas.getContext('2d');
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, 224, 224);
+                // Cân bằng sáng nhẹ giúp ảnh chụp ngược sáng/thiếu sáng (Đèn học, Sách CN8) rõ chi tiết hơn
+                ctx.filter = 'contrast(1.15) brightness(1.04)';
                 ctx.save();
                 ctx.translate(112, 112);
                 ctx.rotate((angle * Math.PI) / 180);
@@ -564,15 +566,15 @@ document.addEventListener('keydown', function(e) { if (e.key === "Escape") overl
             }
 
             let rawImgPts = 14;
-            if (bestCos >= 0.72) {
-                // Trùng vật thể rõ ràng (Sách, Truyện, Gấu bông): 38 - 48đ
-                rawImgPts = Math.round(38 + ((bestCos - 0.72) / 0.16) * 10);
-            } else if (bestCos >= 0.64) {
-                // Trùng vật thể nhưng khác nền/góc chụp (Sách CN8, Bút đỏ, Đèn): 31 - 37đ
-                rawImgPts = Math.round(31 + ((bestCos - 0.64) / 0.08) * 6);
+            if (bestCos >= 0.68) {
+                // Trùng vật thể rõ ràng (Sách, Truyện, Gấu bông): 39 - 48đ
+                rawImgPts = Math.round(39 + ((bestCos - 0.68) / 0.18) * 9);
+            } else if (bestCos >= 0.59) {
+                // Trùng vật thể nhưng khác ánh sáng/góc chụp (Sách CN8, Đèn học, Bút đỏ): 32 - 38đ
+                rawImgPts = Math.round(32 + ((bestCos - 0.59) / 0.09) * 6);
             } else {
-                // Khác kiểu dáng / khác mẫu mã (Áo khoác, Chuột khác hãng): 12 - 22đ
-                rawImgPts = Math.round(12 + ((bestCos - 0.52) / 0.12) * 10);
+                // Khác kiểu dáng / khác mẫu mã (Áo khoác, Chuột khác hãng): 12 - 21đ
+                rawImgPts = Math.round(12 + ((bestCos - 0.48) / 0.11) * 9);
             }
             const newImgScore = Math.max(12, Math.min(48, rawImgPts));
             const newTotal = Math.min(100, baseScore + newImgScore);
