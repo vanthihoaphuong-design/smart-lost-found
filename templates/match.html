@@ -66,6 +66,7 @@
 
     /* Cột Điểm AI */
     .score-col {
+        position: relative;
         background: linear-gradient(180deg, #eff6ff 0%, #f8fafc 45%);
         border-top: 4px solid #2563eb;
         padding: 20px 20px;
@@ -73,6 +74,30 @@
         flex-direction: column;
         justify-content: center;
         align-items: center;
+    }
+
+    /* Hiệu ứng chờ AI tính toán trong 1-2 giây đầu (tránh nhảy số thô) */
+    .score-col.ai-computing > *:not(.ai-computing-overlay) {
+        opacity: 0.12;
+        filter: blur(3px);
+        transition: opacity 0.3s ease, filter 0.3s ease;
+        pointer-events: none;
+    }
+    .ai-computing-overlay {
+        display: none;
+        position: absolute;
+        inset: 0;
+        z-index: 5;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #1d4ed8;
+        font-weight: 700;
+        font-size: 0.85rem;
+        gap: 8px;
+    }
+    .score-col.ai-computing .ai-computing-overlay {
+        display: flex;
     }
 
     /* Nhãn tiêu đề */
@@ -355,8 +380,13 @@
                     </div>
                 </div>
 
-                <!-- ĐIỂM SỐ -->
-                <div class="col-md-4 score-col">
+                <!-- ĐIỂM SỐ (Ẩn tạm khi AI đang chấm để tránh nhảy số) -->
+                <div class="col-md-4 score-col {% if lost_img_url and found_img_url %}ai-computing{% endif %}">
+                    <div class="ai-computing-overlay">
+                        <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                        <span>Đang chấm điểm AI...</span>
+                    </div>
+
                     <div class="score-title">🎯 ĐIỂM PHÙ HỢP AI</div>
                     <div class="score-number js-total-score">{{ m.score }}/100</div>
                     <div class="ai-progress">
@@ -450,18 +480,30 @@ window.addEventListener('mouseup', function() { isDragging = false; });
 document.addEventListener('keydown', function(e) { if (e.key === "Escape") overlay.style.display = 'none'; });
 
 // =========================================================================
-// MOBILENETV2 ALPHA 0.50 (TẢI 1 GIÂY) - CÂN BẰNG SÁNG + NGƯỠNG 0.615
+// MOBILENETV2 ALPHA 0.50 (TẢI 1 GIÂY) - HIỆU ỨNG CHỜ MƯỢT MÀ
 // =========================================================================
 (async function runDeepVisionMatch() {
     const statusEl = document.getElementById('aiEngineStatus');
     const cards = Array.from(document.querySelectorAll('.match-card'));
+
+    function revealAllScores() {
+        document.querySelectorAll('.score-col.ai-computing').forEach(el => {
+            el.classList.remove('ai-computing');
+        });
+    }
+
+    // Bảo vệ an toàn: tự động mở điểm sau tối đa 6 giây kể cả khi mạng yếu
+    const safetyRevealTimer = setTimeout(revealAllScores, 6000);
+
     if (!cards.length) {
         if (statusEl) statusEl.style.display = 'none';
+        revealAllScores();
         return;
     }
 
     if (typeof mobilenet === 'undefined' || typeof tf === 'undefined') {
         if (statusEl) statusEl.textContent = '🛡️ Chế độ đối sánh tiêu chuẩn đang hoạt động';
+        revealAllScores();
         return;
     }
 
@@ -482,7 +524,7 @@ document.addEventListener('keydown', function(e) { if (e.key === "Escape") overl
                 if (!url) return resolve(null);
                 const img = new Image();
                 img.crossOrigin = 'anonymous';
-                const timer = setTimeout(() => resolve(null), 6000);
+                const timer = setTimeout(() => resolve(null), 5000);
                 img.onload = () => { clearTimeout(timer); resolve(img); };
                 img.onerror = () => { clearTimeout(timer); resolve(null); };
                 img.src = optimizeUrl(url);
@@ -564,7 +606,6 @@ document.addEventListener('keydown', function(e) { if (e.key === "Escape") overl
                 }
             }
 
-            // Vạch 0.615 tách biệt cặp chuột khác mẫu (~0.60 -> 21-23đ) khỏi sách trùng thật (~0.62+ -> 34-40đ)
             let rawImgPts = 14;
             if (bestCos >= 0.69) {
                 rawImgPts = Math.round(40 + ((bestCos - 0.69) / 0.17) * 8);
@@ -595,6 +636,9 @@ document.addEventListener('keydown', function(e) { if (e.key === "Escape") overl
     } catch (err) {
         console.warn('MobileNetV2 fallback:', err);
         if (statusEl) statusEl.textContent = '🛡️ Chế độ đối sánh tiêu chuẩn đang hoạt động';
+    } finally {
+        clearTimeout(safetyRevealTimer);
+        revealAllScores();
     }
 })();
 </script>
