@@ -9,6 +9,29 @@
     .check-img:hover { opacity: 0.95; }
     .zoom-hint { position: absolute; bottom: 10px; right: 10px; background: rgba(0,0,0,0.7); color: #fff; font-size: 11px; padding: 3px 8px; border-radius: 4px; pointer-events: none; }
 
+    /* Hiệu ứng chờ AI tính toán ở khung điểm Giáo viên */
+    .tc-score-box { position: relative; }
+    .tc-score-box.ai-computing > *:not(.tc-computing-overlay) {
+        opacity: 0.12;
+        filter: blur(3px);
+        transition: opacity 0.3s ease, filter 0.3s ease;
+    }
+    .tc-computing-overlay {
+        display: none;
+        position: absolute;
+        inset: 0;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        color: #1d4ed8;
+        font-weight: 700;
+        font-size: 0.78rem;
+        gap: 6px;
+    }
+    .tc-score-box.ai-computing .tc-computing-overlay {
+        display: flex;
+    }
+
     /* LIGHTBOX TRÀN MÀN HÌNH */
     .lightbox-overlay {
         display: none;
@@ -102,7 +125,11 @@
             </div>
 
             <!-- TỔNG ĐIỂM -->
-            <div class="col-md-2 text-center border-start py-3 bg-light rounded-3">
+            <div class="col-md-2 text-center border-start py-3 bg-light rounded-3 tc-score-box {% if lost_img_url and found_img_url %}ai-computing{% endif %}" id="tcScoreBox">
+                <div class="tc-computing-overlay">
+                    <div class="spinner-border spinner-border-sm text-primary" role="status"></div>
+                    <span>Đang tính...</span>
+                </div>
                 <div class="small fw-bold text-secondary">ĐIỂM AI</div>
                 <div class="display-6 fw-bold text-primary my-1" id="tcScore">{{ score }}</div>
                 <div class="small fw-bold mb-3" id="tcConclusion">{{ ket_luan }}</div>
@@ -165,20 +192,36 @@ window.addEventListener('mouseup', function() { isDragging = false; });
 document.addEventListener('keydown', function(e) { if (e.key === "Escape") overlay.style.display = 'none'; });
 
 // =========================================================================
-// ĐỒNG BỘ ĐIỂM MOBILENETV2 ALPHA 0.50 - CÂN BẰNG SÁNG + NGƯỠNG 0.615
+// ĐỒNG BỘ ĐIỂM MOBILENETV2 ALPHA 0.50 - HIỆU ỨNG CHỜ MƯỢT MÀ
 // =========================================================================
 (async function syncTeacherCheckDeepVision() {
     const card = document.getElementById('teacherCheckCard');
-    if (!card || typeof mobilenet === 'undefined' || typeof tf === 'undefined') return;
+    const scoreBox = document.getElementById('tcScoreBox');
+
+    function revealScore() {
+        if (scoreBox) scoreBox.classList.remove('ai-computing');
+    }
+    const safetyTimer = setTimeout(revealScore, 6000);
+
+    if (!card || typeof mobilenet === 'undefined' || typeof tf === 'undefined') {
+        revealScore();
+        return;
+    }
 
     const u1 = card.dataset.lostImg;
     const u2 = card.dataset.foundImg;
-    if (!u1 || !u2) return;
+    if (!u1 || !u2) {
+        revealScore();
+        return;
+    }
 
     const baseScore = parseInt(card.dataset.baseScore || '0', 10);
     const colorScore = parseInt(card.dataset.colorScore || '0', 10);
     const serverImgScore = parseInt(card.dataset.serverImgScore || '0', 10);
-    if (colorScore === 0 && serverImgScore <= 10) return;
+    if (colorScore === 0 && serverImgScore <= 10) {
+        revealScore();
+        return;
+    }
 
     try {
         const net = await mobilenet.load({ version: 2, alpha: 0.50 });
@@ -194,7 +237,7 @@ document.addEventListener('keydown', function(e) { if (e.key === "Escape") overl
             return new Promise((resolve) => {
                 const img = new Image();
                 img.crossOrigin = 'anonymous';
-                const timer = setTimeout(() => resolve(null), 6000);
+                const timer = setTimeout(() => resolve(null), 5000);
                 img.onload = () => { clearTimeout(timer); resolve(img); };
                 img.onerror = () => { clearTimeout(timer); resolve(null); };
                 img.src = optimizeUrl(url);
@@ -260,6 +303,9 @@ document.addEventListener('keydown', function(e) { if (e.key === "Escape") overl
         document.getElementById('tcConclusion').textContent = text;
     } catch (e) {
         console.warn(e);
+    } finally {
+        clearTimeout(safetyTimer);
+        revealScore();
     }
 })();
 </script>
