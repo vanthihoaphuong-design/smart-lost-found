@@ -34,13 +34,6 @@ try:
 except Exception as e:
     print(f"Cảnh báo NumPy không khả dụng: {e}")
 
-HAS_OPENCV = False
-try:
-    import cv2
-    HAS_OPENCV = True
-except Exception as e:
-    print(f"Cảnh báo OpenCV không khả dụng: {e}")
-
 cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
 api_key = os.environ.get("CLOUDINARY_API_KEY", "")
 api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
@@ -77,10 +70,7 @@ def format_vn_date(date_val):
 
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
-MODEL_DIR = os.path.join("static", "models")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(MODEL_DIR, exist_ok=True)
-
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 12_000_000
@@ -121,53 +111,9 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-# ==============================================================================
-# KHỞI TẠO MÔ HÌNH THỊ GIÁC HỌC SÂU SIÊU NHẸ (SqueezeNet 4.8MB qua OpenCV DNN)
-# ==============================================================================
-DNN_MODEL_PATH = os.path.join(MODEL_DIR, "squeezenet1.1-7.onnx")
-DNN_MODEL_URL = "https://github.com/onnx/models/raw/main/validated/vision/classification/squeezenet/model/squeezenet1.1-7.onnx"
-DNN_NET = None
-DNN_LOCK = threading.Lock()
-
-
-def _get_dnn_net():
-    """Nạp SqueezeNet 4.8MB bằng OpenCV C++ (chỉ ~15MB RAM, không dùng onnxruntime)."""
-    global DNN_NET
-    if not (HAS_OPENCV and HAS_NUMPY):
-        return None
-    if DNN_NET is not None:
-        return DNN_NET
-
-    with DNN_LOCK:
-        if DNN_NET is not None:
-            return DNN_NET
-        if not os.path.isfile(DNN_MODEL_PATH) or os.path.getsize(DNN_MODEL_PATH) < 1_000_000:
-            try:
-                resp = requests.get(DNN_MODEL_URL, timeout=(5, 25), verify=False)
-                if resp.status_code == 200 and len(resp.content) > 1_000_000:
-                    with open(DNN_MODEL_PATH, "wb") as f:
-                        f.write(resp.content)
-            except Exception as dl_err:
-                print(f"Lỗi tải SqueezeNet ONNX: {dl_err}")
-
-        if os.path.isfile(DNN_MODEL_PATH) and os.path.getsize(DNN_MODEL_PATH) > 1_000_000:
-            try:
-                net = cv2.dnn.readNetFromONNX(DNN_MODEL_PATH)
-                net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
-                net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
-                DNN_NET = net
-                print("Đã nạp thành công SqueezeNet OpenCV DNN (4.8MB)!")
-            except Exception as net_err:
-                print(f"Lỗi nạp OpenCV DNN: {net_err}")
-
-    return DNN_NET
-
-
-threading.Thread(target=_get_dnn_net, daemon=True).start()
-
-CACHE_FILE = "feature_cache_v38.json"
+CACHE_FILE = "feature_cache_v39.json"
 CACHE_LOCK = threading.Lock()
-MAX_CACHE_SIZE = 500
+MAX_CACHE_SIZE = 400
 
 
 def _load_disk_cache():
@@ -190,7 +136,7 @@ def _persist_disk_cache():
         with CACHE_LOCK:
             serializable = {
                 k: v for k, v in FEATURE_CACHE.items()
-                if isinstance(v, dict) and v.get("version") == 38
+                if isinstance(v, dict) and v.get("version") == 39
             }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -199,7 +145,7 @@ def _persist_disk_cache():
 
 
 HTTP_SESSION = requests.Session()
-adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=1)
+adapter = requests.adapters.HTTPAdapter(pool_connections=6, pool_maxsize=6, max_retries=1)
 HTTP_SESSION.mount("http://", adapter)
 HTTP_SESSION.mount("https://", adapter)
 HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
@@ -267,13 +213,13 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[key] = features
 
 
-def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
-    """Tải ảnh thu nhỏ nét (w_224) từ Cloudinary qua Session Keep-Alive."""
+def _read_image_bytes(img_path, max_bytes=1536 * 1024):
+    """Tải ảnh thu nhỏ siêu nhẹ (w_160) từ Cloudinary qua Session Keep-Alive."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_224,c_limit,q_auto:good,f_jpg/", 1)
+        value = value.replace("/image/upload/", "/image/upload/w_160,c_limit,q_auto:low,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
-        response = HTTP_SESSION.get(value, timeout=(2.5, 4.5), verify=False)
+        response = HTTP_SESSION.get(value, timeout=(2.0, 4.0), verify=False)
         response.raise_for_status()
         if len(response.content) > max_bytes:
             return None
@@ -289,7 +235,7 @@ def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
 
 
 def _extract_foreground_pil(pil_img):
-    """Tách nền tự động và cắt gọn khung bao quanh vật thể chính."""
+    """Tách nền nhẹ RAM trên lưới 48x48, cắt sát khung bao quanh vật thể."""
     size = 48
     small = pil_img.resize((size, size), Image.Resampling.BILINEAR)
     px = list(small.getdata())
@@ -354,8 +300,8 @@ def _extract_foreground_pil(pil_img):
         return cropped, small, fallback_mask
 
     w, h = pil_img.size
-    pad_x = max(1, int((max_x - min_x) * 0.05))
-    pad_y = max(1, int((max_y - min_y) * 0.05))
+    pad_x = max(1, int((max_x - min_x) * 0.04))
+    pad_y = max(1, int((max_y - min_y) * 0.04))
     x0 = max(0, int(((min_x - pad_x) / size) * w))
     y0 = max(0, int(((min_y - pad_y) / size) * h))
     x1 = min(w, int(((max_x + pad_x) / size) * w))
@@ -366,7 +312,7 @@ def _extract_foreground_pil(pil_img):
 
 
 def _detect_visual_colors_masked(small_48, fg_mask):
-    """Lớp 1 (HSV Gatekeeper): Nhận diện màu sắc chủ đạo của vật thể."""
+    """Nhận diện màu sắc chủ đạo của vật thể."""
     try:
         px = list(small_48.getdata())
         counts = {}
@@ -411,74 +357,98 @@ def _detect_visual_colors_masked(small_48, fg_mask):
         return set()
 
 
-def _extract_squeezenet_embeddings(fg_crop):
+def _compute_masked_color_hist(small_48, fg_mask):
+    """Histogram sắc độ bất biến ánh sáng trên đúng các điểm ảnh vật thể."""
+    eq_48 = ImageOps.autocontrast(small_48, cutoff=2)
+    px_eq = list(eq_48.getdata())
+    fg_indices = [i for i, m in enumerate(fg_mask) if m] or list(range(48 * 48))
+
+    bins = [0.0] * 28
+    count = 0.0
+    for idx_px in fg_indices:
+        rv, gv, bv = px_eq[idx_px]
+        h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
+        if v > 0.92 and s < 0.16:
+            continue
+        if s < 0.16:
+            bins[min(3, int(v * 4.0))] += 1.0
+        else:
+            h_pos = (h * 12.0) % 12.0
+            h0 = int(h_pos)
+            frac = h_pos - h0
+            bins[4 + h0] += (1.0 - frac * 0.45)
+            bins[4 + ((h0 + 1) % 12)] += (frac * 0.45)
+        rgb_sum = float(rv + gv + bv)
+        if rgb_sum > 30.0:
+            r_bin = min(3, int((rv / rgb_sum) * 4.0))
+            g_bin = min(2, int((gv / rgb_sum) * 3.0))
+            bins[16 + r_bin * 3 + g_bin] += 0.8
+        count += 1.0
+
+    if count <= 0.0:
+        return [1.0 / 28.0] * 28
+    inv = 1.0 / count
+    return [x * inv for x in bins]
+
+
+def _compute_fine_structure_8x8(fg_crop):
     """
-    Trích xuất vector đặc trưng ngữ nghĩa chuẩn hóa L2 từ SqueezeNet OpenCV DNN
-    trên 2 góc (0° và 90°) để bất biến hoàn toàn với chiều chụp ngang/dọc.
+    Trích xuất đặc trưng cấu trúc chi tiết lưới 8x8 (64 vùng) + Biểu đồ hướng cạnh HOG:
+    Phân biệt rõ mặt dây chuyền hoa vs giọt nước, áo khoác trơn vs áo kẻ ngang, chuột trơn vs chuột LED.
     """
-    net = _get_dnn_net()
-    if net is None or not HAS_NUMPY:
-        return None
-
-    try:
-        base_224 = ImageOps.autocontrast(fg_crop, cutoff=1).resize((224, 224), Image.Resampling.BILINEAR)
-        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
-
-        embs = []
-        with DNN_LOCK:
-            for angle in (0, 90):
-                img_rot = base_224.rotate(angle) if angle else base_224
-                arr = np.asarray(img_rot, dtype=np.float32) / 255.0
-                arr = (arr - mean) / std
-                blob = np.transpose(arr, (2, 0, 1))[None, ...]
-
-                net.setInput(blob)
-                out = net.forward().flatten().astype(np.float32)
-                out = np.maximum(out, 0.0)
-                norm = float(np.linalg.norm(out))
-                if norm > 1e-6:
-                    out = out / norm
-                embs.append(np.round(out, 4).tolist())
-
-        return embs
-    except Exception as dnn_err:
-        print(f"Lỗi suy luận SqueezeNet DNN: {dnn_err}")
-        return None
-
-
-def _compute_spatial_grid_4x4(fg_crop):
     base_64 = ImageOps.equalize(fg_crop.convert("L")).resize((64, 64), Image.Resampling.BILINEAR)
-    rot_grids = []
+    rot_signatures = []
+
     for angle in (0, 90, 180, 270):
         g_img = base_64.rotate(angle) if angle else base_64
         g_px = list(g_img.getdata())
-        vec = []
-        for gy in range(4):
-            for gx in range(4):
-                lum_sum = grad_sum = lum_sq_sum = 0.0
+
+        # 1. Lưới 8x8 ô (mỗi ô 8x8 pixel): lưu độ sáng trung bình và mật độ biên ngang/dọc
+        cell_vec = []
+        hog_bins = [0.0] * 8
+
+        for gy in range(8):
+            for gx in range(8):
+                lum_sum = 0.0
+                dx_sum = 0.0
+                dy_sum = 0.0
                 cnt = 0
-                for y in range(gy * 16, (gy + 1) * 16):
+                for y in range(gy * 8, (gy + 1) * 8):
                     row_off = y * 64
-                    for x in range(gx * 16, (gx + 1) * 16):
+                    for x in range(gx * 8, (gx + 1) * 8):
                         val = float(g_px[row_off + x])
                         lum_sum += val
-                        lum_sq_sum += val * val
                         if 0 < x < 63 and 0 < y < 63:
-                            dx = abs(float(g_px[row_off + x + 1] - g_px[row_off + x - 1]))
-                            dy = abs(float(g_px[row_off + 64 + x] - g_px[row_off - 64 + x]))
-                            grad_sum += math.hypot(dx, dy)
+                            gx_val = float(g_px[row_off + x + 1]) - float(g_px[row_off + x - 1])
+                            gy_val = float(g_px[row_off + 64 + x]) - float(g_px[row_off - 64 + x])
+                            mag = math.hypot(gx_val, gy_val)
+                            dx_sum += abs(gx_val)
+                            dy_sum += abs(gy_val)
+                            if mag > 18.0:
+                                ang = (math.degrees(math.atan2(gy_val, gx_val)) + 180.0) % 180.0
+                                b_idx = min(7, int((ang / 180.0) * 8.0))
+                                hog_bins[b_idx] += mag
                         cnt += 1
-                mean_lum = lum_sum / max(1, cnt)
-                std_lum = math.sqrt(max(0.0, (lum_sq_sum / max(1, cnt)) - (mean_lum * mean_lum)))
-                mean_grad = grad_sum / max(1, cnt)
-                vec.extend([mean_lum / 255.0, std_lum / 128.0, mean_grad / 150.0])
-        rot_grids.append(vec)
-    return rot_grids
+
+                cell_vec.extend([
+                    (lum_sum / max(1, cnt)) / 255.0,
+                    (dx_sum / max(1, cnt)) / 128.0,
+                    (dy_sum / max(1, cnt)) / 128.0,
+                ])
+
+        hog_norm = math.sqrt(sum(v * v for v in hog_bins)) or 1.0
+        hog_vec = [v / hog_norm for v in hog_bins]
+
+        rot_signatures.append({
+            "cells": cell_vec,
+            "hog": hog_vec
+        })
+
+    return rot_signatures
 
 
 def calculate_image_features(img_path):
-    """Trích xuất vector SqueezeNet DNN + màu chủ đạo HSV + lưới không gian 4x4."""
+    """Trích xuất đặc trưng v39 siêu nhẹ RAM (< 8KB/ảnh)."""
     if not check_real_image(img_path):
         return None
 
@@ -487,7 +457,7 @@ def calculate_image_features(img_path):
         return cached
 
     try:
-        data = _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024)
+        data = _read_image_bytes(img_path, max_bytes=1536 * 1024)
         if not data:
             return None
 
@@ -499,16 +469,16 @@ def calculate_image_features(img_path):
             image = ImageOps.exif_transpose(source).convert("RGB")
             fg_crop, small_48, fg_mask = _extract_foreground_pil(image)
             visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
-            dnn_embs = _extract_squeezenet_embeddings(fg_crop)
-            rot_grids = _compute_spatial_grid_4x4(fg_crop)
+            fg_color_hist = _compute_masked_color_hist(small_48, fg_mask)
+            rot_sigs = _compute_fine_structure_8x8(fg_crop)
 
             cw, ch = fg_crop.size
             aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
             features = {
-                "version": 38,
-                "dnn_embs": dnn_embs,
-                "rot_grids": rot_grids,
+                "version": 39,
+                "fg_color_hist": fg_color_hist,
+                "rot_sigs": rot_sigs,
                 "aspect_ratio": aspect_ratio,
                 "visual_colors": list(visual_colors),
             }
@@ -534,6 +504,25 @@ def _cosine_sim(v1, v2):
     return (dot / (n1 * n2)) if (n1 > 1e-6 and n2 > 1e-6) else 0.0
 
 
+def _pearson_corr(v1, v2):
+    """Tương quan Pearson chuẩn hóa trừ trung bình (nhạy với hoa văn cục bộ từng ô 8x8)."""
+    if not v1 or not v2 or len(v1) != len(v2):
+        return 0.0
+    if HAS_NUMPY:
+        a = np.asarray(v1, dtype=np.float32)
+        b = np.asarray(v2, dtype=np.float32)
+        a = a - np.mean(a)
+        b = b - np.mean(b)
+        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
+        return float(np.dot(a, b) / denom) if denom > 1e-6 else 0.0
+    m1 = sum(v1) / len(v1)
+    m2 = sum(v2) / len(v2)
+    a = [x - m1 for x in v1]
+    b = [y - m2 for y in v2]
+    denom = math.sqrt(sum(x * x for x in a) * sum(y * y for y in b))
+    return (sum(x * y for x, y in zip(a, b)) / denom) if denom > 1e-6 else 0.0
+
+
 def image_score(
     img1_filename,
     img2_filename,
@@ -541,10 +530,10 @@ def image_score(
     color_conflict=False
 ):
     """
-    Chấm điểm thị giác Hybrid (0–50):
-    1. HSV Color Gatekeeper: Khóa trần 10/50 nếu 2 món đồ khác màu.
-    2. SqueezeNet Deep Feature Cosine Similarity (0–40đ) + Cấu trúc cục bộ (0–10đ):
-       Phân biệt rõ kiểu dáng mặt dây chuyền, sọc áo khoác, LED chuột gaming.
+    Chấm điểm thị giác v39 (0–50):
+    - 16đ Sắc độ chuẩn hóa vật thể (HSV + Chromaticity).
+    - 24đ Tương quan chi tiết lưới 8x8 (trừ trung bình để bắt khác biệt mặt dây chuyền, sọc áo, LED chuột).
+    - 10đ Biểu đồ hướng cạnh HOG + tỷ lệ khung hình.
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
@@ -563,28 +552,35 @@ def image_score(
         if f1 is None or f2 is None:
             return 0, 0.0
 
-        embs1 = f1.get("dnn_embs")
-        embs2 = f2.get("dnn_embs")
+        # 1. Điểm sắc độ vật thể (0–16đ)
+        h1 = f1.get("fg_color_hist", [])
+        h2 = f2.get("fg_color_hist", [])
+        color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
+        color_pts = max(0, min(16, int(round(((color_inter - 0.14) / 0.36) * 16))))
 
-        g1_list = f1.get("rot_grids", [])
-        g2_list = f2.get("rot_grids", [])
-        best_grid = max(_cosine_sim(g1_list[0], g2) for g2 in g2_list) if (g1_list and g2_list) else 0.88
+        # 2. Điểm cấu trúc chi tiết lưới 8x8 + hướng cạnh HOG qua 4 góc xoay (0–32đ)
+        s1_list = f1.get("rot_sigs", [])
+        s2_list = f2.get("rot_sigs", [])
+        if s1_list and s2_list:
+            base_s1 = s1_list[0]
+            best_struct = -1.0
+            for s2 in s2_list:
+                cell_corr = max(0.0, _pearson_corr(base_s1["cells"], s2["cells"]))
+                hog_sim = max(0.0, _cosine_sim(base_s1["hog"], s2["hog"]))
+                combined = 0.72 * cell_corr + 0.28 * hog_sim
+                if combined > best_struct:
+                    best_struct = combined
 
-        if embs1 and embs2:
-            best_dnn = max(
-                _cosine_sim(e1, e2)
-                for e1 in embs1
-                for e2 in embs2
-            )
-            # Kết hợp 80% đặc trưng học sâu SqueezeNet + 20% cấu trúc lưới 4x4:
-            # Ngưỡng khắt khe để loại bỏ cặp khác mẫu (dây chuyền/áo/chuột khác mẫu):
-            # best_dnn = 0.55 -> ~18đ | best_dnn = 0.72 -> ~29đ | best_dnn >= 0.88 -> ~46đ
-            dnn_pts = max(6, min(40, int(round(((best_dnn - 0.42) / 0.48) * 40))))
-            grid_pts = max(2, min(8, int(round(((best_grid - 0.80) / 0.17) * 8))))
-            total = max(10, min(48, dnn_pts + grid_pts))
+            # Ngưỡng tương quan chi tiết: 0.45 -> 4đ | 0.65 -> 16đ | >= 0.85 -> 32đ
+            struct_pts = max(2, min(32, int(round(((best_struct - 0.42) / 0.44) * 32))))
         else:
-            raw_pts = int(round(10 + ((best_grid - 0.80) / 0.17) * 36))
-            total = max(10, min(46, raw_pts))
+            struct_pts = 14
+
+        ar1 = float(f1.get("aspect_ratio", 0.7))
+        ar2 = float(f2.get("aspect_ratio", 0.7))
+        ar_pts = 2 if abs(ar1 - ar2) < 0.22 else 0
+
+        total = max(10, min(48, color_pts + struct_pts + ar_pts))
 
         if not is_same_keyword and total > 12:
             total = 12
@@ -1124,7 +1120,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh Hybrid v38: HSV Color Gatekeeper + SqueezeNet OpenCV DNN (4.8MB)."""
+    """Đối sánh v39: Siêu nhẹ RAM (< 70MB) + Lưới chi tiết 8x8 + HOG + Sắc độ HSV."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1229,7 +1225,7 @@ def match_items(item_id=None):
                     urls_to_fetch.add(item["found"].hinh_anh)
 
         if urls_to_fetch:
-            with ThreadPoolExecutor(max_workers=8) as executor:
+            with ThreadPoolExecutor(max_workers=6) as executor:
                 list(executor.map(calculate_image_features, urls_to_fetch))
             _persist_disk_cache()
 
