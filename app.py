@@ -112,9 +112,9 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v33.json"
+CACHE_FILE = "feature_cache_v34.json"
 CACHE_LOCK = threading.Lock()
-MAX_CACHE_SIZE = 500
+MAX_CACHE_SIZE = 600
 
 
 def _load_disk_cache():
@@ -136,7 +136,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v33")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v34")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -145,7 +145,7 @@ def _persist_disk_cache():
 
 
 HTTP_SESSION = requests.Session()
-adapter = requests.adapters.HTTPAdapter(pool_connections=12, pool_maxsize=12, max_retries=1)
+adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16, max_retries=1)
 HTTP_SESSION.mount("http://", adapter)
 HTTP_SESSION.mount("https://", adapter)
 HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
@@ -213,13 +213,13 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[key] = features
 
 
-def _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024):
-    """Tải ảnh thu nhỏ nét (w_320) từ Cloudinary qua Session Keep-Alive."""
+def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
+    """Tải ảnh thu nhỏ siêu nhanh (w_160) từ Cloudinary qua Session Keep-Alive."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_320,c_limit,q_auto:good,f_jpg/", 1)
+        value = value.replace("/image/upload/", "/image/upload/w_160,c_limit,q_auto:low,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
-        response = HTTP_SESSION.get(value, timeout=(2.5, 5), verify=False)
+        response = HTTP_SESSION.get(value, timeout=(2.0, 4.0), verify=False)
         response.raise_for_status()
         if len(response.content) > max_bytes:
             return None
@@ -235,18 +235,15 @@ def _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024):
 
 
 def _extract_foreground_pil(pil_img):
-    """Tách nền từng điểm ảnh vật thể (fg_mask) và cắt khung bao."""
-    size = 64
+    """Tách nền nhanh trên lưới 48x48, bắt trọn cả vật thể mảnh (bút bi, bút đỏ) trên nền sáng."""
+    size = 48
     small = pil_img.resize((size, size), Image.Resampling.BILINEAR)
-    smooth = small.filter(ImageFilter.GaussianBlur(radius=1.2))
-    px = list(smooth.getdata())
+    px = list(small.getdata())
 
     border_samples = []
     for i in range(size):
         border_samples.append(px[i])
-        border_samples.append(px[size + i])
         border_samples.append(px[(size - 1) * size + i])
-        border_samples.append(px[(size - 2) * size + i])
         border_samples.append(px[i * size])
         border_samples.append(px[i * size + (size - 1)])
 
@@ -277,11 +274,11 @@ def _extract_foreground_pil(pil_img):
                 dist_sq = dr * dr + dg * dg + db * db
                 if dist_sq < min_bg_dist:
                     min_bg_dist = dist_sq
-                    if min_bg_dist < 700:
+                    if min_bg_dist < 500:
                         break
 
             sat_diff = abs(sat - bg_sat)
-            if min_bg_dist > 1150 or (sat_diff > 0.18 and min_bg_dist > 450):
+            if min_bg_dist > 800 or (sat_diff > 0.14 and min_bg_dist > 320):
                 mask[idx] = True
                 fg_count += 1
                 if x < min_x:
@@ -293,18 +290,18 @@ def _extract_foreground_pil(pil_img):
                 if y > max_y:
                     max_y = y
 
-    if fg_count < 16 or max_x <= min_x + 1 or max_y <= min_y + 1:
+    if fg_count < 12 or max_x <= min_x + 1 or max_y <= min_y + 1:
         w, h = pil_img.size
         cropped = pil_img.crop((int(w * 0.22), int(h * 0.22), int(w * 0.78), int(h * 0.78)))
         fallback_mask = [
-            (14 <= (i % size) < 50 and 14 <= (i // size) < 50)
+            (10 <= (i % size) < 38 and 10 <= (i // size) < 38)
             for i in range(size * size)
         ]
         return cropped, small, fallback_mask
 
     w, h = pil_img.size
-    pad_x = max(2, int((max_x - min_x) * 0.04))
-    pad_y = max(2, int((max_y - min_y) * 0.04))
+    pad_x = max(1, int((max_x - min_x) * 0.04))
+    pad_y = max(1, int((max_y - min_y) * 0.04))
     x0 = max(0, int(((min_x - pad_x) / size) * w))
     y0 = max(0, int(((min_y - pad_y) / size) * h))
     x1 = min(w, int(((max_x + pad_x) / size) * w))
@@ -314,11 +311,12 @@ def _extract_foreground_pil(pil_img):
     return cropped, small, mask
 
 
-def _detect_visual_colors_masked(small_64, fg_mask):
-    """Nhận diện màu sắc chủ đạo chỉ từ các điểm ảnh vật thể thật (loại bỏ nền quanh bút/vòng tay)."""
+def _detect_visual_colors_masked(small_48, fg_mask):
+    """Chỉ giữ lại màu chủ đạo (chiếm >= 18% điểm ảnh vật thể), loại bỏ logo/vết nhiễu góc ảnh."""
     try:
-        px = list(small_64.getdata())
-        detected = set()
+        px = list(small_48.getdata())
+        counts = {}
+        total = 0
         for i, m in enumerate(fg_mask):
             if not m:
                 continue
@@ -326,40 +324,48 @@ def _detect_visual_colors_masked(small_64, fg_mask):
             hue, sat, val = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
             if val > 0.94 and sat < 0.14:
                 continue
+            total += 1
             if val < 0.22:
-                detected.add("đen")
+                c_name = "đen"
             elif sat < 0.18 and val > 0.78:
-                detected.update({"trắng", "bạc"})
+                c_name = "trắng"
             elif sat < 0.22:
-                detected.update({"xám", "bạc"})
+                c_name = "xám"
             else:
                 deg = hue * 360.0
                 if deg < 18 or deg >= 340:
-                    detected.add("đỏ")
+                    c_name = "đỏ"
                 elif deg < 42:
-                    detected.add("cam")
+                    c_name = "cam"
                 elif deg < 68:
-                    detected.add("vàng")
+                    c_name = "vàng"
                 elif deg < 255:
-                    detected.add("xanh")
+                    c_name = "xanh"
                 elif deg < 310:
-                    detected.add("tím")
+                    c_name = "tím"
                 else:
-                    detected.add("hồng")
+                    c_name = "hồng"
+            counts[c_name] = counts.get(c_name, 0) + 1
+
+        if total == 0:
+            return set()
+        detected = {c for c, cnt in counts.items() if (cnt / total) >= 0.18}
+        if "trắng" in detected or "xám" in detected:
+            detected.add("bạc")
         return detected
     except Exception:
         return set()
 
 
-def _compute_hu_moments_pil(gray_48):
-    """Tính 7 Mô-men bất biến Hu thuần Python."""
-    px = list(gray_48.getdata())
+def _compute_hu_moments_pil(gray_32):
+    """Tính 7 Mô-men bất biến Hu nhanh trên lưới 32x32."""
+    px = list(gray_32.getdata())
     m00 = 0.0
     m10 = 0.0
     m01 = 0.0
-    for y in range(48):
-        off = y * 48
-        for x in range(48):
+    for y in range(32):
+        off = y * 32
+        for x in range(32):
             val = float(px[off + x])
             m00 += val
             m10 += x * val
@@ -371,11 +377,11 @@ def _compute_hu_moments_pil(gray_48):
     cy = m01 / m00
 
     mu20 = mu02 = mu11 = mu30 = mu03 = mu21 = mu12 = 0.0
-    for y in range(48):
+    for y in range(32):
         dy = y - cy
         dy2 = dy * dy
-        off = y * 48
-        for x in range(48):
+        off = y * 32
+        for x in range(32):
             val = float(px[off + x])
             if val == 0.0:
                 continue
@@ -438,18 +444,15 @@ def _phash_from_gray(gray):
     return result
 
 
-def _compute_masked_color_stats(small_64, fg_mask):
-    """
-    Tính histogram màu sắc và độ sáng/bão hòa trên đúng các điểm ảnh vật thể (fg_mask).
-    Loại bỏ hoàn toàn nền bàn gạch hoa/nền trắng quanh đồ đặt chéo (bút đỏ, bút bi) và khử lóa sáng bìa sách.
-    """
-    eq_64 = ImageOps.autocontrast(small_64, cutoff=2)
-    px_eq = list(eq_64.getdata())
-    px_raw = list(small_64.getdata())
+def _compute_masked_color_stats(small_48, fg_mask):
+    """Tính histogram màu sắc và độ sáng/bão hòa trên đúng các điểm ảnh vật thể (fg_mask)."""
+    eq_48 = ImageOps.autocontrast(small_48, cutoff=2)
+    px_eq = list(eq_48.getdata())
+    px_raw = list(small_48.getdata())
 
     fg_indices = [i for i, m in enumerate(fg_mask) if m]
     if not fg_indices:
-        fg_indices = list(range(64 * 64))
+        fg_indices = list(range(48 * 48))
 
     bins = [0.0] * 28
     count = 0.0
@@ -503,11 +506,11 @@ def _compute_masked_color_stats(small_64, fg_mask):
     return hist, fg_mean_s, fg_mean_v
 
 
-def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
-    """Trích xuất đặc trưng v33 trên PIL thuần."""
-    fg_only_hist, fg_mean_s, fg_mean_v = _compute_masked_color_stats(small_64, fg_mask)
+def _fast_pil_features(raw_img, fg_crop, small_48, fg_mask, visual_colors):
+    """Trích xuất đặc trưng siêu nhanh v34 trên PIL thuần."""
+    fg_only_hist, fg_mean_s, fg_mean_v = _compute_masked_color_stats(small_48, fg_mask)
 
-    fg_canvas = fg_crop.resize((128, 128), Image.Resampling.BILINEAR)
+    fg_canvas = fg_crop.resize((64, 64), Image.Resampling.BILINEAR)
     gray_fg = ImageOps.equalize(fg_canvas.convert("L"))
 
     phashes = []
@@ -532,29 +535,29 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
             a_val = (a_val << 1) | (1 if val >= avg_lum else 0)
         ahashes.append(a_val)
 
-    raw_gray_48 = fg_canvas.convert("L").resize((48, 48), Image.Resampling.BILINEAR)
-    rg_px = list(raw_gray_48.getdata())
+    raw_gray_32 = fg_canvas.convert("L").resize((32, 32), Image.Resampling.BILINEAR)
+    rg_px = list(raw_gray_32.getdata())
     core_grad_sum = 0.0
     core_grad_n = 0
-    for r in range(10, 38):
-        off = r * 48
-        for c in range(10, 38):
+    for r in range(7, 25):
+        off = r * 32
+        for c in range(7, 25):
             gx = abs(float(rg_px[off + c + 1] - rg_px[off + c - 1]))
-            gy = abs(float(rg_px[off + 48 + c] - rg_px[off - 48 + c]))
+            gy = abs(float(rg_px[off + 32 + c] - rg_px[off - 32 + c]))
             core_grad_sum += math.hypot(gx, gy)
             core_grad_n += 1
     core_surface_detail = (core_grad_sum / max(1, core_grad_n)) / 100.0
 
-    g_48 = gray_fg.filter(ImageFilter.SMOOTH).resize((48, 48), Image.Resampling.BILINEAR)
-    g_px = list(g_48.getdata())
+    g_32 = gray_fg.resize((32, 32), Image.Resampling.BILINEAR)
+    g_px = list(g_32.getdata())
     edge_bins = [0.0] * 12
     edge_sum = 0.0
 
-    for r in range(1, 47):
-        row_off = r * 48
-        for c in range(1, 47):
+    for r in range(1, 31):
+        row_off = r * 32
+        for c in range(1, 31):
             gx = float(g_px[row_off + c + 1] - g_px[row_off + c - 1])
-            gy = float(g_px[row_off + 48 + c] - g_px[row_off - 48 + c])
+            gy = float(g_px[row_off + 32 + c] - g_px[row_off - 32 + c])
             mag = math.hypot(gx, gy)
             if mag > 12.0:
                 ang = (math.degrees(math.atan2(gy, gx)) + 180.0) % 180.0
@@ -563,14 +566,14 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
                 edge_sum += mag
 
     edge_hist = [x / edge_sum for x in edge_bins] if edge_sum > 0 else [1.0 / 12.0] * 12
-    hu_moments = _compute_hu_moments_pil(g_48)
+    hu_moments = _compute_hu_moments_pil(g_32)
 
     cw, ch = fg_crop.size
     aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
     return {
-        "version": 33,
-        "type": "pil_v33_masked",
+        "version": 34,
+        "type": "pil_v34_fast",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
@@ -587,7 +590,7 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng v33: Lọc màu theo đúng điểm ảnh vật thể (fg_mask) + phân biệt sáng tối vật thể."""
+    """Trích xuất đặc trưng v34: Tốc độ siêu nhanh + lọc nhiễu logo góc ảnh."""
     if not check_real_image(img_path):
         return None
 
@@ -596,7 +599,7 @@ def calculate_image_features(img_path):
         return cached
 
     try:
-        data = _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024)
+        data = _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024)
         if not data:
             return None
 
@@ -606,13 +609,13 @@ def calculate_image_features(img_path):
                 return None
 
             image = ImageOps.exif_transpose(source).convert("RGB")
-            fg_crop, small_64, fg_mask = _extract_foreground_pil(image)
-            visual_colors = _detect_visual_colors_masked(small_64, fg_mask)
+            fg_crop, small_48, fg_mask = _extract_foreground_pil(image)
+            visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
 
             if HAS_OPENCV:
-                fg_only_hist, fg_mean_s, fg_mean_v = _compute_masked_color_stats(small_64, fg_mask)
+                fg_only_hist, fg_mean_s, fg_mean_v = _compute_masked_color_stats(small_48, fg_mask)
 
-                normalized_img = fg_crop.resize((256, 256), Image.Resampling.BILINEAR)
+                normalized_img = fg_crop.resize((128, 128), Image.Resampling.BILINEAR)
                 rgb = np.asarray(normalized_img, dtype=np.uint8)
 
                 image_bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
@@ -621,7 +624,7 @@ def calculate_image_features(img_path):
                 clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
                 gray_eq = clahe.apply(gray)
 
-                orb = cv2.ORB_create(nfeatures=450, scaleFactor=1.2, nlevels=8, fastThreshold=8)
+                orb = cv2.ORB_create(nfeatures=250, scaleFactor=1.2, nlevels=6, fastThreshold=8)
                 _, descriptors = orb.detectAndCompute(gray_eq, None)
 
                 phashes = [
@@ -631,23 +634,22 @@ def calculate_image_features(img_path):
                     _phash_from_gray(cv2.rotate(gray_eq, cv2.ROTATE_90_COUNTERCLOCKWISE)),
                 ]
 
-                # Mask OpenCV trên 64x64 để lấy histogram Lab/HSV đúng trên vật thể
-                mask_u8 = np.array([255 if m else 0 for m in fg_mask], dtype=np.uint8).reshape((64, 64))
-                bgr_64 = cv2.cvtColor(np.asarray(small_64, dtype=np.uint8), cv2.COLOR_RGB2BGR)
-                hsv_64 = cv2.cvtColor(bgr_64, cv2.COLOR_BGR2HSV)
-                non_glare = cv2.inRange(hsv_64, (0, 0, 15), (180, 255, 232))
+                mask_u8 = np.array([255 if m else 0 for m in fg_mask], dtype=np.uint8).reshape((48, 48))
+                bgr_48 = cv2.cvtColor(np.asarray(small_48, dtype=np.uint8), cv2.COLOR_RGB2BGR)
+                hsv_48 = cv2.cvtColor(bgr_48, cv2.COLOR_BGR2HSV)
+                non_glare = cv2.inRange(hsv_48, (0, 0, 15), (180, 255, 232))
                 obj_mask = cv2.bitwise_and(mask_u8, non_glare)
-                if cv2.countNonZero(obj_mask) < 12:
+                if cv2.countNonZero(obj_mask) < 10:
                     obj_mask = mask_u8
 
-                global_h = cv2.calcHist([hsv_64], [0], obj_mask, [16], [0, 180])
+                global_h = cv2.calcHist([hsv_48], [0], obj_mask, [16], [0, 180])
                 cv2.normalize(global_h, global_h, 1.0, 0.0, cv2.NORM_L1)
 
-                lab_64 = cv2.cvtColor(bgr_64, cv2.COLOR_BGR2LAB)
-                ab_hist = cv2.calcHist([lab_64], [1, 2], obj_mask, [8, 8], [0, 256, 0, 256])
+                lab_48 = cv2.cvtColor(bgr_48, cv2.COLOR_BGR2LAB)
+                ab_hist = cv2.calcHist([lab_48], [1, 2], obj_mask, [8, 8], [0, 256, 0, 256])
                 cv2.normalize(ab_hist, ab_hist, 1.0, 0.0, cv2.NORM_L1)
 
-                core_gray = gray[56:200, 56:200]
+                core_gray = gray[28:100, 28:100]
                 cgx = cv2.Sobel(core_gray, cv2.CV_32F, 1, 0, ksize=3)
                 cgy = cv2.Sobel(core_gray, cv2.CV_32F, 0, 1, ksize=3)
                 cmag, _ = cv2.cartToPolar(cgx, cgy, angleInDegrees=True)
@@ -667,8 +669,8 @@ def calculate_image_features(img_path):
                 aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
                 features = {
-                    "version": 33,
-                    "type": "opencv_v33_masked",
+                    "version": 34,
+                    "type": "opencv_v34_fast",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
@@ -684,7 +686,7 @@ def calculate_image_features(img_path):
                     "visual_colors": list(visual_colors),
                 }
             else:
-                features = _fast_pil_features(image, fg_crop, small_64, fg_mask, visual_colors)
+                features = _fast_pil_features(image, fg_crop, small_48, fg_mask, visual_colors)
 
         save_feature_cache(img_path, features)
         return features
@@ -713,12 +715,6 @@ def _hu_moments_similarity(hu1, hu2):
 
 
 def _model_contradiction_penalty(f1, f2):
-    """
-    Chỉ trừ điểm khi chính các điểm ảnh vật thể có sự khác biệt mẫu mã rõ rệt:
-    1. Chênh lệch độ tươi màu trên vật thể (áo xanh tươi vs áo xám sọc).
-    2. Chênh lệch độ sáng thực trên thân vật thể tối màu (chuột xám bạc vs chuột đen nhám).
-    3. Chênh lệch độ tương phản bề mặt lõi (chuột trơn vs chuột có đèn LED/khe rãnh sắc nét).
-    """
     penalty = 0
 
     s1 = float(f1.get("fg_mean_s", 0.25))
@@ -745,7 +741,7 @@ def image_score(
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác (0–50): Màu sắc vật thể (26đ) + Hình khối & Đường nét (24đ) - Phạt khác mẫu."""
+    """Chấm điểm thị giác (0–50)."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -775,7 +771,7 @@ def image_score(
             ab_inter = float(cv2.compareHist(f1["ab_hist"], f2["ab_hist"], cv2.HISTCMP_INTERSECT))
             cv_color = 0.50 * h_inter + 0.50 * ab_inter
             color_sim = max(cv_color, masked_inter)
-            color_points = max(0, min(26, int(round(((color_sim - 0.18) / 0.38) * 26))))
+            color_points = max(0, min(26, int(round(((color_sim - 0.16) / 0.36) * 26))))
 
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
@@ -816,7 +812,7 @@ def image_score(
             return int(total), float(total / 50.0)
 
         if f1.get("type", "").startswith("pil_v") and f2.get("type", "").startswith("pil_v"):
-            color_points = max(0, min(26, int(round(((masked_inter - 0.18) / 0.38) * 26))))
+            color_points = max(0, min(26, int(round(((masked_inter - 0.16) / 0.36) * 26))))
 
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
@@ -891,7 +887,7 @@ def get_core_keyword(text_name):
 
 
 def similarity(text1, text2):
-    """So khớp tên tổng quát: Bắt buộc có chung danh từ/từ khóa thực thể, không bao giờ ghép nhầm khác đồ."""
+    """So khớp tên tổng quát."""
     if not text1 or not text2:
         return 0.0
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
@@ -929,7 +925,7 @@ def similarity(text1, text2):
 
 
 def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None, visual_colors2=None):
-    """Tính điểm màu sắc (0–15), tự bổ sung màu nhận diện từ ảnh nếu bài đăng thiếu màu chữ."""
+    """Tính điểm màu sắc (0–15), tự bổ sung màu chủ đạo từ ảnh nếu bài đăng thiếu màu chữ."""
     m1 = str(lost_item.mau_sac or "").strip().lower()
     m2 = str(found_item.mau_sac or "").strip().lower()
     has_m1 = m1 not in ["none", "null", ""]
@@ -957,7 +953,7 @@ def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None
 
 
 def location_score(loc1, loc2):
-    """Chấm điểm vị trí (0–10), nhận diện cả phòng/lớp liền kề và chuẩn hóa Căn tin."""
+    """Chấm điểm vị trí (0–10)."""
     v1 = normalize_location_text(loc1).lower()
     v2 = normalize_location_text(loc2).lower()
     if not v1 or not v2:
@@ -1378,7 +1374,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát v33: Chấm màu trên từng điểm ảnh vật thể (fg_mask), nâng cao bút đỏ/bút bi/sách."""
+    """Đối sánh siêu nhanh v34: Chỉ tải ảnh của đúng 10 cặp trên trang hiện tại + lọc nhiễu logo góc."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1443,6 +1439,7 @@ def match_items(item_id=None):
                     base_score = ten_score + mau_score + vi_tri_score + ngay_score
 
                     has_both_images = 1 if (lost.has_image and found.has_image) else 0
+                    non_conflict = 0 if color_conflict else 1
 
                     sequence += 1
                     candidates.append({
@@ -1450,6 +1447,7 @@ def match_items(item_id=None):
                         "found": found,
                         "base_score": base_score,
                         "has_both_images": has_both_images,
+                        "non_conflict": non_conflict,
                         "is_same_key": is_same_key,
                         "color_conflict": color_conflict,
                         "score_name": ten_score,
@@ -1461,16 +1459,19 @@ def match_items(item_id=None):
                 except Exception:
                     continue
 
-        candidates.sort(key=lambda x: (x["has_both_images"], x["base_score"], x["seq"]), reverse=True)
+        candidates.sort(
+            key=lambda x: (x["has_both_images"], x["non_conflict"], x["base_score"], x["seq"]),
+            reverse=True
+        )
         total_matches = len(candidates)
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
-        eval_limit = min(total_matches, max(60, page * per_page + 20))
-        top_candidates = candidates[:eval_limit]
+        start_idx = (page - 1) * per_page
+        page_candidates = candidates[start_idx:start_idx + per_page]
 
         urls_to_fetch = set()
-        for item in top_candidates:
+        for item in page_candidates:
             if item["lost"].has_image and item["found"].has_image:
                 if get_feature_cache(item["lost"].hinh_anh) is None:
                     urls_to_fetch.add(item["lost"].hinh_anh)
@@ -1478,12 +1479,12 @@ def match_items(item_id=None):
                     urls_to_fetch.add(item["found"].hinh_anh)
 
         if urls_to_fetch:
-            with ThreadPoolExecutor(max_workers=12) as executor:
+            with ThreadPoolExecutor(max_workers=16) as executor:
                 list(executor.map(calculate_image_features, urls_to_fetch))
             _persist_disk_cache()
 
-        evaluated_matches = []
-        for item in top_candidates:
+        page_matches = []
+        for item in page_candidates:
             lost, found = item["lost"], item["found"]
             v_cols1, v_cols2 = None, None
             if lost.has_image and found.has_image:
@@ -1515,7 +1516,7 @@ def match_items(item_id=None):
             else:
                 ket_luan = "🔴 Khả năng trùng khớp thấp"
 
-            evaluated_matches.append({
+            page_matches.append({
                 "lost": lost,
                 "found": found,
                 "score": total_score,
@@ -1527,9 +1528,7 @@ def match_items(item_id=None):
                 "score_date": item["score_date"],
             })
 
-        evaluated_matches.sort(key=lambda x: x["score"], reverse=True)
-        start_idx = (page - 1) * per_page
-        page_matches = evaluated_matches[start_idx:start_idx + per_page]
+        page_matches.sort(key=lambda x: x["score"], reverse=True)
         gc.collect()
 
         return render_template(
