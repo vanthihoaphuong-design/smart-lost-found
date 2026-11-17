@@ -5,7 +5,6 @@ import json
 import re
 import gc
 import math
-import time
 import colorsys
 import threading
 import urllib3
@@ -34,6 +33,13 @@ try:
     HAS_NUMPY = True
 except Exception as e:
     print(f"Cảnh báo NumPy không khả dụng: {e}")
+
+HAS_OPENCV = False
+try:
+    import cv2
+    HAS_OPENCV = True
+except Exception as e:
+    print(f"Cảnh báo OpenCV không khả dụng: {e}")
 
 cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
 api_key = os.environ.get("CLOUDINARY_API_KEY", "")
@@ -71,7 +77,10 @@ def format_vn_date(date_val):
 
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
+MODEL_DIR = os.path.join("static", "models")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(MODEL_DIR, exist_ok=True)
+
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 12_000_000
@@ -112,16 +121,59 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v37.json"
-PAIR_CACHE_FILE = "pair_score_cache_v37.json"
+# ==============================================================================
+# KHỞI TẠO MÔ HÌNH THỊ GIÁC HỌC SÂU SIÊU NHẸ (SqueezeNet 4.8MB qua OpenCV DNN)
+# ==============================================================================
+DNN_MODEL_PATH = os.path.join(MODEL_DIR, "squeezenet1.1-7.onnx")
+DNN_MODEL_URL = "https://github.com/onnx/models/raw/main/validated/vision/classification/squeezenet/model/squeezenet1.1-7.onnx"
+DNN_NET = None
+DNN_LOCK = threading.Lock()
+
+
+def _get_dnn_net():
+    """Nạp SqueezeNet 4.8MB bằng OpenCV C++ (chỉ ~15MB RAM, không dùng onnxruntime)."""
+    global DNN_NET
+    if not (HAS_OPENCV and HAS_NUMPY):
+        return None
+    if DNN_NET is not None:
+        return DNN_NET
+
+    with DNN_LOCK:
+        if DNN_NET is not None:
+            return DNN_NET
+        if not os.path.isfile(DNN_MODEL_PATH) or os.path.getsize(DNN_MODEL_PATH) < 1_000_000:
+            try:
+                resp = requests.get(DNN_MODEL_URL, timeout=(5, 25), verify=False)
+                if resp.status_code == 200 and len(resp.content) > 1_000_000:
+                    with open(DNN_MODEL_PATH, "wb") as f:
+                        f.write(resp.content)
+            except Exception as dl_err:
+                print(f"Lỗi tải SqueezeNet ONNX: {dl_err}")
+
+        if os.path.isfile(DNN_MODEL_PATH) and os.path.getsize(DNN_MODEL_PATH) > 1_000_000:
+            try:
+                net = cv2.dnn.readNetFromONNX(DNN_MODEL_PATH)
+                net.setPreferableBackend(cv2.dnn.DNN_BACKEND_OPENCV)
+                net.setPreferableTarget(cv2.dnn.DNN_TARGET_CPU)
+                DNN_NET = net
+                print("Đã nạp thành công SqueezeNet OpenCV DNN (4.8MB)!")
+            except Exception as net_err:
+                print(f"Lỗi nạp OpenCV DNN: {net_err}")
+
+    return DNN_NET
+
+
+threading.Thread(target=_get_dnn_net, daemon=True).start()
+
+CACHE_FILE = "feature_cache_v38.json"
 CACHE_LOCK = threading.Lock()
-MAX_CACHE_SIZE = 600
+MAX_CACHE_SIZE = 500
 
 
-def _load_json_dict(path):
+def _load_disk_cache():
     try:
-        if os.path.isfile(path):
-            with open(path, "r", encoding="utf-8") as f:
+        if os.path.isfile(CACHE_FILE):
+            with open(CACHE_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data
@@ -130,25 +182,24 @@ def _load_json_dict(path):
     return {}
 
 
-FEATURE_CACHE = _load_json_dict(CACHE_FILE)
-PAIR_SCORE_CACHE = _load_json_dict(PAIR_CACHE_FILE)
+FEATURE_CACHE = _load_disk_cache()
 
 
-def _persist_caches():
+def _persist_disk_cache():
     try:
         with CACHE_LOCK:
-            f_data = {k: v for k, v in FEATURE_CACHE.items() if isinstance(v, dict) and v.get("version") == 37}
-            p_data = dict(PAIR_SCORE_CACHE)
+            serializable = {
+                k: v for k, v in FEATURE_CACHE.items()
+                if isinstance(v, dict) and v.get("version") == 38
+            }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(f_data, f)
-        with open(PAIR_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(p_data, f)
+            json.dump(serializable, f)
     except Exception:
         pass
 
 
 HTTP_SESSION = requests.Session()
-adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=1)
+adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=1)
 HTTP_SESSION.mount("http://", adapter)
 HTTP_SESSION.mount("https://", adapter)
 HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
@@ -216,16 +267,11 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[key] = features
 
 
-def _optimize_cloudinary_url(img_path, width=256):
+def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
+    """Tải ảnh thu nhỏ nét (w_224) từ Cloudinary qua Session Keep-Alive."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        return value.replace("/image/upload/", f"/image/upload/w_{width},c_limit,q_auto:good,f_jpg/", 1)
-    return value
-
-
-def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
-    """Tải ảnh thu nhỏ siêu nhẹ (w_160) từ Cloudinary để kiểm tra màu HSV."""
-    value = _optimize_cloudinary_url(img_path, width=160)
+        value = value.replace("/image/upload/", "/image/upload/w_224,c_limit,q_auto:good,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
         response = HTTP_SESSION.get(value, timeout=(2.5, 4.5), verify=False)
         response.raise_for_status()
@@ -243,7 +289,7 @@ def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
 
 
 def _extract_foreground_pil(pil_img):
-    """Tách nền nhẹ RAM trên lưới 48x48, bắt trọn cả vật thể mảnh trên nền sáng."""
+    """Tách nền tự động và cắt gọn khung bao quanh vật thể chính."""
     size = 48
     small = pil_img.resize((size, size), Image.Resampling.BILINEAR)
     px = list(small.getdata())
@@ -300,9 +346,9 @@ def _extract_foreground_pil(pil_img):
 
     if fg_count < 12 or max_x <= min_x + 1 or max_y <= min_y + 1:
         w, h = pil_img.size
-        cropped = pil_img.crop((int(w * 0.20), int(h * 0.20), int(w * 0.80), int(h * 0.80)))
+        cropped = pil_img.crop((int(w * 0.18), int(h * 0.18), int(w * 0.82), int(h * 0.82)))
         fallback_mask = [
-            (10 <= (i % size) < 38 and 10 <= (i // size) < 38)
+            (9 <= (i % size) < 39 and 9 <= (i // size) < 39)
             for i in range(size * size)
         ]
         return cropped, small, fallback_mask
@@ -365,37 +411,40 @@ def _detect_visual_colors_masked(small_48, fg_mask):
         return set()
 
 
-def _compute_masked_color_hist(small_48, fg_mask):
-    eq_48 = ImageOps.autocontrast(small_48, cutoff=2)
-    px_eq = list(eq_48.getdata())
-    fg_indices = [i for i, m in enumerate(fg_mask) if m] or list(range(48 * 48))
+def _extract_squeezenet_embeddings(fg_crop):
+    """
+    Trích xuất vector đặc trưng ngữ nghĩa chuẩn hóa L2 từ SqueezeNet OpenCV DNN
+    trên 2 góc (0° và 90°) để bất biến hoàn toàn với chiều chụp ngang/dọc.
+    """
+    net = _get_dnn_net()
+    if net is None or not HAS_NUMPY:
+        return None
 
-    bins = [0.0] * 28
-    count = 0.0
-    for idx_px in fg_indices:
-        rv, gv, bv = px_eq[idx_px]
-        h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
-        if v > 0.92 and s < 0.16:
-            continue
-        if s < 0.16:
-            bins[min(3, int(v * 4.0))] += 1.0
-        else:
-            h_pos = (h * 12.0) % 12.0
-            h0 = int(h_pos)
-            frac = h_pos - h0
-            bins[4 + h0] += (1.0 - frac * 0.45)
-            bins[4 + ((h0 + 1) % 12)] += (frac * 0.45)
-        rgb_sum = float(rv + gv + bv)
-        if rgb_sum > 30.0:
-            r_bin = min(3, int((rv / rgb_sum) * 4.0))
-            g_bin = min(2, int((gv / rgb_sum) * 3.0))
-            bins[16 + r_bin * 3 + g_bin] += 0.8
-        count += 1.0
+    try:
+        base_224 = ImageOps.autocontrast(fg_crop, cutoff=1).resize((224, 224), Image.Resampling.BILINEAR)
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
-    if count <= 0.0:
-        return [1.0 / 28.0] * 28
-    inv = 1.0 / count
-    return [x * inv for x in bins]
+        embs = []
+        with DNN_LOCK:
+            for angle in (0, 90):
+                img_rot = base_224.rotate(angle) if angle else base_224
+                arr = np.asarray(img_rot, dtype=np.float32) / 255.0
+                arr = (arr - mean) / std
+                blob = np.transpose(arr, (2, 0, 1))[None, ...]
+
+                net.setInput(blob)
+                out = net.forward().flatten().astype(np.float32)
+                out = np.maximum(out, 0.0)
+                norm = float(np.linalg.norm(out))
+                if norm > 1e-6:
+                    out = out / norm
+                embs.append(np.round(out, 4).tolist())
+
+        return embs
+    except Exception as dnn_err:
+        print(f"Lỗi suy luận SqueezeNet DNN: {dnn_err}")
+        return None
 
 
 def _compute_spatial_grid_4x4(fg_crop):
@@ -429,7 +478,7 @@ def _compute_spatial_grid_4x4(fg_crop):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng HSV + cấu trúc cục bộ nhẹ RAM."""
+    """Trích xuất vector SqueezeNet DNN + màu chủ đạo HSV + lưới không gian 4x4."""
     if not check_real_image(img_path):
         return None
 
@@ -450,15 +499,15 @@ def calculate_image_features(img_path):
             image = ImageOps.exif_transpose(source).convert("RGB")
             fg_crop, small_48, fg_mask = _extract_foreground_pil(image)
             visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
-            fg_color_hist = _compute_masked_color_hist(small_48, fg_mask)
+            dnn_embs = _extract_squeezenet_embeddings(fg_crop)
             rot_grids = _compute_spatial_grid_4x4(fg_crop)
 
             cw, ch = fg_crop.size
             aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
             features = {
-                "version": 37,
-                "fg_color_hist": fg_color_hist,
+                "version": 38,
+                "dnn_embs": dnn_embs,
                 "rot_grids": rot_grids,
                 "aspect_ratio": aspect_ratio,
                 "visual_colors": list(visual_colors),
@@ -485,65 +534,6 @@ def _cosine_sim(v1, v2):
     return (dot / (n1 * n2)) if (n1 > 1e-6 and n2 > 1e-6) else 0.0
 
 
-def _query_public_clip_similarity(img1_url, img2_url):
-    """
-    Gọi Public Gradio CLIP/SigLIP Space miễn phí (không cần API Key, 0 MB RAM trên Render).
-    Trả về điểm tương đồng ngữ nghĩa sâu (0.0 – 1.0) hoặc None nếu dịch vụ tạm bận.
-    """
-    if not (str(img1_url).startswith("http") and str(img2_url).startswith("http")):
-        return None
-
-    u1 = _optimize_cloudinary_url(img1_url, width=256)
-    u2 = _optimize_cloudinary_url(img2_url, width=256)
-
-    # Danh sách Public Gradio Spaces hỗ trợ so khớp CLIP Image-to-Image không cần key
-    public_spaces = [
-        ("https://fffiloni-clip-interrogator-2.hf.space", "/gradio_api/call/predict"),
-        ("https://akhaliq-clip-image-similarity.hf.space", "/gradio_api/call/predict"),
-    ]
-
-    for base_url, call_ep in public_spaces:
-        try:
-            payload = {
-                "data": [
-                    {"path": u1, "meta": {"_type": "gradio.FileData"}},
-                    {"path": u2, "meta": {"_type": "gradio.FileData"}},
-                ]
-            }
-            r = HTTP_SESSION.post(base_url + call_ep, json=payload, timeout=(2.5, 4.0))
-            if r.status_code != 200:
-                continue
-            event_id = r.json().get("event_id")
-            if not event_id:
-                continue
-
-            res_r = HTTP_SESSION.get(f"{base_url}{call_ep}/{event_id}", timeout=(2.5, 5.0))
-            if res_r.status_code != 200:
-                continue
-
-            for line in res_r.text.splitlines():
-                if line.startswith("data:"):
-                    arr = json.loads(line[5:].strip())
-                    if isinstance(arr, list) and arr:
-                        val = arr[0]
-                        if isinstance(val, (int, float)):
-                            sim = float(val)
-                            if sim > 1.0:
-                                sim = sim / 100.0
-                            return max(0.0, min(1.0, sim))
-                        if isinstance(val, str):
-                            nums = re.findall(r'0\.\d+|\d+\.\d+', val)
-                            if nums:
-                                sim = float(nums[0])
-                                if sim > 1.0:
-                                    sim = sim / 100.0
-                                return max(0.0, min(1.0, sim))
-        except Exception:
-            continue
-
-    return None
-
-
 def image_score(
     img1_filename,
     img2_filename,
@@ -553,7 +543,8 @@ def image_score(
     """
     Chấm điểm thị giác Hybrid (0–50):
     1. HSV Color Gatekeeper: Khóa trần 10/50 nếu 2 món đồ khác màu.
-    2. Deep CLIP Similarity (không cần key, không tốn RAM) + Dự phòng cấu trúc cục bộ.
+    2. SqueezeNet Deep Feature Cosine Similarity (0–40đ) + Cấu trúc cục bộ (0–10đ):
+       Phân biệt rõ kiểu dáng mặt dây chuyền, sọc áo khoác, LED chuột gaming.
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
@@ -567,48 +558,34 @@ def image_score(
         if color_conflict:
             return 10, 0.20
 
-        pair_key = f"{u1}|||{u2}" if u1 < u2 else f"{u2}|||{u1}"
-        cached_pts = PAIR_SCORE_CACHE.get(pair_key)
-        if isinstance(cached_pts, int) and cached_pts > 0:
-            total = cached_pts if is_same_keyword else min(cached_pts, 12)
-            return int(total), float(total / 50.0)
-
-        # Thử gọi Public CLIP Space để nhận diện ngữ nghĩa vật thể thật
-        clip_sim = _query_public_clip_similarity(u1, u2)
-        if clip_sim is not None:
-            # Ánh xạ ngưỡng Cosine của CLIP: 0.60 -> 14đ | 0.75 -> 30đ | >= 0.88 -> 48đ
-            raw_pts = int(round(12 + ((clip_sim - 0.58) / 0.30) * 36))
-            total = max(10, min(48, raw_pts))
-            with CACHE_LOCK:
-                PAIR_SCORE_CACHE[pair_key] = total
-            if not is_same_keyword and total > 12:
-                total = 12
-            return int(total), float(total / 50.0)
-
-        # Dự phòng cục bộ khi Public Space tạm bận
         f1 = calculate_image_features(u1)
         f2 = calculate_image_features(u2)
         if f1 is None or f2 is None:
             return 0, 0.0
 
-        h1 = f1.get("fg_color_hist", [])
-        h2 = f2.get("fg_color_hist", [])
-        color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
-        color_pts = max(0, min(26, int(round(((color_inter - 0.14) / 0.36) * 26))))
+        embs1 = f1.get("dnn_embs")
+        embs2 = f2.get("dnn_embs")
 
         g1_list = f1.get("rot_grids", [])
         g2_list = f2.get("rot_grids", [])
-        if g1_list and g2_list:
-            best_grid = max(_cosine_sim(g1_list[0], g2) for g2 in g2_list)
-            grid_pts = max(0, min(20, int(round(((best_grid - 0.80) / 0.17) * 20))))
+        best_grid = max(_cosine_sim(g1_list[0], g2) for g2 in g2_list) if (g1_list and g2_list) else 0.88
+
+        if embs1 and embs2:
+            best_dnn = max(
+                _cosine_sim(e1, e2)
+                for e1 in embs1
+                for e2 in embs2
+            )
+            # Kết hợp 80% đặc trưng học sâu SqueezeNet + 20% cấu trúc lưới 4x4:
+            # Ngưỡng khắt khe để loại bỏ cặp khác mẫu (dây chuyền/áo/chuột khác mẫu):
+            # best_dnn = 0.55 -> ~18đ | best_dnn = 0.72 -> ~29đ | best_dnn >= 0.88 -> ~46đ
+            dnn_pts = max(6, min(40, int(round(((best_dnn - 0.42) / 0.48) * 40))))
+            grid_pts = max(2, min(8, int(round(((best_grid - 0.80) / 0.17) * 8))))
+            total = max(10, min(48, dnn_pts + grid_pts))
         else:
-            grid_pts = 10
+            raw_pts = int(round(10 + ((best_grid - 0.80) / 0.17) * 36))
+            total = max(10, min(46, raw_pts))
 
-        ar1 = float(f1.get("aspect_ratio", 0.7))
-        ar2 = float(f2.get("aspect_ratio", 0.7))
-        ar_pts = 2 if abs(ar1 - ar2) < 0.22 else 1
-
-        total = max(10, min(48, color_pts + grid_pts + ar_pts))
         if not is_same_keyword and total > 12:
             total = 12
 
@@ -825,7 +802,7 @@ def lost():
 
         if filename:
             calculate_image_features(filename)
-            _persist_caches()
+            _persist_disk_cache()
 
         try:
             item = LostItem(
@@ -863,7 +840,7 @@ def found():
 
         if filename:
             calculate_image_features(filename)
-            _persist_caches()
+            _persist_disk_cache()
 
         try:
             item = FoundItem(
@@ -1015,7 +992,7 @@ def edit_lost(item_id):
                 item.hinh_anh = res.get("secure_url", "")
                 if item.hinh_anh:
                     calculate_image_features(item.hinh_anh)
-                    _persist_caches()
+                    _persist_disk_cache()
             except Exception:
                 pass
 
@@ -1050,7 +1027,7 @@ def edit_found(item_id):
                 item.hinh_anh = res.get("secure_url", "")
                 if item.hinh_anh:
                     calculate_image_features(item.hinh_anh)
-                    _persist_caches()
+                    _persist_disk_cache()
             except Exception:
                 pass
 
@@ -1147,7 +1124,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh Hybrid v37: HSV Color Gatekeeper + Public CLIP Similarity (không cần key)."""
+    """Đối sánh Hybrid v38: HSV Color Gatekeeper + SqueezeNet OpenCV DNN (4.8MB)."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1254,8 +1231,10 @@ def match_items(item_id=None):
         if urls_to_fetch:
             with ThreadPoolExecutor(max_workers=8) as executor:
                 list(executor.map(calculate_image_features, urls_to_fetch))
+            _persist_disk_cache()
 
-        def _eval_pair(item):
+        page_matches = []
+        for item in page_candidates:
             lost, found = item["lost"], item["found"]
             v_cols1, v_cols2 = None, None
             if lost.has_image and found.has_image:
@@ -1287,7 +1266,7 @@ def match_items(item_id=None):
             else:
                 ket_luan = "🔴 Khả năng trùng khớp thấp"
 
-            return {
+            page_matches.append({
                 "lost": lost,
                 "found": found,
                 "score": total_score,
@@ -1297,12 +1276,8 @@ def match_items(item_id=None):
                 "score_color": mau_score,
                 "score_location": item["score_location"],
                 "score_date": item["score_date"],
-            }
+            })
 
-        with ThreadPoolExecutor(max_workers=6) as executor:
-            page_matches = list(executor.map(_eval_pair, page_candidates))
-
-        _persist_caches()
         page_matches.sort(key=lambda x: x["score"], reverse=True)
         gc.collect()
 
@@ -1365,7 +1340,7 @@ def teacher_check(lost_id, found_id):
             is_same_keyword=is_same_key,
             color_conflict=color_conflict
         )
-        _persist_caches()
+        _persist_disk_cache()
     else:
         anh_score, image_ratio = 0, 0.0
 
