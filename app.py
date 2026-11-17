@@ -34,20 +34,6 @@ try:
 except Exception as e:
     print(f"Cảnh báo NumPy không khả dụng: {e}")
 
-HAS_ONNX = False
-try:
-    import onnxruntime as ort
-    HAS_ONNX = True
-except Exception as e:
-    print(f"Cảnh báo ONNXRuntime không khả dụng, sử dụng bộ đối sánh không gian 4x4: {e}")
-
-HAS_OPENCV = False
-try:
-    import cv2
-    HAS_OPENCV = True
-except Exception as e:
-    print(f"Cảnh báo OpenCV không khả dụng: {e}")
-
 cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
 api_key = os.environ.get("CLOUDINARY_API_KEY", "")
 api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
@@ -84,10 +70,7 @@ def format_vn_date(date_val):
 
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
-MODEL_DIR = os.path.join("static", "models")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
-os.makedirs(MODEL_DIR, exist_ok=True)
-
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 12_000_000
@@ -128,68 +111,9 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-# ==============================================================================
-# KHỞI TẠO MÔ HÌNH THỊ GIÁC HỌC SÂU NHẸ (MobileNetV3-Small ONNX ~10MB)
-# ==============================================================================
-ONNX_MODEL_PATH = os.path.join(MODEL_DIR, "mobilenetv3_small_100.onnx")
-ONNX_MODEL_URLS = [
-    "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-12.onnx",
-    "https://huggingface.co/onnx-community/mobilenetv3_small_100.lamb_in1k/resolve/main/onnx/model.onnx",
-]
-ONNX_SESSION = None
-ONNX_INPUT_NAME = None
-ONNX_LOCK = threading.Lock()
-
-
-def _get_onnx_session():
-    """Tải 1 lần và khởi tạo InferenceSession nhẹ RAM cho MobileNet ONNX."""
-    global ONNX_SESSION, ONNX_INPUT_NAME
-    if not (HAS_ONNX and HAS_NUMPY):
-        return None, None
-    if ONNX_SESSION is not None:
-        return ONNX_SESSION, ONNX_INPUT_NAME
-
-    with ONNX_LOCK:
-        if ONNX_SESSION is not None:
-            return ONNX_SESSION, ONNX_INPUT_NAME
-
-        if not os.path.isfile(ONNX_MODEL_PATH) or os.path.getsize(ONNX_MODEL_PATH) < 500_000:
-            for url in ONNX_MODEL_URLS:
-                try:
-                    resp = requests.get(url, timeout=(5, 25), verify=False)
-                    if resp.status_code == 200 and len(resp.content) > 500_000:
-                        with open(ONNX_MODEL_PATH, "wb") as f:
-                            f.write(resp.content)
-                        break
-                except Exception as dl_err:
-                    print(f"Thử tải ONNX model từ {url} thất bại: {dl_err}")
-
-        if os.path.isfile(ONNX_MODEL_PATH) and os.path.getsize(ONNX_MODEL_PATH) > 500_000:
-            try:
-                opts = ort.SessionOptions()
-                opts.intra_op_num_threads = 1
-                opts.inter_op_num_threads = 1
-                opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
-                sess = ort.InferenceSession(
-                    ONNX_MODEL_PATH,
-                    sess_options=opts,
-                    providers=["CPUExecutionProvider"]
-                )
-                ONNX_INPUT_NAME = sess.get_inputs()[0].name
-                ONNX_SESSION = sess
-                print("Đã nạp thành công mô hình thị giác học sâu ONNX!")
-            except Exception as ort_err:
-                print(f"Lỗi khởi tạo ONNX session: {ort_err}")
-
-    return ONNX_SESSION, ONNX_INPUT_NAME
-
-
-# Nạp sẵn mô hình ở luồng nền ngay khi khởi động server
-threading.Thread(target=_get_onnx_session, daemon=True).start()
-
-CACHE_FILE = "feature_cache_v35.json"
+CACHE_FILE = "feature_cache_v36.json"
 CACHE_LOCK = threading.Lock()
-MAX_CACHE_SIZE = 600
+MAX_CACHE_SIZE = 500
 
 
 def _load_disk_cache():
@@ -211,7 +135,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("version") == 35
+            if isinstance(v, dict) and v.get("version") == 36
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -220,7 +144,7 @@ def _persist_disk_cache():
 
 
 HTTP_SESSION = requests.Session()
-adapter = requests.adapters.HTTPAdapter(pool_connections=16, pool_maxsize=16, max_retries=1)
+adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=1)
 HTTP_SESSION.mount("http://", adapter)
 HTTP_SESSION.mount("https://", adapter)
 HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
@@ -289,12 +213,12 @@ def save_feature_cache(img_path, features):
 
 
 def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
-    """Tải ảnh thu nhỏ nét (w_224) từ Cloudinary qua Session Keep-Alive."""
+    """Tải ảnh thu nhỏ siêu nhẹ (w_160) từ Cloudinary qua Session Keep-Alive."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_224,c_limit,q_auto:good,f_jpg/", 1)
+        value = value.replace("/image/upload/", "/image/upload/w_160,c_limit,q_auto:low,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
-        response = HTTP_SESSION.get(value, timeout=(2.5, 5.0), verify=False)
+        response = HTTP_SESSION.get(value, timeout=(2.0, 4.0), verify=False)
         response.raise_for_status()
         if len(response.content) > max_bytes:
             return None
@@ -310,7 +234,7 @@ def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
 
 
 def _extract_foreground_pil(pil_img):
-    """Tách nền tự động và cắt gọn khung bao quanh vật thể chính."""
+    """Tách nền nhẹ RAM trên lưới 48x48, bắt trọn cả vật thể mảnh trên nền sáng."""
     size = 48
     small = pil_img.resize((size, size), Image.Resampling.BILINEAR)
     px = list(small.getdata())
@@ -367,16 +291,16 @@ def _extract_foreground_pil(pil_img):
 
     if fg_count < 12 or max_x <= min_x + 1 or max_y <= min_y + 1:
         w, h = pil_img.size
-        cropped = pil_img.crop((int(w * 0.18), int(h * 0.18), int(w * 0.82), int(h * 0.82)))
+        cropped = pil_img.crop((int(w * 0.20), int(h * 0.20), int(w * 0.80), int(h * 0.80)))
         fallback_mask = [
-            (9 <= (i % size) < 39 and 9 <= (i // size) < 39)
+            (10 <= (i % size) < 38 and 10 <= (i // size) < 38)
             for i in range(size * size)
         ]
         return cropped, small, fallback_mask
 
     w, h = pil_img.size
-    pad_x = max(1, int((max_x - min_x) * 0.06))
-    pad_y = max(1, int((max_y - min_y) * 0.06))
+    pad_x = max(1, int((max_x - min_x) * 0.05))
+    pad_y = max(1, int((max_y - min_y) * 0.05))
     x0 = max(0, int(((min_x - pad_x) / size) * w))
     y0 = max(0, int(((min_y - pad_y) / size) * h))
     x1 = min(w, int(((max_x + pad_x) / size) * w))
@@ -387,7 +311,7 @@ def _extract_foreground_pil(pil_img):
 
 
 def _detect_visual_colors_masked(small_48, fg_mask):
-    """Nhận diện màu sắc chủ đạo của vật thể (loại bỏ vết nhiễu/logo góc < 18% diện tích)."""
+    """Nhận diện màu sắc chủ đạo của vật thể (bỏ qua logo/vết nhiễu góc < 18% diện tích)."""
     try:
         px = list(small_48.getdata())
         counts = {}
@@ -432,79 +356,99 @@ def _detect_visual_colors_masked(small_48, fg_mask):
         return set()
 
 
-def _extract_onnx_embeddings(fg_crop):
-    """
-    Trích xuất vector đặc trưng ngữ nghĩa chuẩn hóa L2 từ MobileNet ONNX
-    trên 2 góc (0° và 90°) để bất biến hoàn toàn với chiều chụp ngang/dọc.
-    """
-    sess, input_name = _get_onnx_session()
-    if sess is None or input_name is None or not HAS_NUMPY:
-        return None
+def _compute_masked_color_hist(small_48, fg_mask):
+    """Histogram sắc độ bất biến bóng đổ/lóa sáng trên đúng các điểm ảnh vật thể."""
+    eq_48 = ImageOps.autocontrast(small_48, cutoff=2)
+    px_eq = list(eq_48.getdata())
 
-    try:
-        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
-        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+    fg_indices = [i for i, m in enumerate(fg_mask) if m]
+    if not fg_indices:
+        fg_indices = list(range(48 * 48))
 
-        embeddings = []
-        base_224 = ImageOps.autocontrast(fg_crop, cutoff=1).resize((224, 224), Image.Resampling.BILINEAR)
-        for angle in (0, 90):
-            img_rot = base_224.rotate(angle) if angle else base_224
-            arr = np.asarray(img_rot, dtype=np.float32) / 255.0
-            arr = (arr - mean) / std
-            tensor = np.transpose(arr, (2, 0, 1))[None, ...]
+    bins = [0.0] * 28
+    count = 0.0
 
-            out = sess.run(None, {input_name: tensor})[0].flatten().astype(np.float32)
-            # Chuẩn hóa L2 và giảm bớt nhiễu logit cực nhỏ
-            out = np.maximum(out, -2.0)
-            norm = float(np.linalg.norm(out))
-            if norm > 1e-6:
-                out = out / norm
-            embeddings.append(out.tolist())
+    for idx_px in fg_indices:
+        rv, gv, bv = px_eq[idx_px]
+        h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
+        if v > 0.92 and s < 0.16:
+            continue
 
-        return embeddings
-    except Exception as emb_err:
-        print(f"Lỗi suy luận ONNX embedding: {emb_err}")
-        return None
+        if s < 0.16:
+            idx = min(3, int(v * 4.0))
+            bins[idx] += 1.0
+        else:
+            h_pos = (h * 12.0) % 12.0
+            h0 = int(h_pos)
+            frac = h_pos - h0
+            h1 = (h0 + 1) % 12
+            bins[4 + h0] += (1.0 - frac * 0.45)
+            bins[4 + h1] += (frac * 0.45)
+
+        rgb_sum = float(rv + gv + bv)
+        if rgb_sum > 30.0:
+            rn = rv / rgb_sum
+            gn = gv / rgb_sum
+            r_bin = min(3, int(rn * 4.0))
+            g_bin = min(2, int(gn * 3.0))
+            bins[16 + r_bin * 3 + g_bin] += 0.8
+
+        count += 1.0
+
+    if count <= 0.0:
+        return [1.0 / 28.0] * 28
+    inv = 1.0 / count
+    return [x * inv for x in bins]
 
 
 def _compute_spatial_grid_4x4(fg_crop):
-    """Dự phòng cấu trúc không gian lưới 4x4 khi ONNX chưa sẵn sàng."""
-    img_64 = ImageOps.autocontrast(fg_crop, cutoff=2).resize((64, 64), Image.Resampling.BILINEAR)
-    px = list(img_64.getdata())
-    gray_px = list(img_64.convert("L").getdata())
+    """
+    Trích xuất đặc trưng không gian lưới 4x4 ô (cả 4 góc xoay 0°, 90°, 180°, 270°):
+    Mỗi ô ghi nhận mật độ biên cục bộ (phân biệt chuột trơn vs chuột có LED/logo, áo trơn vs áo sọc)
+    và tỷ lệ sắc độ chuẩn hóa.
+    """
+    base_64 = ImageOps.equalize(fg_crop.convert("L")).resize((64, 64), Image.Resampling.BILINEAR)
+    rot_grids = []
 
-    grid_vec = []
-    for gy in range(4):
-        for gx in range(4):
-            r_sum = g_sum = b_sum = lum_sum = grad_sum = 0.0
-            cnt = 0
-            for y in range(gy * 16, (gy + 1) * 16):
-                row_off = y * 64
-                for x in range(gx * 16, (gx + 1) * 16):
-                    r, g, b = px[row_off + x]
-                    r_sum += r
-                    g_sum += g
-                    b_sum += b
-                    lum_sum += gray_px[row_off + x]
-                    if 0 < x < 63 and 0 < y < 63:
-                        dx = abs(gray_px[row_off + x + 1] - gray_px[row_off + x - 1])
-                        dy = abs(gray_px[row_off + 64 + x] - gray_px[row_off - 64 + x])
-                        grad_sum += (dx + dy) * 0.5
-                    cnt += 1
-            mean_lum = lum_sum / max(1, cnt)
-            mean_grad = grad_sum / max(1, cnt)
-            rgb_tot = max(1.0, r_sum + g_sum + b_sum)
-            grid_vec.extend([
-                r_sum / rgb_tot,
-                g_sum / rgb_tot,
-                mean_lum / 255.0,
-                mean_grad / 128.0
-            ])
-    return grid_vec
+    for angle in (0, 90, 180, 270):
+        g_img = base_64.rotate(angle) if angle else base_64
+        g_px = list(g_img.getdata())
+
+        vec = []
+        for gy in range(4):
+            for gx in range(4):
+                lum_sum = 0.0
+                grad_sum = 0.0
+                lum_sq_sum = 0.0
+                cnt = 0
+                for y in range(gy * 16, (gy + 1) * 16):
+                    row_off = y * 64
+                    for x in range(gx * 16, (gx + 1) * 16):
+                        val = float(g_px[row_off + x])
+                        lum_sum += val
+                        lum_sq_sum += val * val
+                        if 0 < x < 63 and 0 < y < 63:
+                            dx = abs(float(g_px[row_off + x + 1] - g_px[row_off + x - 1]))
+                            dy = abs(float(g_px[row_off + 64 + x] - g_px[row_off - 64 + x]))
+                            grad_sum += math.hypot(dx, dy)
+                        cnt += 1
+                mean_lum = lum_sum / max(1, cnt)
+                var_lum = max(0.0, (lum_sq_sum / max(1, cnt)) - (mean_lum * mean_lum))
+                std_lum = math.sqrt(var_lum)
+                mean_grad = grad_sum / max(1, cnt)
+
+                vec.extend([
+                    mean_lum / 255.0,
+                    std_lum / 128.0,
+                    mean_grad / 150.0
+                ])
+        rot_grids.append(vec)
+
+    return rot_grids
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng ngữ nghĩa ONNX + lưới không gian 4x4 + màu chủ đạo."""
+    """Trích xuất đặc trưng v36 siêu nhẹ RAM (< 10KB/ảnh): Sắc độ vật thể + Lưới cấu trúc 4x4."""
     if not check_real_image(img_path):
         return None
 
@@ -525,16 +469,31 @@ def calculate_image_features(img_path):
             image = ImageOps.exif_transpose(source).convert("RGB")
             fg_crop, small_48, fg_mask = _extract_foreground_pil(image)
             visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
-            onnx_embs = _extract_onnx_embeddings(fg_crop)
-            spatial_4x4 = _compute_spatial_grid_4x4(fg_crop)
+            fg_color_hist = _compute_masked_color_hist(small_48, fg_mask)
+            rot_grids = _compute_spatial_grid_4x4(fg_crop)
+
+            fg_canvas = fg_crop.resize((64, 64), Image.Resampling.BILINEAR)
+            gray_fg = ImageOps.equalize(fg_canvas.convert("L"))
+            phashes = []
+            for angle in (0, 90, 180, 270):
+                rot_g = gray_fg.rotate(angle) if angle else gray_fg
+                tiny_d = rot_g.resize((9, 8), Image.Resampling.BILINEAR)
+                px_d = list(tiny_d.getdata())
+                d_val = 0
+                for row in range(8):
+                    base = row * 9
+                    for col in range(8):
+                        d_val = (d_val << 1) | (1 if px_d[base + col] > px_d[base + col + 1] else 0)
+                phashes.append(d_val)
 
             cw, ch = fg_crop.size
             aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
             features = {
-                "version": 35,
-                "onnx_embs": onnx_embs,
-                "spatial_4x4": spatial_4x4,
+                "version": 36,
+                "fg_color_hist": fg_color_hist,
+                "rot_grids": rot_grids,
+                "phashes": phashes,
                 "aspect_ratio": aspect_ratio,
                 "visual_colors": list(visual_colors),
             }
@@ -567,9 +526,9 @@ def image_score(
     color_conflict=False
 ):
     """
-    Chấm điểm thị giác học sâu (0–50):
-    - Ưu tiên độ tương đồng ngữ nghĩa Cosine từ MobileNet ONNX (tự hiểu cấu trúc vật thể, logo, LED, bìa sách, bút).
-    - Khóa trần 10/50 nếu xung đột màu sắc rõ rệt (bút đen vs bút đỏ).
+    Chấm điểm thị giác (0–50):
+    - 24đ Sắc độ chuẩn hóa vật thể (không phạt chéo độ sáng/nền -> Bút đỏ & Sách đạt điểm cao).
+    - 26đ Cấu trúc không gian lưới 4x4 + dHash đa góc (phân biệt chi tiết LED/sọc/họa tiết).
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
@@ -583,27 +542,33 @@ def image_score(
         if f1 is None or f2 is None:
             return 0, 0.0
 
-        embs1 = f1.get("onnx_embs")
-        embs2 = f2.get("onnx_embs")
+        # 1. Điểm sắc độ vật thể (0–24đ)
+        h1 = f1.get("fg_color_hist", [])
+        h2 = f2.get("fg_color_hist", [])
+        color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
+        color_pts = max(0, min(24, int(round(((color_inter - 0.14) / 0.36) * 24))))
 
-        if embs1 and embs2:
-            # Lấy độ tương đồng Cosine lớn nhất giữa các góc xoay (0° và 90°)
-            best_cos = max(
-                _cosine_sim(e1, e2)
-                for e1 in embs1
-                for e2 in embs2
-            )
-            # Ánh xạ tuyến tính ngưỡng Cosine thực tế của MobileNet:
-            # 0.35 -> 12đ | 0.55 -> 25đ | 0.72 -> 38đ | >= 0.85 -> 48đ
-            raw_pts = int(round(10 + ((best_cos - 0.32) / 0.53) * 38))
-            total = max(10, min(48, raw_pts))
+        # 2. Điểm cấu trúc không gian lưới 4x4 (0–18đ)
+        g1_list = f1.get("rot_grids", [])
+        g2_list = f2.get("rot_grids", [])
+        if g1_list and g2_list:
+            best_grid = max(_cosine_sim(g1_list[0], g2) for g2 in g2_list)
+            # Nâng độ nhạy phân biệt họa tiết từng ô: 0.80 -> 2đ, 0.97 -> 18đ
+            grid_pts = max(0, min(18, int(round(((best_grid - 0.80) / 0.17) * 18))))
         else:
-            # Dự phòng bằng cấu trúc không gian lưới 4x4
-            s1 = f1.get("spatial_4x4", [])
-            s2 = f2.get("spatial_4x4", [])
-            grid_sim = _cosine_sim(s1, s2)
-            raw_pts = int(round(10 + ((grid_sim - 0.78) / 0.20) * 36))
-            total = max(10, min(46, raw_pts))
+            grid_pts = 9
+
+        # 3. Điểm hình khối dHash 4 góc + tỷ lệ khung (0–8đ)
+        p1_list = f1.get("phashes", [0])
+        p2_list = f2.get("phashes", [0])
+        min_d = min((int(p1_list[0]) ^ int(p2)).bit_count() for p2 in p2_list)
+        hash_pts = max(0, min(6, int(round(((36.0 - min_d) / 22.0) * 6))))
+
+        ar1 = float(f1.get("aspect_ratio", 0.7))
+        ar2 = float(f2.get("aspect_ratio", 0.7))
+        ar_pts = 2 if abs(ar1 - ar2) < 0.22 else 1
+
+        total = max(10, min(48, color_pts + grid_pts + hash_pts + ar_pts))
 
         if color_conflict:
             total = min(total, 10)
@@ -1145,7 +1110,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh ngữ nghĩa học sâu v35: MobileNet ONNX + đối chiếu màu chủ đạo."""
+    """Đối sánh v36: Siêu nhẹ RAM (< 65MB) + Lưới cấu trúc không gian 4x4 + Sắc độ vật thể."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1250,7 +1215,7 @@ def match_items(item_id=None):
                     urls_to_fetch.add(item["found"].hinh_anh)
 
         if urls_to_fetch:
-            with ThreadPoolExecutor(max_workers=12) as executor:
+            with ThreadPoolExecutor(max_workers=8) as executor:
                 list(executor.map(calculate_image_features, urls_to_fetch))
             _persist_disk_cache()
 
