@@ -5,6 +5,7 @@ import json
 import re
 import gc
 import math
+import time
 import colorsys
 import threading
 import urllib3
@@ -20,7 +21,7 @@ from difflib import SequenceMatcher
 import cloudinary
 import cloudinary.uploader
 
-from PIL import Image, ImageOps, ImageFile, ImageFilter
+from PIL import Image, ImageOps, ImageFile
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -111,15 +112,16 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v36.json"
+CACHE_FILE = "feature_cache_v37.json"
+PAIR_CACHE_FILE = "pair_score_cache_v37.json"
 CACHE_LOCK = threading.Lock()
-MAX_CACHE_SIZE = 500
+MAX_CACHE_SIZE = 600
 
 
-def _load_disk_cache():
+def _load_json_dict(path):
     try:
-        if os.path.isfile(CACHE_FILE):
-            with open(CACHE_FILE, "r", encoding="utf-8") as f:
+        if os.path.isfile(path):
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 if isinstance(data, dict):
                     return data
@@ -128,23 +130,25 @@ def _load_disk_cache():
     return {}
 
 
-FEATURE_CACHE = _load_disk_cache()
+FEATURE_CACHE = _load_json_dict(CACHE_FILE)
+PAIR_SCORE_CACHE = _load_json_dict(PAIR_CACHE_FILE)
 
 
-def _persist_disk_cache():
+def _persist_caches():
     try:
-        serializable = {
-            k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("version") == 36
-        }
+        with CACHE_LOCK:
+            f_data = {k: v for k, v in FEATURE_CACHE.items() if isinstance(v, dict) and v.get("version") == 37}
+            p_data = dict(PAIR_SCORE_CACHE)
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(serializable, f)
+            json.dump(f_data, f)
+        with open(PAIR_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(p_data, f)
     except Exception:
         pass
 
 
 HTTP_SESSION = requests.Session()
-adapter = requests.adapters.HTTPAdapter(pool_connections=8, pool_maxsize=8, max_retries=1)
+adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=1)
 HTTP_SESSION.mount("http://", adapter)
 HTTP_SESSION.mount("https://", adapter)
 HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
@@ -212,13 +216,18 @@ def save_feature_cache(img_path, features):
         FEATURE_CACHE[key] = features
 
 
-def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
-    """Tải ảnh thu nhỏ siêu nhẹ (w_160) từ Cloudinary qua Session Keep-Alive."""
+def _optimize_cloudinary_url(img_path, width=256):
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_160,c_limit,q_auto:low,f_jpg/", 1)
+        return value.replace("/image/upload/", f"/image/upload/w_{width},c_limit,q_auto:good,f_jpg/", 1)
+    return value
+
+
+def _read_image_bytes(img_path, max_bytes=2 * 1024 * 1024):
+    """Tải ảnh thu nhỏ siêu nhẹ (w_160) từ Cloudinary để kiểm tra màu HSV."""
+    value = _optimize_cloudinary_url(img_path, width=160)
     if value.startswith(("http://", "https://")):
-        response = HTTP_SESSION.get(value, timeout=(2.0, 4.0), verify=False)
+        response = HTTP_SESSION.get(value, timeout=(2.5, 4.5), verify=False)
         response.raise_for_status()
         if len(response.content) > max_bytes:
             return None
@@ -311,7 +320,7 @@ def _extract_foreground_pil(pil_img):
 
 
 def _detect_visual_colors_masked(small_48, fg_mask):
-    """Nhận diện màu sắc chủ đạo của vật thể (bỏ qua logo/vết nhiễu góc < 18% diện tích)."""
+    """Lớp 1 (HSV Gatekeeper): Nhận diện màu sắc chủ đạo của vật thể."""
     try:
         px = list(small_48.getdata())
         counts = {}
@@ -357,42 +366,30 @@ def _detect_visual_colors_masked(small_48, fg_mask):
 
 
 def _compute_masked_color_hist(small_48, fg_mask):
-    """Histogram sắc độ bất biến bóng đổ/lóa sáng trên đúng các điểm ảnh vật thể."""
     eq_48 = ImageOps.autocontrast(small_48, cutoff=2)
     px_eq = list(eq_48.getdata())
-
-    fg_indices = [i for i, m in enumerate(fg_mask) if m]
-    if not fg_indices:
-        fg_indices = list(range(48 * 48))
+    fg_indices = [i for i, m in enumerate(fg_mask) if m] or list(range(48 * 48))
 
     bins = [0.0] * 28
     count = 0.0
-
     for idx_px in fg_indices:
         rv, gv, bv = px_eq[idx_px]
         h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
         if v > 0.92 and s < 0.16:
             continue
-
         if s < 0.16:
-            idx = min(3, int(v * 4.0))
-            bins[idx] += 1.0
+            bins[min(3, int(v * 4.0))] += 1.0
         else:
             h_pos = (h * 12.0) % 12.0
             h0 = int(h_pos)
             frac = h_pos - h0
-            h1 = (h0 + 1) % 12
             bins[4 + h0] += (1.0 - frac * 0.45)
-            bins[4 + h1] += (frac * 0.45)
-
+            bins[4 + ((h0 + 1) % 12)] += (frac * 0.45)
         rgb_sum = float(rv + gv + bv)
         if rgb_sum > 30.0:
-            rn = rv / rgb_sum
-            gn = gv / rgb_sum
-            r_bin = min(3, int(rn * 4.0))
-            g_bin = min(2, int(gn * 3.0))
+            r_bin = min(3, int((rv / rgb_sum) * 4.0))
+            g_bin = min(2, int((gv / rgb_sum) * 3.0))
             bins[16 + r_bin * 3 + g_bin] += 0.8
-
         count += 1.0
 
     if count <= 0.0:
@@ -402,24 +399,15 @@ def _compute_masked_color_hist(small_48, fg_mask):
 
 
 def _compute_spatial_grid_4x4(fg_crop):
-    """
-    Trích xuất đặc trưng không gian lưới 4x4 ô (cả 4 góc xoay 0°, 90°, 180°, 270°):
-    Mỗi ô ghi nhận mật độ biên cục bộ (phân biệt chuột trơn vs chuột có LED/logo, áo trơn vs áo sọc)
-    và tỷ lệ sắc độ chuẩn hóa.
-    """
     base_64 = ImageOps.equalize(fg_crop.convert("L")).resize((64, 64), Image.Resampling.BILINEAR)
     rot_grids = []
-
     for angle in (0, 90, 180, 270):
         g_img = base_64.rotate(angle) if angle else base_64
         g_px = list(g_img.getdata())
-
         vec = []
         for gy in range(4):
             for gx in range(4):
-                lum_sum = 0.0
-                grad_sum = 0.0
-                lum_sq_sum = 0.0
+                lum_sum = grad_sum = lum_sq_sum = 0.0
                 cnt = 0
                 for y in range(gy * 16, (gy + 1) * 16):
                     row_off = y * 64
@@ -433,22 +421,15 @@ def _compute_spatial_grid_4x4(fg_crop):
                             grad_sum += math.hypot(dx, dy)
                         cnt += 1
                 mean_lum = lum_sum / max(1, cnt)
-                var_lum = max(0.0, (lum_sq_sum / max(1, cnt)) - (mean_lum * mean_lum))
-                std_lum = math.sqrt(var_lum)
+                std_lum = math.sqrt(max(0.0, (lum_sq_sum / max(1, cnt)) - (mean_lum * mean_lum)))
                 mean_grad = grad_sum / max(1, cnt)
-
-                vec.extend([
-                    mean_lum / 255.0,
-                    std_lum / 128.0,
-                    mean_grad / 150.0
-                ])
+                vec.extend([mean_lum / 255.0, std_lum / 128.0, mean_grad / 150.0])
         rot_grids.append(vec)
-
     return rot_grids
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng v36 siêu nhẹ RAM (< 10KB/ảnh): Sắc độ vật thể + Lưới cấu trúc 4x4."""
+    """Trích xuất đặc trưng HSV + cấu trúc cục bộ nhẹ RAM."""
     if not check_real_image(img_path):
         return None
 
@@ -472,28 +453,13 @@ def calculate_image_features(img_path):
             fg_color_hist = _compute_masked_color_hist(small_48, fg_mask)
             rot_grids = _compute_spatial_grid_4x4(fg_crop)
 
-            fg_canvas = fg_crop.resize((64, 64), Image.Resampling.BILINEAR)
-            gray_fg = ImageOps.equalize(fg_canvas.convert("L"))
-            phashes = []
-            for angle in (0, 90, 180, 270):
-                rot_g = gray_fg.rotate(angle) if angle else gray_fg
-                tiny_d = rot_g.resize((9, 8), Image.Resampling.BILINEAR)
-                px_d = list(tiny_d.getdata())
-                d_val = 0
-                for row in range(8):
-                    base = row * 9
-                    for col in range(8):
-                        d_val = (d_val << 1) | (1 if px_d[base + col] > px_d[base + col + 1] else 0)
-                phashes.append(d_val)
-
             cw, ch = fg_crop.size
             aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
             features = {
-                "version": 36,
+                "version": 37,
                 "fg_color_hist": fg_color_hist,
                 "rot_grids": rot_grids,
-                "phashes": phashes,
                 "aspect_ratio": aspect_ratio,
                 "visual_colors": list(visual_colors),
             }
@@ -519,6 +485,65 @@ def _cosine_sim(v1, v2):
     return (dot / (n1 * n2)) if (n1 > 1e-6 and n2 > 1e-6) else 0.0
 
 
+def _query_public_clip_similarity(img1_url, img2_url):
+    """
+    Gọi Public Gradio CLIP/SigLIP Space miễn phí (không cần API Key, 0 MB RAM trên Render).
+    Trả về điểm tương đồng ngữ nghĩa sâu (0.0 – 1.0) hoặc None nếu dịch vụ tạm bận.
+    """
+    if not (str(img1_url).startswith("http") and str(img2_url).startswith("http")):
+        return None
+
+    u1 = _optimize_cloudinary_url(img1_url, width=256)
+    u2 = _optimize_cloudinary_url(img2_url, width=256)
+
+    # Danh sách Public Gradio Spaces hỗ trợ so khớp CLIP Image-to-Image không cần key
+    public_spaces = [
+        ("https://fffiloni-clip-interrogator-2.hf.space", "/gradio_api/call/predict"),
+        ("https://akhaliq-clip-image-similarity.hf.space", "/gradio_api/call/predict"),
+    ]
+
+    for base_url, call_ep in public_spaces:
+        try:
+            payload = {
+                "data": [
+                    {"path": u1, "meta": {"_type": "gradio.FileData"}},
+                    {"path": u2, "meta": {"_type": "gradio.FileData"}},
+                ]
+            }
+            r = HTTP_SESSION.post(base_url + call_ep, json=payload, timeout=(2.5, 4.0))
+            if r.status_code != 200:
+                continue
+            event_id = r.json().get("event_id")
+            if not event_id:
+                continue
+
+            res_r = HTTP_SESSION.get(f"{base_url}{call_ep}/{event_id}", timeout=(2.5, 5.0))
+            if res_r.status_code != 200:
+                continue
+
+            for line in res_r.text.splitlines():
+                if line.startswith("data:"):
+                    arr = json.loads(line[5:].strip())
+                    if isinstance(arr, list) and arr:
+                        val = arr[0]
+                        if isinstance(val, (int, float)):
+                            sim = float(val)
+                            if sim > 1.0:
+                                sim = sim / 100.0
+                            return max(0.0, min(1.0, sim))
+                        if isinstance(val, str):
+                            nums = re.findall(r'0\.\d+|\d+\.\d+', val)
+                            if nums:
+                                sim = float(nums[0])
+                                if sim > 1.0:
+                                    sim = sim / 100.0
+                                return max(0.0, min(1.0, sim))
+        except Exception:
+            continue
+
+    return None
+
+
 def image_score(
     img1_filename,
     img2_filename,
@@ -526,52 +551,64 @@ def image_score(
     color_conflict=False
 ):
     """
-    Chấm điểm thị giác (0–50):
-    - 24đ Sắc độ chuẩn hóa vật thể (không phạt chéo độ sáng/nền -> Bút đỏ & Sách đạt điểm cao).
-    - 26đ Cấu trúc không gian lưới 4x4 + dHash đa góc (phân biệt chi tiết LED/sọc/họa tiết).
+    Chấm điểm thị giác Hybrid (0–50):
+    1. HSV Color Gatekeeper: Khóa trần 10/50 nếu 2 món đồ khác màu.
+    2. Deep CLIP Similarity (không cần key, không tốn RAM) + Dự phòng cấu trúc cục bộ.
     """
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
 
-        if str(img1_filename).strip() == str(img2_filename).strip():
+        u1 = str(img1_filename).strip()
+        u2 = str(img2_filename).strip()
+        if u1 == u2:
             return 50, 1.0
 
-        f1 = calculate_image_features(img1_filename)
-        f2 = calculate_image_features(img2_filename)
+        if color_conflict:
+            return 10, 0.20
+
+        pair_key = f"{u1}|||{u2}" if u1 < u2 else f"{u2}|||{u1}"
+        cached_pts = PAIR_SCORE_CACHE.get(pair_key)
+        if isinstance(cached_pts, int) and cached_pts > 0:
+            total = cached_pts if is_same_keyword else min(cached_pts, 12)
+            return int(total), float(total / 50.0)
+
+        # Thử gọi Public CLIP Space để nhận diện ngữ nghĩa vật thể thật
+        clip_sim = _query_public_clip_similarity(u1, u2)
+        if clip_sim is not None:
+            # Ánh xạ ngưỡng Cosine của CLIP: 0.60 -> 14đ | 0.75 -> 30đ | >= 0.88 -> 48đ
+            raw_pts = int(round(12 + ((clip_sim - 0.58) / 0.30) * 36))
+            total = max(10, min(48, raw_pts))
+            with CACHE_LOCK:
+                PAIR_SCORE_CACHE[pair_key] = total
+            if not is_same_keyword and total > 12:
+                total = 12
+            return int(total), float(total / 50.0)
+
+        # Dự phòng cục bộ khi Public Space tạm bận
+        f1 = calculate_image_features(u1)
+        f2 = calculate_image_features(u2)
         if f1 is None or f2 is None:
             return 0, 0.0
 
-        # 1. Điểm sắc độ vật thể (0–24đ)
         h1 = f1.get("fg_color_hist", [])
         h2 = f2.get("fg_color_hist", [])
         color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
-        color_pts = max(0, min(24, int(round(((color_inter - 0.14) / 0.36) * 24))))
+        color_pts = max(0, min(26, int(round(((color_inter - 0.14) / 0.36) * 26))))
 
-        # 2. Điểm cấu trúc không gian lưới 4x4 (0–18đ)
         g1_list = f1.get("rot_grids", [])
         g2_list = f2.get("rot_grids", [])
         if g1_list and g2_list:
             best_grid = max(_cosine_sim(g1_list[0], g2) for g2 in g2_list)
-            # Nâng độ nhạy phân biệt họa tiết từng ô: 0.80 -> 2đ, 0.97 -> 18đ
-            grid_pts = max(0, min(18, int(round(((best_grid - 0.80) / 0.17) * 18))))
+            grid_pts = max(0, min(20, int(round(((best_grid - 0.80) / 0.17) * 20))))
         else:
-            grid_pts = 9
-
-        # 3. Điểm hình khối dHash 4 góc + tỷ lệ khung (0–8đ)
-        p1_list = f1.get("phashes", [0])
-        p2_list = f2.get("phashes", [0])
-        min_d = min((int(p1_list[0]) ^ int(p2)).bit_count() for p2 in p2_list)
-        hash_pts = max(0, min(6, int(round(((36.0 - min_d) / 22.0) * 6))))
+            grid_pts = 10
 
         ar1 = float(f1.get("aspect_ratio", 0.7))
         ar2 = float(f2.get("aspect_ratio", 0.7))
         ar_pts = 2 if abs(ar1 - ar2) < 0.22 else 1
 
-        total = max(10, min(48, color_pts + grid_pts + hash_pts + ar_pts))
-
-        if color_conflict:
-            total = min(total, 10)
+        total = max(10, min(48, color_pts + grid_pts + ar_pts))
         if not is_same_keyword and total > 12:
             total = 12
 
@@ -661,7 +698,7 @@ def similarity(text1, text2):
 
 
 def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None, visual_colors2=None):
-    """Tính điểm màu sắc (0–15), tự bổ sung màu chủ đạo từ ảnh nếu bài đăng thiếu màu chữ."""
+    """Tính điểm màu sắc (0–15), tự bổ sung màu chủ đạo từ HSV ảnh nếu bài đăng thiếu màu chữ."""
     m1 = str(lost_item.mau_sac or "").strip().lower()
     m2 = str(found_item.mau_sac or "").strip().lower()
     has_m1 = m1 not in ["none", "null", ""]
@@ -788,7 +825,7 @@ def lost():
 
         if filename:
             calculate_image_features(filename)
-            _persist_disk_cache()
+            _persist_caches()
 
         try:
             item = LostItem(
@@ -826,7 +863,7 @@ def found():
 
         if filename:
             calculate_image_features(filename)
-            _persist_disk_cache()
+            _persist_caches()
 
         try:
             item = FoundItem(
@@ -978,7 +1015,7 @@ def edit_lost(item_id):
                 item.hinh_anh = res.get("secure_url", "")
                 if item.hinh_anh:
                     calculate_image_features(item.hinh_anh)
-                    _persist_disk_cache()
+                    _persist_caches()
             except Exception:
                 pass
 
@@ -1013,7 +1050,7 @@ def edit_found(item_id):
                 item.hinh_anh = res.get("secure_url", "")
                 if item.hinh_anh:
                     calculate_image_features(item.hinh_anh)
-                    _persist_disk_cache()
+                    _persist_caches()
             except Exception:
                 pass
 
@@ -1110,7 +1147,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v36: Siêu nhẹ RAM (< 65MB) + Lưới cấu trúc không gian 4x4 + Sắc độ vật thể."""
+    """Đối sánh Hybrid v37: HSV Color Gatekeeper + Public CLIP Similarity (không cần key)."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1217,10 +1254,8 @@ def match_items(item_id=None):
         if urls_to_fetch:
             with ThreadPoolExecutor(max_workers=8) as executor:
                 list(executor.map(calculate_image_features, urls_to_fetch))
-            _persist_disk_cache()
 
-        page_matches = []
-        for item in page_candidates:
+        def _eval_pair(item):
             lost, found = item["lost"], item["found"]
             v_cols1, v_cols2 = None, None
             if lost.has_image and found.has_image:
@@ -1252,7 +1287,7 @@ def match_items(item_id=None):
             else:
                 ket_luan = "🔴 Khả năng trùng khớp thấp"
 
-            page_matches.append({
+            return {
                 "lost": lost,
                 "found": found,
                 "score": total_score,
@@ -1262,8 +1297,12 @@ def match_items(item_id=None):
                 "score_color": mau_score,
                 "score_location": item["score_location"],
                 "score_date": item["score_date"],
-            })
+            }
 
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            page_matches = list(executor.map(_eval_pair, page_candidates))
+
+        _persist_caches()
         page_matches.sort(key=lambda x: x["score"], reverse=True)
         gc.collect()
 
@@ -1326,6 +1365,7 @@ def teacher_check(lost_id, found_id):
             is_same_keyword=is_same_key,
             color_conflict=color_conflict
         )
+        _persist_caches()
     else:
         anh_score, image_ratio = 0, 0.0
 
