@@ -11,4 +11,3 @@ cloudinary
 Werkzeug
 Pillow
 numpy
-opencv-python-headless
