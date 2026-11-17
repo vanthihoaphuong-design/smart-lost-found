@@ -54,14 +54,20 @@
     </div>
     {% endif %}
 
-    <div class="check-card">
+    {% set lost_img_url = (lost.hinh_anh if lost.hinh_anh.startswith('http') else url_for('uploaded_file', filename=lost.hinh_anh)) if lost.hinh_anh else '' %}
+    {% set found_img_url = (found.hinh_anh if found.hinh_anh.startswith('http') else url_for('uploaded_file', filename=found.hinh_anh)) if found.hinh_anh else '' %}
+
+    <div class="check-card" id="teacherCheckCard"
+         data-lost-img="{{ lost_img_url }}"
+         data-found-img="{{ found_img_url }}"
+         data-server-score="{{ score }}">
         <div class="row align-items-center">
             <!-- BÀI BÁO MẤT -->
             <div class="col-md-5 text-center border-end">
                 <span class="badge bg-danger mb-3 px-3 py-2">ĐỒ BỊ MẤT</span>
                 <div>
-                    <div class="img-check-box" onclick="openLightbox('{{ lost.hinh_anh }}')">
-                        <img src="{{ lost.hinh_anh }}" class="check-img" alt="Lost" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'p-4 bg-light border rounded\'>📷 Chưa có ảnh</div>';">
+                    <div class="img-check-box" onclick="openLightbox('{{ lost_img_url }}')">
+                        <img src="{{ lost_img_url }}" crossorigin="anonymous" class="check-img" alt="Lost" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'p-4 bg-light border rounded\'>📷 Chưa có ảnh</div>';">
                         <span class="zoom-hint">🔍 Nhấp để Phóng to</span>
                     </div>
                 </div>
@@ -78,8 +84,8 @@
             <div class="col-md-5 text-center">
                 <span class="badge bg-success mb-3 px-3 py-2">ĐỒ NHẶT ĐƯỢC</span>
                 <div>
-                    <div class="img-check-box" onclick="openLightbox('{{ found.hinh_anh }}')">
-                        <img src="{{ found.hinh_anh }}" class="check-img" alt="Found" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'p-4 bg-light border rounded\'>📷 Chưa có ảnh</div>';">
+                    <div class="img-check-box" onclick="openLightbox('{{ found_img_url }}')">
+                        <img src="{{ found_img_url }}" crossorigin="anonymous" class="check-img" alt="Found" onerror="this.onerror=null; this.parentElement.innerHTML='<div class=\'p-4 bg-light border rounded\'>📷 Chưa có ảnh</div>';">
                         <span class="zoom-hint">🔍 Nhấp để Phóng to</span>
                     </div>
                 </div>
@@ -96,8 +102,8 @@
             <!-- TỔNG ĐIỂM -->
             <div class="col-md-2 text-center border-start py-3 bg-light rounded-3">
                 <div class="small fw-bold text-secondary">ĐIỂM AI</div>
-                <div class="display-6 fw-bold text-primary my-1">{{ score }}</div>
-                <div class="small fw-bold mb-3">{{ ket_luan }}</div>
+                <div class="display-6 fw-bold text-primary my-1" id="tcScore">{{ score }}</div>
+                <div class="small fw-bold mb-3" id="tcConclusion">{{ ket_luan }}</div>
             </div>
         </div>
     </div>
@@ -117,6 +123,9 @@
     <span class="lightbox-close-btn">&times;</span>
     <img src="" class="lightbox-img" id="lightboxImg" onclick="event.stopPropagation()">
 </div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 
 <script>
 let scale = 1, posX = 0, posY = 0, isDragging = false, startX = 0, startY = 0;
