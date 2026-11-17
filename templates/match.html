@@ -410,7 +410,7 @@
     <img src="" class="lightbox-img" id="lightboxImg" onclick="event.stopPropagation()">
 </div>
 
-<!-- MÔ HÌNH HỌC SÂU MOBILENETV2 CHẠY TRỰC TIẾP TRÊN TRÌNH DUYỆT (0 MB RAM TRÊN RENDER) -->
+<!-- MÔ HÌNH HỌC SÂU MOBILENETV2 ALPHA 1.0 (1280-D) CHẠY TRỰC TIẾP TRÊN TRÌNH DUYỆT -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 
@@ -425,22 +425,12 @@ function openLightbox(src) {
     updateImgStyle();
     overlay.style.display = 'flex';
 }
-
-function closeLightbox(e) {
-    overlay.style.display = 'none';
-}
-
-function updateImgStyle() {
-    lbImg.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`;
-}
+function closeLightbox(e) { overlay.style.display = 'none'; }
+function updateImgStyle() { lbImg.style.transform = `translate(${posX}px, ${posY}px) scale(${scale})`; }
 
 overlay.addEventListener('wheel', function(e) {
     e.preventDefault();
-    if (e.deltaY < 0) {
-        scale = Math.min(scale * 1.15, 6);
-    } else {
-        scale = Math.max(scale / 1.15, 0.8);
-    }
+    scale = e.deltaY < 0 ? Math.min(scale * 1.15, 6) : Math.max(scale / 1.15, 0.8);
     updateImgStyle();
 }, { passive: false });
 
@@ -450,22 +440,17 @@ lbImg.addEventListener('mousedown', function(e) {
     startX = e.clientX - posX;
     startY = e.clientY - posY;
 });
-
 window.addEventListener('mousemove', function(e) {
     if (!isDragging) return;
     posX = e.clientX - startX;
     posY = e.clientY - startY;
     updateImgStyle();
 });
-
 window.addEventListener('mouseup', function() { isDragging = false; });
-
-document.addEventListener('keydown', function(e) {
-    if (e.key === "Escape") overlay.style.display = 'none';
-});
+document.addEventListener('keydown', function(e) { if (e.key === "Escape") overlay.style.display = 'none'; });
 
 // =========================================================================
-// ĐỐI SÁNH THỊ GIÁC HỌC SÂU MOBILENETV2 (VECTOR 1280 CHIỀU + XOAY ĐA GÓC)
+// MOBILENETV2 ALPHA 1.0 (1280-D) + CÂN BẰNG SÁNG + LỌC NỀN TRẮNG ĐƠN ĐIỆU
 // =========================================================================
 (async function runDeepVisionMatch() {
     const statusEl = document.getElementById('aiEngineStatus');
@@ -482,7 +467,7 @@ document.addEventListener('keydown', function(e) {
 
     try {
         const net = await mobilenet.load({ version: 2, alpha: 1.0 });
-        const embCache = new Map();
+        const featCache = new Map();
 
         function optimizeUrl(url) {
             if (!url) return '';
@@ -497,24 +482,76 @@ document.addEventListener('keydown', function(e) {
                 if (!url) return resolve(null);
                 const img = new Image();
                 img.crossOrigin = 'anonymous';
-                img.onload = () => resolve(img);
-                img.onerror = () => resolve(null);
+                const timer = setTimeout(() => resolve(null), 7000);
+                img.onload = () => { clearTimeout(timer); resolve(img); };
+                img.onerror = () => { clearTimeout(timer); resolve(null); };
                 img.src = optimizeUrl(url);
             });
         }
 
-        async function getMultiAngleEmbeddings(url) {
+        function analyzeObjectAndBox(img) {
+            const probeSize = 64;
+            const pCanvas = document.createElement('canvas');
+            pCanvas.width = probeSize;
+            pCanvas.height = probeSize;
+            const pCtx = pCanvas.getContext('2d');
+            pCtx.drawImage(img, 0, 0, probeSize, probeSize);
+            const data = pCtx.getImageData(0, 0, probeSize, probeSize).data;
+
+            const corners = [0, (probeSize - 1) * 4, (probeSize - 1) * probeSize * 4, (probeSize * probeSize - 1) * 4];
+            let bgR = 0, bgG = 0, bgB = 0;
+            corners.forEach(idx => { bgR += data[idx]; bgG += data[idx + 1]; bgB += data[idx + 2]; });
+            bgR /= 4; bgG /= 4; bgB /= 4;
+
+            let minX = probeSize, minY = probeSize, maxX = 0, maxY = 0, fgCount = 0, edgeEnergy = 0;
+            for (let y = 2; y < probeSize - 2; y++) {
+                for (let x = 2; x < probeSize - 2; x++) {
+                    const idx = (y * probeSize + x) * 4;
+                    const dr = data[idx] - bgR, dg = data[idx + 1] - bgG, db = data[idx + 2] - bgB;
+                    if (dr * dr + dg * dg + db * db > 1200) {
+                        fgCount++;
+                        if (x < minX) minX = x;
+                        if (x > maxX) maxX = x;
+                        if (y < minY) minY = y;
+                        if (y > maxY) maxY = y;
+
+                        const rightIdx = idx + 4;
+                        const downIdx = idx + probeSize * 4;
+                        edgeEnergy += Math.abs(data[idx] - data[rightIdx]) + Math.abs(data[idx] - data[downIdx]);
+                    }
+                }
+            }
+
+            const fgRatio = fgCount / (probeSize * probeSize);
+            const avgDetail = edgeEnergy / Math.max(1, fgCount);
+            const sw = img.naturalWidth || img.width;
+            const sh = img.naturalHeight || img.height;
+
+            if (fgCount < 15 || maxX <= minX + 2 || maxY <= minY + 2) {
+                return { sx: sw * 0.12, sy: sh * 0.12, sWidth: sw * 0.76, sHeight: sh * 0.76, fgRatio, avgDetail };
+            }
+
+            const padX = (maxX - minX) * 0.06, padY = (maxY - minY) * 0.06;
+            const x0 = Math.max(0, ((minX - padX) / probeSize) * sw);
+            const y0 = Math.max(0, ((minY - padY) / probeSize) * sh);
+            const x1 = Math.min(sw, ((maxX + padX) / probeSize) * sw);
+            const y1 = Math.min(sh, ((maxY + padY) / probeSize) * sh);
+            return { sx: x0, sy: y0, sWidth: Math.max(10, x1 - x0), sHeight: Math.max(10, y1 - y0), fgRatio, avgDetail };
+        }
+
+        async function getRichFeatures(url) {
             if (!url) return null;
-            if (embCache.has(url)) return embCache.get(url);
+            if (featCache.has(url)) return featCache.get(url);
 
             const img = await loadCorsImage(url);
             if (!img) {
-                embCache.set(url, null);
+                featCache.set(url, null);
                 return null;
             }
 
-            // Trích xuất vector 1280 chiều ở 2 góc (0° và 90°) để bất biến chiều ngang/dọc
+            const info = analyzeObjectAndBox(img);
             const vectors = [];
+
             for (const angle of [0, 90]) {
                 const canvas = document.createElement('canvas');
                 canvas.width = 224;
@@ -522,34 +559,24 @@ document.addEventListener('keydown', function(e) {
                 const ctx = canvas.getContext('2d');
                 ctx.fillStyle = '#ffffff';
                 ctx.fillRect(0, 0, 224, 224);
+                ctx.filter = 'contrast(1.12) saturate(1.08)';
                 ctx.save();
                 ctx.translate(112, 112);
                 ctx.rotate((angle * Math.PI) / 180);
-                // Cắt nhẹ viền ngoài 10% để tập trung vào vật thể trung tâm
-                const sw = img.naturalWidth || img.width;
-                const sh = img.naturalHeight || img.height;
-                const padX = sw * 0.08;
-                const padY = sh * 0.08;
-                ctx.drawImage(img, padX, padY, sw - 2 * padX, sh - 2 * padY, -112, -112, 224, 224);
+                ctx.drawImage(img, info.sx, info.sy, info.sWidth, info.sHeight, -112, -112, 224, 224);
                 ctx.restore();
 
                 const arr = tf.tidy(() => {
                     const emb = net.infer(canvas, true);
                     const norm = tf.norm(emb);
-                    const normalized = tf.div(emb, tf.add(norm, 1e-6));
-                    return Array.from(normalized.dataSync());
+                    return Array.from(tf.div(emb, tf.add(norm, 1e-6)).dataSync());
                 });
                 vectors.push(arr);
             }
 
-            embCache.set(url, vectors);
-            return vectors;
-        }
-
-        function cosineSim(a, b) {
-            let dot = 0;
-            for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
-            return dot;
+            const res = { vectors, fgRatio: info.fgRatio, avgDetail: info.avgDetail };
+            featCache.set(url, res);
+            return res;
         }
 
         function getConclusionText(score) {
@@ -559,16 +586,14 @@ document.addEventListener('keydown', function(e) {
             return '🔴 Khả năng trùng khớp thấp';
         }
 
-        // Thu thập toàn bộ URL ảnh duy nhất trên trang để trích xuất 1 lần
         const uniqueUrls = new Set();
         cards.forEach(c => {
             if (c.dataset.lostImg) uniqueUrls.add(c.dataset.lostImg);
             if (c.dataset.foundImg) uniqueUrls.add(c.dataset.foundImg);
         });
 
-        await Promise.all(Array.from(uniqueUrls).map(u => getMultiAngleEmbeddings(u)));
+        await Promise.all(Array.from(uniqueUrls).map(u => getRichFeatures(u)));
 
-        // Chấm lại điểm cho từng cặp bằng vector học sâu MobileNetV2
         cards.forEach(card => {
             const u1 = card.dataset.lostImg;
             const u2 = card.dataset.foundImg;
@@ -577,26 +602,28 @@ document.addEventListener('keydown', function(e) {
             const baseScore = parseInt(card.dataset.baseScore || '0', 10);
             const colorScore = parseInt(card.dataset.colorScore || '0', 10);
             const serverImgScore = parseInt(card.dataset.serverImgScore || '0', 10);
-
-            // Giữ khóa trần 10/50 nếu HSV backend phát hiện trái màu rõ rệt
             if (colorScore === 0 && serverImgScore <= 10) return;
 
-            const v1List = embCache.get(u1);
-            const v2List = embCache.get(u2);
-            if (!v1List || !v2List) return;
+            const f1 = featCache.get(u1);
+            const f2 = featCache.get(u2);
+            if (!f1 || !f2) return;
 
             let bestCos = -1;
-            for (const v1 of v1List) {
-                for (const v2 of v2List) {
-                    const sim = cosineSim(v1, v2);
-                    if (sim > bestCos) bestCos = sim;
+            for (const v1 of f1.vectors) {
+                for (const v2 of f2.vectors) {
+                    let dot = 0;
+                    for (let i = 0; i < v1.length; i++) dot += v1[i] * v2[i];
+                    if (dot > bestCos) bestCos = dot;
                 }
             }
 
-            // Ánh xạ chuẩn xác cho MobileNetV2 (1280-D):
-            // - Khác mẫu mã (2 dây chuyền khác mặt, 2 áo khác kiểu, 2 chuột khác hãng): bestCos ~ 0.56 - 0.68 -> 18 - 27/50
-            // - Trùng vật thể thật (bút, sách, gấu bông): bestCos ~ 0.76 - 0.90 -> 37 - 48/50
-            const rawImgPts = Math.round(14 + ((bestCos - 0.52) / 0.36) * 34);
+            let penalty = 0;
+            if (f1.fgRatio < 0.22 && f2.fgRatio < 0.22) {
+                const detailDiff = Math.abs(f1.avgDetail - f2.avgDetail) / Math.max(10, Math.max(f1.avgDetail, f2.avgDetail));
+                penalty = Math.round(8 + detailDiff * 14);
+            }
+
+            const rawImgPts = Math.round(14 + ((bestCos - 0.56) / 0.30) * 34) - penalty;
             const newImgScore = Math.max(12, Math.min(48, rawImgPts));
             const newTotal = Math.min(100, baseScore + newImgScore);
 
@@ -607,7 +634,6 @@ document.addEventListener('keydown', function(e) {
             card.querySelector('.js-conclusion').textContent = getConclusionText(newTotal);
         });
 
-        // Sắp xếp lại các thẻ trên trang theo điểm mới giảm dần
         const listEl = document.getElementById('matchCardsList');
         if (listEl) {
             cards.sort((a, b) => parseInt(b.dataset.score, 10) - parseInt(a.dataset.score, 10));
