@@ -410,7 +410,7 @@
     <img src="" class="lightbox-img" id="lightboxImg" onclick="event.stopPropagation()">
 </div>
 
-<!-- MÔ HÌNH HỌC SÂU MOBILENETV2 ALPHA 0.50 (TẢI 1 GIÂY - NGUYÊN KHUNG ẢNH CHUẨN) -->
+<!-- MÔ HÌNH HỌC SÂU MOBILENETV2 ALPHA 0.50 (TẢI 1 GIÂY - PHÂN TẦNG 3 NẤC) -->
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/mobilenet@2.1.1/dist/mobilenet.min.js"></script>
 
@@ -450,7 +450,7 @@ window.addEventListener('mouseup', function() { isDragging = false; });
 document.addEventListener('keydown', function(e) { if (e.key === "Escape") overlay.style.display = 'none'; });
 
 // =========================================================================
-// MOBILENETV2 ALPHA 0.50 (TẢI 1 GIÂY) - GIỮ NGUYÊN KHUNG ẢNH CHUẨN
+// MOBILENETV2 ALPHA 0.50 (TẢI 1 GIÂY) - PHÂN TẦNG 3 NẤC TỐI ƯU
 // =========================================================================
 (async function runDeepVisionMatch() {
     const statusEl = document.getElementById('aiEngineStatus');
@@ -563,8 +563,18 @@ document.addEventListener('keydown', function(e) { if (e.key === "Escape") overl
                 }
             }
 
-            const rawImgPts = Math.round(16 + ((bestCos - 0.58) / 0.30) * 31);
-            const newImgScore = Math.max(14, Math.min(48, rawImgPts));
+            let rawImgPts = 14;
+            if (bestCos >= 0.72) {
+                // Trùng vật thể rõ ràng (Sách, Truyện, Gấu bông): 38 - 48đ
+                rawImgPts = Math.round(38 + ((bestCos - 0.72) / 0.16) * 10);
+            } else if (bestCos >= 0.64) {
+                // Trùng vật thể nhưng khác nền/góc chụp (Sách CN8, Bút đỏ, Đèn): 31 - 37đ
+                rawImgPts = Math.round(31 + ((bestCos - 0.64) / 0.08) * 6);
+            } else {
+                // Khác kiểu dáng / khác mẫu mã (Áo khoác, Chuột khác hãng): 12 - 22đ
+                rawImgPts = Math.round(12 + ((bestCos - 0.52) / 0.12) * 10);
+            }
+            const newImgScore = Math.max(12, Math.min(48, rawImgPts));
             const newTotal = Math.min(100, baseScore + newImgScore);
 
             card.dataset.score = String(newTotal);
