@@ -33,7 +33,7 @@ try:
     import numpy as np
     HAS_OPENCV = True
 except Exception as e:
-    print(f"Cảnh báo OpenCV không khả dụng, sử dụng bộ xử lý bất biến quang học & hình học PIL: {e}")
+    print(f"Cảnh báo OpenCV không khả dụng, sử dụng bộ xử lý thị giác cấu trúc PIL: {e}")
 
 cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
 api_key = os.environ.get("CLOUDINARY_API_KEY", "")
@@ -112,7 +112,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v26.json"
+CACHE_FILE = "feature_cache_v27.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -136,7 +136,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v26")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v27")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -236,8 +236,8 @@ def _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024):
 
 def _extract_foreground_pil(pil_img):
     """
-    Tách nền triệt tiêu vân nền & bóng đổ:
-    1. Dùng ảnh làm mờ nhẹ để dò mặt nạ tiền cảnh (không làm mờ ảnh gốc).
+    Tách nền triệt tiêu vân nền & bóng đổ, đồng thời giữ chính xác biên vật thể:
+    1. Dùng ảnh làm mờ nhẹ để dò mặt nạ tiền cảnh.
     2. So sánh khoảng cách sắc độ chuẩn hóa + độ lệch màu với 2 lớp viền ngoài.
     3. Cắt sát khung bao vật thể (Auto-Crop Bounding Box).
     """
@@ -308,8 +308,8 @@ def _extract_foreground_pil(pil_img):
         return cropped, small, fallback_mask
 
     w, h = pil_img.size
-    pad_x = max(2, int((max_x - min_x) * 0.06))
-    pad_y = max(2, int((max_y - min_y) * 0.06))
+    pad_x = max(2, int((max_x - min_x) * 0.05))
+    pad_y = max(2, int((max_y - min_y) * 0.05))
     x0 = max(0, int(((min_x - pad_x) / size) * w))
     y0 = max(0, int(((min_y - pad_y) / size) * h))
     x1 = min(w, int(((max_x + pad_x) / size) * w))
@@ -326,7 +326,6 @@ def _detect_visual_colors(fg_crop):
         detected = set()
         for r, g, b in crop.getdata():
             hue, sat, val = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
-            # Bỏ qua điểm lóa đèn (specular highlight)
             if val > 0.94 and sat < 0.14:
                 continue
             if val < 0.22:
@@ -413,7 +412,7 @@ def _compute_hu_moments_pil(gray_48):
     )
     h6 = (n20 - n02) * ((n30 + n12) ** 2 - (n21 + n03) ** 2) + 4.0 * n11 * (n30 + n12) * (n21 + n03)
     h7 = (
-        (3.0 * n21 - n03) * (n30 + n12) * ((n30 + n12) ** 2 - 3.0 * (n21 + n03) ** 2) -
+        (3.0 * n21 - n03) * (n30 + n12) * ((n30 + n12) ** 2 - (n21 + n03) ** 2) -
         (n30 - 3.0 * n12) * (n21 + n03) * (3.0 * (n30 + n12) ** 2 - (n21 + n03) ** 2)
     )
 
@@ -443,10 +442,9 @@ def _phash_from_gray(gray):
 
 def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
     """
-    Trích xuất đặc trưng bất biến góc nghiêng, lóa sáng & bóng râm:
-    - Tọa độ sắc độ chuẩn hóa (Normalized rg chromaticity) + khử lóa sáng.
-    - Vòng đồng tâm (Concentric Rings) bất biến góc xoay & góc nghiêng.
-    - 7 Mô-men bất biến Hu + Dịch vòng hướng cạnh.
+    Trích xuất đặc trưng v27:
+    - Tách bạch Màu sắc bất biến sáng (22 điểm) và Cấu trúc đường nét/họa tiết bề mặt (28 điểm).
+    - Phân biệt mẫu trơn vs mẫu có họa tiết/đường gân/LED (như 2 con chuột khác mẫu).
     """
     fg_canvas = fg_crop.resize((128, 128), Image.Resampling.BILINEAR)
     eq_fg = ImageOps.autocontrast(fg_canvas, cutoff=2)
@@ -475,7 +473,6 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
         ahashes.append(a_val)
 
     def _illumination_invariant_hist(rgb_list, valid_indices=None):
-        """Biểu đồ 28 bins kết hợp HSV chống lóa + Sắc độ chuẩn hóa rg chống bóng râm."""
         bins = [0.0] * 28
         count = 0.0
         iter_idx = valid_indices if valid_indices is not None else range(len(rgb_list))
@@ -483,16 +480,13 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
             rv, gv, bv = rgb_list[idx_px]
             h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
 
-            # Bỏ qua điểm chói lóa ánh đèn (specular reflection)
             if v > 0.94 and s < 0.14:
                 continue
 
             if s < 0.18:
-                # Nhóm trung tính chia 4 mức
                 idx = min(3, int(v * 4.0))
                 bins[idx] += 1.0
             else:
-                # 12 bins tông màu Hue (bất biến độ sáng V -> chống bóng râm & lóa sáng)
                 h_pos = (h * 12.0) % 12.0
                 h0 = int(h_pos)
                 frac = h_pos - h0
@@ -500,7 +494,6 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
                 bins[4 + h0] += (1.0 - frac * 0.45)
                 bins[4 + h1] += (frac * 0.45)
 
-            # 12 bins sắc độ chuẩn hóa rg = R/(R+G+B), g = G/(R+G+B)
             rgb_sum = float(rv + gv + bv)
             if rgb_sum > 30.0:
                 rn = rv / rgb_sum
@@ -527,7 +520,6 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
     px_crop = list(crop_48.getdata())
     crop_global_hist = _illumination_invariant_hist(px_crop)
 
-    # 3 Vòng đồng tâm (Concentric Rings) bất biến góc nghiêng và góc xoay
     inner_coords = []
     mid_coords = []
     outer_coords = []
@@ -550,13 +542,24 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
         _illumination_invariant_hist(px_crop, outer_coords),
     ]
 
-    # Biểu đồ 12 hướng biên (hỗ trợ dịch vòng khi xoay/nghiêng)
+    # Biểu đồ 12 hướng biên + Độ phức tạp hoa văn bề mặt (Texture Complexity)
+    raw_gray_48 = fg_canvas.convert("L").resize((48, 48), Image.Resampling.BILINEAR)
+    raw_g_px = list(raw_gray_48.getdata())
+
     g_48 = gray_fg.filter(ImageFilter.SMOOTH).resize((48, 48), Image.Resampling.BILINEAR)
     g_px = list(g_48.getdata())
     edge_bins = [0.0] * 12
     edge_sum = 0.0
+    raw_texture_energy = 0.0
+    pixel_samples = 0
+
+    # Bản đồ mật độ chi tiết 3 vòng đồng tâm (lõi, giữa, viền) để phân biệt bề mặt trơn vs có họa tiết/đèn LED
+    ring_edge_energy = [0.0, 0.0, 0.0]
+    ring_edge_counts = [0.0, 0.0, 0.0]
+
     for r in range(1, 47):
         row_off = r * 48
+        dy = (r - 23.5) / 24.0
         for c in range(1, 47):
             gx = float(g_px[row_off + c + 1] - g_px[row_off + c - 1])
             gy = float(g_px[row_off + 48 + c] - g_px[row_off - 48 + c])
@@ -566,7 +569,25 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
                 ebin = min(11, int(ang / 15.0))
                 edge_bins[ebin] += mag
                 edge_sum += mag
+
+            rgx = float(raw_g_px[row_off + c + 1] - raw_g_px[row_off + c - 1])
+            rgy = float(raw_g_px[row_off + 48 + c] - raw_g_px[row_off - 48 + c])
+            rmag = math.hypot(rgx, rgy)
+            raw_texture_energy += rmag
+            pixel_samples += 1
+
+            dx = (c - 23.5) / 24.0
+            dist = math.hypot(dx, dy)
+            r_idx = 0 if dist <= 0.45 else (1 if dist <= 0.82 else 2)
+            ring_edge_energy[r_idx] += rmag
+            ring_edge_counts[r_idx] += 1.0
+
     edge_hist = [x / edge_sum for x in edge_bins] if edge_sum > 0 else [1.0 / 12.0] * 12
+    texture_complexity = (raw_texture_energy / max(1, pixel_samples)) / 120.0
+    ring_textures = [
+        (ring_edge_energy[i] / max(1.0, ring_edge_counts[i])) / 120.0
+        for i in range(3)
+    ]
 
     hu_moments = _compute_hu_moments_pil(g_48)
 
@@ -574,8 +595,8 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
     aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
     return {
-        "version": 26,
-        "type": "pil_v26_invariant",
+        "version": 27,
+        "type": "pil_v27_structural",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
@@ -584,6 +605,8 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
         "crop_global_hist": crop_global_hist,
         "ring_hists": ring_hists,
         "edge_hist": edge_hist,
+        "texture_complexity": texture_complexity,
+        "ring_textures": ring_textures,
         "hu_moments": hu_moments,
         "aspect_ratio": aspect_ratio,
         "visual_colors": list(visual_colors),
@@ -591,7 +614,7 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng bất biến góc nghiêng, lóa sáng & bóng râm."""
+    """Trích xuất đặc trưng bất biến góc nghiêng, lóa sáng & cấu trúc họa tiết bề mặt."""
     if not check_real_image(img_path):
         return None
 
@@ -623,8 +646,7 @@ def calculate_image_features(img_path):
                 clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
                 gray_eq = clahe.apply(gray)
 
-                # AKAZE / ORB bất biến tỷ lệ & góc nghiêng affine
-                orb = cv2.ORB_create(nfeatures=400, scaleFactor=1.2, nlevels=8, fastThreshold=7)
+                orb = cv2.ORB_create(nfeatures=450, scaleFactor=1.2, nlevels=8, fastThreshold=8)
                 _, descriptors = orb.detectAndCompute(gray_eq, None)
 
                 phashes = [
@@ -635,34 +657,38 @@ def calculate_image_features(img_path):
                 ]
 
                 hsv = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2HSV)
-                # Mặt nạ loại bỏ điểm chói lóa (V > 240 và S < 35)
                 non_glare_mask = cv2.inRange(hsv, (0, 0, 15), (180, 255, 240))
 
                 global_h = cv2.calcHist([hsv], [0], non_glare_mask, [16], [0, 180])
                 cv2.normalize(global_h, global_h, 1.0, 0.0, cv2.NORM_L1)
 
-                # Không gian màu Lab (a, b bất biến ánh sáng L)
                 lab = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2LAB)
                 ab_hist = cv2.calcHist([lab], [1, 2], non_glare_mask, [8, 8], [0, 256, 0, 256])
                 cv2.normalize(ab_hist, ab_hist, 1.0, 0.0, cv2.NORM_L1)
 
-                # 7 Mô-men bất biến Hu trên ảnh đã cân bằng sáng CLAHE
                 moments = cv2.moments(gray_eq)
                 hu = cv2.HuMoments(moments).flatten()
                 hu_log = [-math.copysign(1.0, float(h)) * math.log10(abs(float(h))) if abs(float(h)) > 1e-30 else 0.0 for h in hu]
 
-                gx = cv2.Sobel(gray_eq, cv2.CV_32F, 1, 0, ksize=3)
-                gy = cv2.Sobel(gray_eq, cv2.CV_32F, 0, 1, ksize=3)
-                _, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
+                gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+                gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+                mag, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
                 edge_hist = cv2.calcHist([ang.astype(np.float32)], [0], None, [12], [0, 360])
                 cv2.normalize(edge_hist, edge_hist, 1.0, 0.0, cv2.NORM_L1)
+
+                texture_complexity = float(np.mean(mag)) / 120.0
+                ring_textures = [
+                    float(np.mean(mag[80:176, 80:176])) / 120.0,
+                    float(np.mean(mag[32:224, 32:224])) / 120.0,
+                    texture_complexity,
+                ]
 
                 cw, ch = fg_crop.size
                 aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
                 features = {
-                    "version": 26,
-                    "type": "opencv_v26_invariant",
+                    "version": 27,
+                    "type": "opencv_v27_structural",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
@@ -670,6 +696,8 @@ def calculate_image_features(img_path):
                     "ab_hist": ab_hist,
                     "hu_moments": hu_log,
                     "edge_hist": edge_hist.flatten().tolist(),
+                    "texture_complexity": texture_complexity,
+                    "ring_textures": ring_textures,
                     "aspect_ratio": aspect_ratio,
                     "visual_colors": list(visual_colors),
                 }
@@ -704,13 +732,27 @@ def _hu_moments_similarity(hu1, hu2):
     return max(0.0, min(1.0, 1.0 - (dist / 14.0)))
 
 
+def _texture_similarity(f1, f2):
+    """So khớp độ phức tạp bề mặt (phân biệt mẫu trơn vs mẫu có họa tiết/đèn LED)."""
+    tc1 = float(f1.get("texture_complexity", 0.35))
+    tc2 = float(f2.get("texture_complexity", 0.35))
+    global_diff = abs(tc1 - tc2)
+
+    rt1 = f1.get("ring_textures", [tc1, tc1, tc1])
+    rt2 = f2.get("ring_textures", [tc2, tc2, tc2])
+    ring_diff = sum(abs(float(a) - float(b)) for a, b in zip(rt1, rt2)) / max(1, len(rt1))
+
+    combined_diff = 0.5 * global_diff + 0.5 * ring_diff
+    return max(0.0, min(1.0, 1.0 - (combined_diff / 0.28)))
+
+
 def image_score(
     img1_filename,
     img2_filename,
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác (0–50) bất biến lệch góc, góc nghiêng, lóa sáng và bóng râm."""
+    """Chấm điểm thị giác (0–50): Kết hợp Màu bất biến sáng (22đ) + Cấu trúc & Họa tiết bề mặt (28đ)."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -725,34 +767,29 @@ def image_score(
 
         ar1 = float(f1.get("aspect_ratio", 0.7))
         ar2 = float(f2.get("aspect_ratio", 0.7))
-        # Cho phép sai số tỷ lệ khung hình khi chụp nghiêng phối cảnh
         aspect_sim = max(0.0, 1.0 - max(0.0, abs(ar1 - ar2) - 0.12))
-
-        vc1 = set(f1.get("visual_colors", []))
-        vc2 = set(f2.get("visual_colors", []))
-        fg_color_agree = bool(vc1 and vc2 and vc1.intersection(vc2))
 
         hu_sim = _hu_moments_similarity(f1.get("hu_moments", []), f2.get("hu_moments", []))
         circ_edge_sim = _circular_edge_similarity(f1.get("edge_hist", []), f2.get("edge_hist", []))
+        tex_sim = _texture_similarity(f1, f2)
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
             h_inter = float(cv2.compareHist(f1["global_h"], f2["global_h"], cv2.HISTCMP_INTERSECT))
             ab_inter = float(cv2.compareHist(f1["ab_hist"], f2["ab_hist"], cv2.HISTCMP_INTERSECT))
             color_sim = 0.50 * h_inter + 0.50 * ab_inter
-            color_points = max(0, min(28, int(round(((color_sim - 0.25) / 0.42) * 28))))
-            if fg_color_agree and not color_conflict and color_points < 22:
-                color_points = 22
+            # Màu sắc tối đa 22 điểm để tránh 2 đồ khác mẫu cùng màu đen/xanh bị điểm quá cao
+            color_points = max(0, min(22, int(round(((color_sim - 0.24) / 0.44) * 22))))
 
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
             min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
             phash_score = max(0.0, 1.0 - min_hamming / 63.0)
-            phash_pts = max(0, min(5, int(round(((phash_score - 0.28) / 0.34) * 5))))
+            phash_pts = max(0, min(6, int(round(((phash_score - 0.30) / 0.34) * 6))))
 
             hu_pts = max(0, min(5, int(round(hu_sim * 5))))
-            edge_pts = max(0, min(4, int(round(((circ_edge_sim - 0.55) / 0.35) * 4))))
+            edge_pts = max(0, min(4, int(round(((circ_edge_sim - 0.56) / 0.34) * 4))))
+            tex_pts = max(0, min(6, int(round(tex_sim * 6))))
             aspect_pts = max(0, min(2, int(round(aspect_sim * 2))))
-            shape_points = phash_pts + hu_pts + edge_pts + aspect_pts
 
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
             orb_points = 0
@@ -760,17 +797,19 @@ def image_score(
                 matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
                 forward = matcher.knnMatch(d1, d2, k=2)
                 reverse = matcher.knnMatch(d2, d1, k=2)
-                good_f = [p[0] for p in forward if len(p) == 2 and p[0].distance < 0.80 * p[1].distance]
-                good_r = [p[0] for p in reverse if len(p) == 2 and p[0].distance < 0.80 * p[1].distance]
+                good_f = [p[0] for p in forward if len(p) == 2 and p[0].distance < 0.76 * p[1].distance]
+                good_r = [p[0] for p in reverse if len(p) == 2 and p[0].distance < 0.76 * p[1].distance]
                 reverse_pairs = {(m.trainIdx, m.queryIdx) for m in good_r}
                 mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
 
-                if mutual >= 3:
-                    orb_points = 6
+                if mutual >= 5:
+                    orb_points = 5
+                elif mutual >= 3:
+                    orb_points = 3
                 elif mutual >= 1:
-                    orb_points = 4
+                    orb_points = 1
 
-            raw_total = color_points + shape_points + orb_points
+            raw_total = color_points + phash_pts + hu_pts + edge_pts + tex_pts + aspect_pts + orb_points
             if color_conflict and raw_total > 10:
                 raw_total = 10
             if not is_same_keyword and raw_total > 12:
@@ -794,7 +833,6 @@ def image_score(
                 sum(min(a, b) for a, b in zip(cg1, fg2)) if (cg1 and fg2) else 0.0,
             )
 
-            # So khớp 3 vòng đồng tâm (trọng số cao nhất ở vòng lõi vật thể)
             r1 = f1.get("ring_hists", [])
             r2 = f2.get("ring_hists", [])
             if len(r1) == 3 and len(r2) == 3:
@@ -804,11 +842,10 @@ def image_score(
                 ring_sim = cross_color
 
             color_sim = 0.55 * cross_color + 0.45 * ring_sim
-            color_points = max(0, min(28, int(round(((color_sim - 0.25) / 0.42) * 28))))
-            if fg_color_agree and not color_conflict and color_points < 22:
-                color_points = 22
+            # Màu sắc tối đa 22/50 điểm
+            color_points = max(0, min(22, int(round(((color_sim - 0.24) / 0.44) * 22))))
 
-            # Điểm hình khối bất biến (Hu Moments + Dịch vòng hướng biên + dHash xoay 4 góc)
+            # 28 điểm còn lại đánh giá hình khối, hướng cạnh và hoa văn bề mặt
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
             min_d = min((d1 ^ int(d2)).bit_count() for d2 in d2_list)
@@ -818,13 +855,14 @@ def image_score(
             min_a = min((a1 ^ int(a2)).bit_count() for a2 in a2_list)
 
             combined_dist = (min_d + min_a) / 2.0
-            hash_points = max(0, min(7, int(round(((37.0 - combined_dist) / 24.0) * 7))))
+            hash_points = max(0, min(8, int(round(((36.0 - combined_dist) / 24.0) * 8))))
 
             hu_points = max(0, min(6, int(round(hu_sim * 6))))
             edge_points = max(0, min(5, int(round(((circ_edge_sim - 0.58) / 0.34) * 5))))
-            aspect_points = max(0, min(2, int(round(aspect_sim * 2))))
+            tex_points = max(0, min(6, int(round(tex_sim * 6))))
+            aspect_points = max(0, min(3, int(round(aspect_sim * 3))))
 
-            total = min(48, color_points + hash_points + hu_points + edge_points + aspect_points)
+            total = min(48, color_points + hash_points + hu_points + edge_points + tex_points + aspect_points)
 
             if color_conflict:
                 total = min(total, 10)
@@ -1368,7 +1406,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát bất biến góc nghiêng, lóa sáng & bóng râm."""
+    """Đối sánh tổng quát bất biến góc nghiêng, lóa sáng & cấu trúc họa tiết bề mặt."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
