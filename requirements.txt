@@ -11,5 +11,4 @@ cloudinary
 Werkzeug
 Pillow
 numpy
-onnxruntime
 opencv-python-headless
