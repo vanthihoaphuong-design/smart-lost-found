@@ -112,7 +112,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v24.json"
+CACHE_FILE = "feature_cache_v25.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -136,7 +136,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v24")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v25")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -236,37 +236,46 @@ def _read_image_bytes(img_path, max_bytes=3 * 1024 * 1024):
 
 def _extract_foreground_pil(pil_img):
     """
-    Tách nền siêu nhẹ (0MB RAM phụ):
-    1. Lấy mẫu màu nền từ 4 viền ảnh.
-    2. Loại bỏ pixel trùng nền & tìm khung bao vật thể (Bounding Box).
-    3. Cắt sát vật thể và trả về (ảnh vật thể đã cắt sát, mặt nạ tiền cảnh 64x64).
+    Tách nền triệt tiêu vân nền (gạch hoa, vân bàn gỗ) & cắt sát vật thể:
+    1. Làm mờ nhẹ ảnh dò mặt nạ để xóa nhiễu vân nền.
+    2. So sánh sắc độ (Hue/Saturation) + độ sáng với cụm màu viền ngoài.
+    3. Tìm khung bao vật thể mảnh hoặc lớn và cắt sát chính xác.
     """
     size = 64
     small = pil_img.resize((size, size), Image.Resampling.BILINEAR)
-    px = list(small.getdata())
+    smooth = small.filter(ImageFilter.GaussianBlur(radius=1.5))
+    px = list(smooth.getdata())
 
-    # Lấy mẫu màu nền từ viền ngoài (top, bottom, left, right)
+    # Lấy mẫu màu nền từ 2 lớp viền ngoài cùng
     border_samples = []
     for i in range(size):
         border_samples.append(px[i])
+        border_samples.append(px[size + i])
         border_samples.append(px[(size - 1) * size + i])
+        border_samples.append(px[(size - 2) * size + i])
         border_samples.append(px[i * size])
         border_samples.append(px[i * size + (size - 1)])
 
-    # Nhóm các màu nền đại diện bằng cách lấy mẫu bước nhảy
-    bg_palette = border_samples[::4]
+    # Tính màu nền trung bình và độ lệch chuẩn của viền
+    n_b = max(1, len(border_samples))
+    mean_r = sum(p[0] for p in border_samples) / n_b
+    mean_g = sum(p[1] for p in border_samples) / n_b
+    mean_b = sum(p[2] for p in border_samples) / n_b
+    _, bg_sat, _ = colorsys.rgb_to_hsv(mean_r / 255.0, mean_g / 255.0, mean_b / 255.0)
+
+    bg_palette = border_samples[::5]
 
     mask = [False] * (size * size)
     min_x, min_y, max_x, max_y = size, size, 0, 0
     fg_count = 0
 
-    for y in range(2, size - 2):
+    for y in range(3, size - 3):
         row_off = y * size
-        for x in range(2, size - 2):
+        for x in range(3, size - 3):
             idx = row_off + x
             r, g, b = px[idx]
+            _, sat, _ = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
 
-            # Khoảng cách màu nhỏ nhất tới màu nền viền
             min_bg_dist = 999999
             for br, bg_c, bb in bg_palette:
                 dr = r - br
@@ -275,19 +284,14 @@ def _extract_foreground_pil(pil_img):
                 dist_sq = dr * dr + dg * dg + db * db
                 if dist_sq < min_bg_dist:
                     min_bg_dist = dist_sq
-                    if min_bg_dist < 900:
+                    if min_bg_dist < 800:
                         break
 
-            # Độ tương phản cục bộ (cạnh vật thể)
-            r_right, g_right, b_right = px[idx + 1]
-            r_down, g_down, b_down = px[idx + size]
-            edge_energy = (
-                abs(r - r_right) + abs(g - g_right) + abs(b - b_right) +
-                abs(r - r_down) + abs(g - g_down) + abs(b - b_down)
-            )
+            # Độ chênh lệch độ bão hòa màu (bắt rất nhạy bút đỏ, hộp sữa, sách màu trên nền xám/trắng/nâu nhạt)
+            sat_diff = abs(sat - bg_sat)
 
-            # Giữ lại pixel nếu khác màu nền (dist > 36) hoặc có biên sắc nét
-            if min_bg_dist > 1350 or edge_energy > 65:
+            # Giữ pixel thuộc vật thể nếu khác màu viền rõ rệt hoặc nổi bật sắc độ
+            if min_bg_dist > 1400 or (sat_diff > 0.24 and min_bg_dist > 650):
                 mask[idx] = True
                 fg_count += 1
                 if x < min_x:
@@ -299,20 +303,19 @@ def _extract_foreground_pil(pil_img):
                 if y > max_y:
                     max_y = y
 
-    # Nếu vật thể quá nhỏ hoặc bị hòa lẫn vào nền, fallback về vùng trung tâm 60%
-    if fg_count < 80 or max_x <= min_x + 4 or max_y <= min_y + 4:
+    # Nếu vật thể quá mảnh (như cây bút) khiến fg_count nhỏ (20..80 px), vẫn dùng bounding box tìm được!
+    if fg_count < 18 or max_x <= min_x + 1 or max_y <= min_y + 1:
         w, h = pil_img.size
-        cropped = pil_img.crop((int(w * 0.18), int(h * 0.18), int(w * 0.82), int(h * 0.82)))
+        cropped = pil_img.crop((int(w * 0.22), int(h * 0.22), int(w * 0.78), int(h * 0.78)))
         fallback_mask = [
-            (10 <= (i % size) < 54 and 10 <= (i // size) < 54)
+            (12 <= (i % size) < 52 and 12 <= (i // size) < 52)
             for i in range(size * size)
         ]
         return cropped, small, fallback_mask
 
-    # Cắt sát khung bao vật thể trên ảnh gốc (thêm lề 6%)
     w, h = pil_img.size
-    pad_x = max(2, int((max_x - min_x) * 0.08))
-    pad_y = max(2, int((max_y - min_y) * 0.08))
+    pad_x = max(2, int((max_x - min_x) * 0.06))
+    pad_y = max(2, int((max_y - min_y) * 0.06))
     x0 = max(0, int(((min_x - pad_x) / size) * w))
     y0 = max(0, int(((min_y - pad_y) / size) * h))
     x1 = min(w, int(((max_x + pad_x) / size) * w))
@@ -370,7 +373,6 @@ def _phash_from_gray(gray):
 
 def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
     """Trích xuất đặc trưng thuần trên vật thể đã tách nền (Foreground-Only Features)."""
-    # Chuẩn hóa ảnh vật thể đã cắt sát nền về 128x128
     fg_canvas = fg_crop.resize((128, 128), Image.Resampling.BILINEAR)
     eq_fg = ImageOps.autocontrast(fg_canvas, cutoff=1)
     gray_fg = ImageOps.autocontrast(fg_canvas.convert("L"), cutoff=1)
@@ -397,7 +399,6 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
             a_val = (a_val << 1) | (1 if val >= avg_lum else 0)
         ahashes.append(a_val)
 
-    # 1. Biểu đồ màu 100% trên pixel thuộc vật thể (loại bỏ hoàn toàn pixel nền!)
     eq_64 = ImageOps.autocontrast(small_64, cutoff=1)
     px_64 = list(eq_64.getdata())
 
@@ -428,7 +429,6 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
 
     fg_only_hist = _masked_soft_hist(range(64 * 64), use_mask=True)
 
-    # 2. Biểu đồ màu trên ảnh vật thể đã cắt sát khung bao (Crop-Normalized Histogram)
     crop_48 = eq_fg.resize((48, 48), Image.Resampling.BILINEAR)
     px_crop = list(crop_48.getdata())
 
@@ -464,7 +464,6 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
             ]
             grid_hists.append(_crop_soft_hist(cell_coords))
 
-    # 3. Hướng biên của vật thể đã cắt sát
     g_small = gray_fg.filter(ImageFilter.SMOOTH).resize((48, 48), Image.Resampling.BILINEAR)
     g_px = list(g_small.getdata())
     edge_bins = [0.0] * 8
@@ -482,13 +481,12 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
                 edge_sum += mag
     edge_hist = [x / edge_sum for x in edge_bins] if edge_sum > 0 else [0.125] * 8
 
-    # Tỷ lệ khung hình của vật thể sau khi cắt nền (giúp phân biệt vật dài như bút vs vật vuông như sách)
     cw, ch = fg_crop.size
     aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
     return {
-        "version": 24,
-        "type": "pil_v24_fg_seg",
+        "version": 25,
+        "type": "pil_v25_fg_seg",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
@@ -526,7 +524,6 @@ def calculate_image_features(img_path):
             visual_colors = _detect_visual_colors(fg_crop)
 
             if HAS_OPENCV:
-                # Dùng chính ảnh vật thể đã tách nền & cắt sát (fg_crop) để tính đặc trưng OpenCV!
                 normalized_img = fg_crop.resize((256, 256), Image.Resampling.BILINEAR)
                 rgb = np.asarray(normalized_img, dtype=np.uint8)
 
@@ -577,8 +574,8 @@ def calculate_image_features(img_path):
                 aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
                 features = {
-                    "version": 24,
-                    "type": "opencv_v24_fg_seg",
+                    "version": 25,
+                    "type": "opencv_v25_fg_seg",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
@@ -631,6 +628,10 @@ def image_score(
         ar2 = float(f2.get("aspect_ratio", 0.7))
         aspect_sim = 1.0 - abs(ar1 - ar2)
 
+        vc1 = set(f1.get("visual_colors", []))
+        vc2 = set(f2.get("visual_colors", []))
+        fg_color_agree = bool(vc1 and vc2 and vc1.intersection(vc2))
+
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
             scales1 = [x for x in (f1.get("global_hs"), f1.get("center_hs")) if x is not None]
             scales2 = [x for x in (f2.get("global_hs"), f2.get("center_hs")) if x is not None]
@@ -655,6 +656,8 @@ def image_score(
 
             color_sim = 0.50 * best_scale_inter + 0.35 * best_grid_inter + 0.15 * v_inter
             color_points = max(0, min(28, int(round(((color_sim - 0.24) / 0.42) * 28))))
+            if fg_color_agree and not color_conflict and color_points < 20:
+                color_points = 20
 
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
@@ -724,6 +727,8 @@ def image_score(
 
             combined_inter = 0.65 * cross_inter + 0.35 * best_grid_inter
             color_points = max(0, min(28, int(round(((combined_inter - 0.26) / 0.40) * 28))))
+            if fg_color_agree and not color_conflict and color_points < 20:
+                color_points = 20
 
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
