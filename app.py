@@ -112,7 +112,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v28.json"
+CACHE_FILE = "feature_cache_v29.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -136,7 +136,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v28")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v29")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -315,7 +315,7 @@ def _extract_foreground_pil(pil_img):
 
 
 def _detect_visual_colors(fg_crop):
-    """Nhận diện màu sắc chủ đạo trực tiếp trên ảnh vật thể đã tách nền (bỏ qua vùng lóa trắng)."""
+    """Nhận diện màu sắc chủ đạo trực tiếp trên ảnh vật thể đã tách nền."""
     try:
         crop = fg_crop.resize((32, 32))
         detected = set()
@@ -437,9 +437,9 @@ def _phash_from_gray(gray):
 
 def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
     """
-    Trích xuất đặc trưng v28:
-    - Phân biệt mẫu trơn vs mẫu sọc/LED/hoa văn qua bố cục lưới 4x4 (Spatial Layout 4x4).
-    - Kiểm tra mức độ sáng/tối trung bình vật thể (Mean Brightness & Saturation) để không nhầm xanh sáng với xám tối.
+    Trích xuất đặc trưng v29:
+    - Bản đồ L1 4x4 cho Độ sáng (Luma), Độ bão hòa (Sat) và Mật độ đường nét (Edge Grid 4x4).
+    - Tỷ lệ điểm nhấn màu (Accent Color Ratio) & Tỷ lệ vùng tối/sáng để tách bạch 2 áo khoác và 2 con chuột khác mẫu.
     """
     fg_canvas = fg_crop.resize((128, 128), Image.Resampling.BILINEAR)
     eq_fg = ImageOps.autocontrast(fg_canvas, cutoff=2)
@@ -515,24 +515,40 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
     px_crop = list(crop_48.getdata())
     crop_global_hist = _illumination_invariant_hist(px_crop)
 
-    # Bố cục không gian 4x4 (16 ô) trên vùng trung tâm vật thể (8..40) để bắt sọc áo, đèn LED chuột, chữ bìa sách
     raw_48 = fg_canvas.resize((48, 48), Image.Resampling.BILINEAR)
     raw_px_48 = list(raw_48.getdata())
     spatial_luma = []
     spatial_sat = []
     total_v = 0.0
     total_s = 0.0
-    center_samples = 0
+    dark_count = 0
+    bright_count = 0
+    accent_red_count = 0
+    total_px = 48 * 48
 
+    for rv, gv, bv in raw_px_48:
+        h_v, s_v, v_v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
+        if v_v < 0.25:
+            dark_count += 1
+        elif v_v > 0.72:
+            bright_count += 1
+        if s_v > 0.45 and (h_v < 0.06 or h_v > 0.92):
+            accent_red_count += 1
+
+    dark_ratio = dark_count / total_px
+    bright_ratio = bright_count / total_px
+    accent_red_ratio = accent_red_count / total_px
+
+    center_samples = 0
     for gy in range(4):
-        y_start = 8 + gy * 8
+        y_start = 6 + gy * 9
         for gx_i in range(4):
-            x_start = 8 + gx_i * 8
+            x_start = 6 + gx_i * 9
             sum_v = 0.0
             sum_s = 0.0
-            for yy in range(y_start, y_start + 8):
+            for yy in range(y_start, y_start + 9):
                 row_o = yy * 48
-                for xx in range(x_start, x_start + 8):
+                for xx in range(x_start, x_start + 9):
                     rv, gv, bv = raw_px_48[row_o + xx]
                     _, s_val, v_val = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
                     sum_v += v_val
@@ -540,8 +556,8 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
                     total_v += v_val
                     total_s += s_val
                     center_samples += 1
-            spatial_luma.append(sum_v / 64.0)
-            spatial_sat.append(sum_s / 64.0)
+            spatial_luma.append(sum_v / 81.0)
+            spatial_sat.append(sum_s / 81.0)
 
     mean_v = total_v / max(1, center_samples)
     mean_s = total_s / max(1, center_samples)
@@ -595,6 +611,21 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
             raw_texture_energy += math.hypot(rgx, rgy)
             pixel_samples += 1
 
+    # Lưới mật độ đường nét 4x4 (phân biệt áo có sọc ngang/dải trắng vs áo trơn)
+    spatial_edge = []
+    for gy in range(4):
+        y_start = 6 + gy * 9
+        for gx_i in range(4):
+            x_start = 6 + gx_i * 9
+            e_val = 0.0
+            for yy in range(max(1, y_start), min(47, y_start + 9)):
+                ro = yy * 48
+                for xx in range(max(1, x_start), min(47, x_start + 9)):
+                    rgx = float(raw_g_px[ro + xx + 1] - raw_g_px[ro + xx - 1])
+                    rgy = float(raw_g_px[ro + 48 + xx] - raw_g_px[ro - 48 + xx])
+                    e_val += math.hypot(rgx, rgy)
+            spatial_edge.append(min(1.0, (e_val / 81.0) / 90.0))
+
     edge_hist = [x / edge_sum for x in edge_bins] if edge_sum > 0 else [1.0 / 12.0] * 12
     texture_complexity = (raw_texture_energy / max(1, pixel_samples)) / 120.0
     hu_moments = _compute_hu_moments_pil(g_48)
@@ -603,8 +634,8 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
     aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
     return {
-        "version": 28,
-        "type": "pil_v28_layout",
+        "version": 29,
+        "type": "pil_v29_fine",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
@@ -614,6 +645,10 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
         "ring_hists": ring_hists,
         "spatial_luma": spatial_luma,
         "spatial_sat": spatial_sat,
+        "spatial_edge": spatial_edge,
+        "dark_ratio": dark_ratio,
+        "bright_ratio": bright_ratio,
+        "accent_red_ratio": accent_red_ratio,
         "mean_v": mean_v,
         "mean_s": mean_s,
         "edge_hist": edge_hist,
@@ -625,7 +660,7 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng v28: Bất biến góc nghiêng + Kiểm soát bố cục họa tiết & độ đậm nhạt."""
+    """Trích xuất đặc trưng v29: Phân tách chi tiết mẫu mã (sọc áo, LED chuột) & bất biến góc."""
     if not check_real_image(img_path):
         return None
 
@@ -677,25 +712,36 @@ def calculate_image_features(img_path):
                 ab_hist = cv2.calcHist([lab], [1, 2], non_glare_mask, [8, 8], [0, 256, 0, 256])
                 cv2.normalize(ab_hist, ab_hist, 1.0, 0.0, cv2.NORM_L1)
 
-                center_hsv = hsv[42:214, 42:214].astype(np.float32) / 255.0
+                full_hsv = hsv.astype(np.float32) / 255.0
+                dark_ratio = float(np.mean(full_hsv[:, :, 2] < 0.25))
+                bright_ratio = float(np.mean(full_hsv[:, :, 2] > 0.72))
+                red_mask = (full_hsv[:, :, 1] > 0.45) & ((full_hsv[:, :, 0] < 0.06) | (full_hsv[:, :, 0] > 0.92))
+                accent_red_ratio = float(np.mean(red_mask))
+
+                center_hsv = full_hsv[32:224, 32:224]
                 mean_s = float(np.mean(center_hsv[:, :, 1]))
                 mean_v = float(np.mean(center_hsv[:, :, 2]))
 
+                gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+                gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+                mag, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
+                center_mag = mag[32:224, 32:224]
+
                 spatial_luma = []
                 spatial_sat = []
-                for gy in range(4):
+                spatial_edge = []
+                for gy_i in range(4):
                     for gx_i in range(4):
-                        patch = center_hsv[gy * 43:(gy + 1) * 43, gx_i * 43:(gx_i + 1) * 43]
+                        patch = center_hsv[gy_i * 48:(gy_i + 1) * 48, gx_i * 48:(gx_i + 1) * 48]
+                        mpatch = center_mag[gy_i * 48:(gy_i + 1) * 48, gx_i * 48:(gx_i + 1) * 48]
                         spatial_sat.append(float(np.mean(patch[:, :, 1])))
                         spatial_luma.append(float(np.mean(patch[:, :, 2])))
+                        spatial_edge.append(min(1.0, float(np.mean(mpatch)) / 90.0))
 
                 moments = cv2.moments(gray_eq)
                 hu = cv2.HuMoments(moments).flatten()
                 hu_log = [-math.copysign(1.0, float(h)) * math.log10(abs(float(h))) if abs(float(h)) > 1e-30 else 0.0 for h in hu]
 
-                gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-                gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-                mag, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
                 edge_hist = cv2.calcHist([ang.astype(np.float32)], [0], None, [12], [0, 360])
                 cv2.normalize(edge_hist, edge_hist, 1.0, 0.0, cv2.NORM_L1)
 
@@ -704,8 +750,8 @@ def calculate_image_features(img_path):
                 aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
                 features = {
-                    "version": 28,
-                    "type": "opencv_v28_layout",
+                    "version": 29,
+                    "type": "opencv_v29_fine",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
@@ -713,6 +759,10 @@ def calculate_image_features(img_path):
                     "ab_hist": ab_hist,
                     "spatial_luma": spatial_luma,
                     "spatial_sat": spatial_sat,
+                    "spatial_edge": spatial_edge,
+                    "dark_ratio": dark_ratio,
+                    "bright_ratio": bright_ratio,
+                    "accent_red_ratio": accent_red_ratio,
                     "mean_v": mean_v,
                     "mean_s": mean_s,
                     "hu_moments": hu_log,
@@ -750,22 +800,12 @@ def _hu_moments_similarity(hu1, hu2):
     return max(0.0, min(1.0, 1.0 - (dist / 14.0)))
 
 
-def _pearson_corr(v1, v2):
-    """Hệ số tương quan chuẩn hóa (0.0 – 1.0) giữa 2 bản đồ bố cục không gian."""
+def _l1_grid_sim(v1, v2, scale=0.35):
+    """Độ tương đồng L1 từng ô trực tiếp (không khử trung bình để bắt sự khác biệt vùng sáng/tối cục bộ)."""
     if not v1 or not v2 or len(v1) != len(v2):
         return 0.5
-    n = len(v1)
-    m1 = sum(v1) / n
-    m2 = sum(v2) / n
-    num = sum((a - m1) * (b - m2) for a, b in zip(v1, v2))
-    den1 = sum((a - m1) ** 2 for a in v1)
-    den2 = sum((b - m2) ** 2 for b in v2)
-    denom = math.sqrt(den1 * den2)
-    if denom <= 1e-6:
-        # Cả 2 cùng bề mặt phẳng đồng nhất
-        return 0.85 if abs(m1 - m2) < 0.12 else 0.45
-    r = num / denom
-    return max(0.0, min(1.0, (r + 1.0) / 2.0))
+    mae = sum(abs(float(a) - float(b)) for a, b in zip(v1, v2)) / len(v1)
+    return max(0.0, min(1.0, 1.0 - (mae / scale)))
 
 
 def _rotate_4x4(grid):
@@ -777,35 +817,52 @@ def _rotate_4x4(grid):
 
 
 def _spatial_layout_similarity(f1, f2):
-    """So khớp bố cục chi tiết 4x4 (xoay 4 chiều) + độ đậm nhạt & bão hòa màu."""
+    """So khớp bố cục chi tiết 4x4 (Luma + Saturation + Edge Density) xoay 4 chiều + tỷ lệ vùng nhấn."""
     l1 = f1.get("spatial_luma", [])
     l2 = f2.get("spatial_luma", [])
     s1 = f1.get("spatial_sat", [])
     s2 = f2.get("spatial_sat", [])
+    e1 = f1.get("spatial_edge", [])
+    e2 = f2.get("spatial_edge", [])
 
     best_layout = 0.5
     if len(l1) == 16 and len(l2) == 16 and len(s1) == 16 and len(s2) == 16:
         curr_l2 = l2
         curr_s2 = s2
+        curr_e2 = e2 if len(e2) == 16 else None
         for _ in range(4):
-            corr_l = _pearson_corr(l1, curr_l2)
-            corr_s = _pearson_corr(s1, curr_s2)
-            score = 0.55 * corr_l + 0.45 * corr_s
+            sim_l = _l1_grid_sim(l1, curr_l2, scale=0.32)
+            sim_s = _l1_grid_sim(s1, curr_s2, scale=0.28)
+            if len(e1) == 16 and curr_e2 is not None:
+                sim_e = _l1_grid_sim(e1, curr_e2, scale=0.30)
+                score = 0.40 * sim_l + 0.35 * sim_s + 0.25 * sim_e
+            else:
+                score = 0.55 * sim_l + 0.45 * sim_s
+
             if score > best_layout:
                 best_layout = score
             curr_l2 = _rotate_4x4(curr_l2)
             curr_s2 = _rotate_4x4(curr_s2)
+            if curr_e2 is not None:
+                curr_e2 = _rotate_4x4(curr_e2)
 
-    # Phạt khi độ đậm nhạt hoặc độ tươi màu chênh lệch quá lớn (VD: áo xanh tươi vs áo xám tối)
-    v_diff = abs(float(f1.get("mean_v", 0.5)) - float(f2.get("mean_v", 0.5)))
+    # Phạt chênh lệch tỷ lệ vùng tối, vùng sáng và chi tiết nhấn màu đỏ (LED chuột gaming vs chuột trơn)
+    dark_diff = abs(float(f1.get("dark_ratio", 0.3)) - float(f2.get("dark_ratio", 0.3)))
+    bright_diff = abs(float(f1.get("bright_ratio", 0.3)) - float(f2.get("bright_ratio", 0.3)))
+    red_diff = abs(float(f1.get("accent_red_ratio", 0.0)) - float(f2.get("accent_red_ratio", 0.0)))
     s_diff = abs(float(f1.get("mean_s", 0.3)) - float(f2.get("mean_s", 0.3)))
-    tone_penalty = 0.0
-    if v_diff > 0.24:
-        tone_penalty += min(0.25, (v_diff - 0.24) * 0.9)
-    if s_diff > 0.22:
-        tone_penalty += min(0.25, (s_diff - 0.22) * 0.9)
 
-    return max(0.0, min(1.0, best_layout - tone_penalty))
+    penalty = 0.0
+    if dark_diff > 0.20:
+        penalty += min(0.22, (dark_diff - 0.20) * 0.65)
+    if bright_diff > 0.20:
+        penalty += min(0.22, (bright_diff - 0.20) * 0.65)
+    if s_diff > 0.16:
+        penalty += min(0.22, (s_diff - 0.16) * 0.85)
+    if red_diff > 0.03:
+        penalty += min(0.18, red_diff * 2.5)
+
+    return max(0.0, min(1.0, best_layout - penalty))
 
 
 def image_score(
@@ -814,7 +871,7 @@ def image_score(
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác (0–50): Màu sắc (18đ) + Bố cục chi tiết 4x4 (14đ) + Hình khối & Đường nét (18đ)."""
+    """Chấm điểm thị giác (0–50): Màu sắc (16đ) + Bố cục chi tiết 4x4 (18đ) + Hình khối & Đường nét (16đ)."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -837,15 +894,15 @@ def image_score(
 
         tc1 = float(f1.get("texture_complexity", 0.35))
         tc2 = float(f2.get("texture_complexity", 0.35))
-        tex_sim = max(0.0, min(1.0, 1.0 - (abs(tc1 - tc2) / 0.25)))
+        tex_sim = max(0.0, min(1.0, 1.0 - (abs(tc1 - tc2) / 0.22)))
 
         if f1.get("type", "").startswith("opencv_v") and f2.get("type", "").startswith("opencv_v"):
             h_inter = float(cv2.compareHist(f1["global_h"], f2["global_h"], cv2.HISTCMP_INTERSECT))
             ab_inter = float(cv2.compareHist(f1["ab_hist"], f2["ab_hist"], cv2.HISTCMP_INTERSECT))
             color_sim = 0.50 * h_inter + 0.50 * ab_inter
-            color_points = max(0, min(18, int(round(((color_sim - 0.25) / 0.45) * 18))))
+            color_points = max(0, min(16, int(round(((color_sim - 0.26) / 0.46) * 16))))
 
-            layout_points = max(0, min(14, int(round(((layout_sim - 0.35) / 0.50) * 14))))
+            layout_points = max(0, min(18, int(round(((layout_sim - 0.30) / 0.55) * 18))))
 
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
@@ -853,9 +910,9 @@ def image_score(
             phash_score = max(0.0, 1.0 - min_hamming / 63.0)
             phash_pts = max(0, min(5, int(round(((phash_score - 0.32) / 0.34) * 5))))
 
-            hu_pts = max(0, min(4, int(round(hu_sim * 4))))
+            hu_pts = max(0, min(3, int(round(hu_sim * 3))))
             edge_pts = max(0, min(3, int(round(((circ_edge_sim - 0.56) / 0.34) * 3))))
-            tex_pts = max(0, min(3, int(round(tex_sim * 3))))
+            tex_pts = max(0, min(2, int(round(tex_sim * 2))))
             aspect_pts = max(0, min(1, int(round(aspect_sim))))
 
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
@@ -864,8 +921,8 @@ def image_score(
                 matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
                 forward = matcher.knnMatch(d1, d2, k=2)
                 reverse = matcher.knnMatch(d2, d1, k=2)
-                good_f = [p[0] for p in forward if len(p) == 2 and p[0].distance < 0.75 * p[1].distance]
-                good_r = [p[0] for p in reverse if len(p) == 2 and p[0].distance < 0.75 * p[1].distance]
+                good_f = [p[0] for p in forward if len(p) == 2 and p[0].distance < 0.74 * p[1].distance]
+                good_r = [p[0] for p in reverse if len(p) == 2 and p[0].distance < 0.74 * p[1].distance]
                 reverse_pairs = {(m.trainIdx, m.queryIdx) for m in good_r}
                 mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
 
@@ -876,9 +933,10 @@ def image_score(
 
             raw_total = color_points + layout_points + phash_pts + hu_pts + edge_pts + tex_pts + aspect_pts + orb_points
 
-            # Nếu bố cục chi tiết 4x4 lệch hẳn (< 0.48), giới hạn điểm hình ảnh để tránh nhầm đồ khác mẫu
-            if layout_sim < 0.48 and raw_total > 26:
-                raw_total = 26
+            if layout_sim < 0.55 and raw_total > 24:
+                raw_total = 24
+            elif layout_sim < 0.65 and raw_total > 31:
+                raw_total = 31
 
             if color_conflict and raw_total > 10:
                 raw_total = 10
@@ -912,9 +970,9 @@ def image_score(
                 ring_sim = cross_color
 
             color_sim = 0.55 * cross_color + 0.45 * ring_sim
-            color_points = max(0, min(18, int(round(((color_sim - 0.25) / 0.45) * 18))))
+            color_points = max(0, min(16, int(round(((color_sim - 0.26) / 0.46) * 16))))
 
-            layout_points = max(0, min(14, int(round(((layout_sim - 0.35) / 0.50) * 14))))
+            layout_points = max(0, min(18, int(round(((layout_sim - 0.30) / 0.55) * 18))))
 
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
@@ -927,15 +985,17 @@ def image_score(
             combined_dist = (min_d + min_a) / 2.0
             hash_points = max(0, min(6, int(round(((36.0 - combined_dist) / 24.0) * 6))))
 
-            hu_points = max(0, min(4, int(round(hu_sim * 4))))
+            hu_points = max(0, min(3, int(round(hu_sim * 3))))
             edge_points = max(0, min(4, int(round(((circ_edge_sim - 0.58) / 0.34) * 4))))
-            tex_points = max(0, min(3, int(round(tex_sim * 3))))
+            tex_points = max(0, min(2, int(round(tex_sim * 2))))
             aspect_points = max(0, min(1, int(round(aspect_sim))))
 
             total = color_points + layout_points + hash_points + hu_points + edge_points + tex_points + aspect_points
 
-            if layout_sim < 0.48 and total > 26:
-                total = 26
+            if layout_sim < 0.55 and total > 24:
+                total = 24
+            elif layout_sim < 0.65 and total > 31:
+                total = 31
 
             total = min(48, total)
 
@@ -1481,7 +1541,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát v28: Chống nhầm đồ khác mẫu + Bất biến góc nghiêng & lóa sáng."""
+    """Đối sánh tổng quát v29: Phân tách chi tiết mẫu mã (sọc áo, LED chuột) & giữ chuẩn cặp thật."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
