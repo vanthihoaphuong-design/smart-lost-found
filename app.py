@@ -112,7 +112,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v30.json"
+CACHE_FILE = "feature_cache_v31.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 500
 
@@ -136,7 +136,7 @@ def _persist_disk_cache():
     try:
         serializable = {
             k: v for k, v in FEATURE_CACHE.items()
-            if isinstance(v, dict) and v.get("type", "").startswith("pil_v30")
+            if isinstance(v, dict) and v.get("type", "").startswith("pil_v31")
         }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -437,9 +437,9 @@ def _phash_from_gray(gray):
 
 def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
     """
-    Trích xuất đặc trưng v30:
-    - Chấm điểm cao tự nhiên cho mọi cặp trùng thật (kể cả nghiêng góc/lóa sáng như Sách công nghệ 8, Bút, Balo).
-    - Tách riêng chỉ số đối lập mẫu mã (LED đỏ chuột gaming, độ tươi màu áo, sọc ngang vs trơn) để trừ điểm chính xác.
+    Trích xuất đặc trưng v31:
+    - Tính đặc trưng lõi trung tâm vật thể (bỏ ảnh hưởng nền trắng/đen xung quanh vòng tay, hộp sữa, sách).
+    - Không phạt góc đặt dọc/ngang hoặc độ lóa ánh sáng của đồ thật.
     """
     fg_canvas = fg_crop.resize((128, 128), Image.Resampling.BILINEAR)
     eq_fg = ImageOps.autocontrast(fg_canvas, cutoff=2)
@@ -537,39 +537,30 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
         _illumination_invariant_hist(px_crop, outer_coords),
     ]
 
-    # Chỉ số chi tiết bề mặt & đối lập mẫu mã (chỉ kích hoạt phạt khi 2 ảnh khác mẫu rõ rệt)
+    # Chỉ đo độ bão hòa lõi trung tâm (24x24 giữa ảnh) & chi tiết nhấn đỏ để loại bỏ hoàn toàn nền xung quanh
     raw_48 = fg_canvas.resize((48, 48), Image.Resampling.BILINEAR)
     raw_px_48 = list(raw_48.getdata())
-    sum_s = 0.0
-    sum_v = 0.0
+    center_s_sum = 0.0
+    center_n = 0
     accent_red = 0
-    dark_px = 0
-    total_px = 48 * 48
-    for rv, gv, bv in raw_px_48:
-        h_v, s_v, v_v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
-        sum_s += s_v
-        sum_v += v_v
-        if v_v < 0.25:
-            dark_px += 1
-        if s_v > 0.45 and (h_v < 0.06 or h_v > 0.92):
-            accent_red += 1
+    for r in range(12, 36):
+        off = r * 48
+        for c in range(12, 36):
+            rv, gv, bv = raw_px_48[off + c]
+            h_v, s_v, v_v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
+            if not (v_v > 0.92 and s_v < 0.14):
+                center_s_sum += s_v
+                center_n += 1
+            if s_v > 0.48 and (h_v < 0.06 or h_v > 0.92):
+                accent_red += 1
 
-    mean_s = sum_s / total_px
-    mean_v = sum_v / total_px
-    dark_ratio = dark_px / total_px
-    accent_red_ratio = accent_red / total_px
-
-    raw_gray_48 = fg_canvas.convert("L").resize((48, 48), Image.Resampling.BILINEAR)
-    raw_g_px = list(raw_gray_48.getdata())
+    center_mean_s = (center_s_sum / center_n) if center_n > 0 else 0.25
+    accent_red_ratio = accent_red / (24.0 * 24.0)
 
     g_48 = gray_fg.filter(ImageFilter.SMOOTH).resize((48, 48), Image.Resampling.BILINEAR)
     g_px = list(g_48.getdata())
     edge_bins = [0.0] * 12
     edge_sum = 0.0
-    raw_edge_sum = 0.0
-    horiz_edge = 0.0
-    vert_edge = 0.0
-    samples = 0
 
     for r in range(1, 47):
         row_off = r * 48
@@ -583,24 +574,15 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
                 edge_bins[ebin] += mag
                 edge_sum += mag
 
-            rgx = abs(float(raw_g_px[row_off + c + 1] - raw_g_px[row_off + c - 1]))
-            rgy = abs(float(raw_g_px[row_off + 48 + c] - raw_g_px[row_off - 48 + c]))
-            raw_edge_sum += math.hypot(rgx, rgy)
-            vert_edge += rgx
-            horiz_edge += rgy
-            samples += 1
-
     edge_hist = [x / edge_sum for x in edge_bins] if edge_sum > 0 else [1.0 / 12.0] * 12
-    texture_complexity = (raw_edge_sum / max(1, samples)) / 120.0
-    hv_ratio = horiz_edge / max(1.0, horiz_edge + vert_edge)
     hu_moments = _compute_hu_moments_pil(g_48)
 
     cw, ch = fg_crop.size
     aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
     return {
-        "version": 30,
-        "type": "pil_v30_balanced",
+        "version": 31,
+        "type": "pil_v31_clean",
         "dhash": phashes[0],
         "phashes": phashes,
         "ahash": ahashes[0],
@@ -608,13 +590,9 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
         "fg_only_hist": fg_only_hist,
         "crop_global_hist": crop_global_hist,
         "ring_hists": ring_hists,
-        "mean_s": mean_s,
-        "mean_v": mean_v,
-        "dark_ratio": dark_ratio,
+        "center_mean_s": center_mean_s,
         "accent_red_ratio": accent_red_ratio,
-        "hv_ratio": hv_ratio,
         "edge_hist": edge_hist,
-        "texture_complexity": texture_complexity,
         "hu_moments": hu_moments,
         "aspect_ratio": aspect_ratio,
         "visual_colors": list(visual_colors),
@@ -622,7 +600,7 @@ def _fast_pil_features(raw_img, fg_crop, small_64, fg_mask, visual_colors):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng v30: Giữ điểm cao đồ trùng thật, chỉ phạt khi có bằng chứng khác mẫu."""
+    """Trích xuất đặc trưng v31: Chấm cao đồ trùng thật (vòng tay, sữa, sách, bút), phạt đúng mẫu khác."""
     if not check_real_image(img_path):
         return None
 
@@ -674,11 +652,10 @@ def calculate_image_features(img_path):
                 ab_hist = cv2.calcHist([lab], [1, 2], non_glare_mask, [8, 8], [0, 256, 0, 256])
                 cv2.normalize(ab_hist, ab_hist, 1.0, 0.0, cv2.NORM_L1)
 
-                full_hsv = hsv.astype(np.float32) / 255.0
-                mean_s = float(np.mean(full_hsv[:, :, 1]))
-                mean_v = float(np.mean(full_hsv[:, :, 2]))
-                dark_ratio = float(np.mean(full_hsv[:, :, 2] < 0.25))
-                red_mask = (full_hsv[:, :, 1] > 0.45) & ((full_hsv[:, :, 0] < 0.06) | (full_hsv[:, :, 0] > 0.92))
+                core_hsv = hsv[64:192, 64:192].astype(np.float32) / 255.0
+                valid_core = ~((core_hsv[:, :, 2] > 0.92) & (core_hsv[:, :, 1] < 0.14))
+                center_mean_s = float(np.mean(core_hsv[:, :, 1][valid_core])) if np.any(valid_core) else 0.25
+                red_mask = (core_hsv[:, :, 1] > 0.48) & ((core_hsv[:, :, 0] < 0.06) | (core_hsv[:, :, 0] > 0.92))
                 accent_red_ratio = float(np.mean(red_mask))
 
                 moments = cv2.moments(gray_eq)
@@ -687,34 +664,25 @@ def calculate_image_features(img_path):
 
                 gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
                 gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-                mag, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
+                _, ang = cv2.cartToPolar(gx, gy, angleInDegrees=True)
                 edge_hist = cv2.calcHist([ang.astype(np.float32)], [0], None, [12], [0, 360])
                 cv2.normalize(edge_hist, edge_hist, 1.0, 0.0, cv2.NORM_L1)
-
-                abs_gx = float(np.sum(np.abs(gx)))
-                abs_gy = float(np.sum(np.abs(gy)))
-                hv_ratio = abs_gy / max(1.0, abs_gx + abs_gy)
-                texture_complexity = float(np.mean(mag)) / 120.0
 
                 cw, ch = fg_crop.size
                 aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
                 features = {
-                    "version": 30,
-                    "type": "opencv_v30_balanced",
+                    "version": 31,
+                    "type": "opencv_v31_clean",
                     "phash": phashes[0],
                     "phashes": phashes,
                     "orb_descriptors": descriptors,
                     "global_h": global_h,
                     "ab_hist": ab_hist,
-                    "mean_s": mean_s,
-                    "mean_v": mean_v,
-                    "dark_ratio": dark_ratio,
+                    "center_mean_s": center_mean_s,
                     "accent_red_ratio": accent_red_ratio,
-                    "hv_ratio": hv_ratio,
                     "hu_moments": hu_log,
                     "edge_hist": edge_hist.flatten().tolist(),
-                    "texture_complexity": texture_complexity,
                     "aspect_ratio": aspect_ratio,
                     "visual_colors": list(visual_colors),
                 }
@@ -749,35 +717,22 @@ def _hu_moments_similarity(hu1, hu2):
 
 def _model_contradiction_penalty(f1, f2):
     """
-    Chỉ trừ điểm khi 2 ảnh cùng loại đồ nhưng có dấu hiệu khác mẫu rõ rệt:
-    - Một ảnh có đèn LED đỏ/chi tiết nhấn đỏ (chuột gaming), ảnh kia không có.
-    - Một ảnh màu tươi rõ rệt, ảnh kia xám tối xỉn màu (áo khoác xanh sáng vs xám tối).
-    - Một ảnh bề mặt trơn nhẵn, ảnh kia dày đặc chi tiết/sọc ngang (chuột trơn vs chuột + bàn phím / áo trơn vs áo sọc).
-    Không bao giờ phạt đồ thật chụp nghiêng hay lóa sáng.
+    Chỉ phạt khi lõi trung tâm 2 vật thể có bằng chứng khác mẫu thực sự:
+    - Một bên có đèn LED đỏ/nơ đỏ nổi bật, bên kia hoàn toàn không có.
+    - Một bên màu tươi đậm rõ rệt (áo khoác xanh dương tươi), bên kia xám chì/xỉn màu (áo khoác xám sọc).
+    Không phạt nền trắng/đen xung quanh, không phạt góc đặt dọc/ngang hay lóa sáng.
     """
     penalty = 0
 
     red1 = float(f1.get("accent_red_ratio", 0.0))
     red2 = float(f2.get("accent_red_ratio", 0.0))
-    if (red1 > 0.025) != (red2 > 0.025) and abs(red1 - red2) > 0.025:
-        penalty += 12
+    if (red1 > 0.03) != (red2 > 0.03) and abs(red1 - red2) > 0.03:
+        penalty += 14
 
-    s1 = float(f1.get("mean_s", 0.25))
-    s2 = float(f2.get("mean_s", 0.25))
-    v1 = float(f1.get("mean_v", 0.50))
-    v2 = float(f2.get("mean_v", 0.50))
-    if abs(s1 - s2) > 0.18 and abs(v1 - v2) > 0.16:
-        penalty += 11
-
-    tc1 = float(f1.get("texture_complexity", 0.30))
-    tc2 = float(f2.get("texture_complexity", 0.30))
-    if abs(tc1 - tc2) > 0.16:
-        penalty += min(12, int(round((abs(tc1 - tc2) - 0.14) * 55)))
-
-    hv1 = float(f1.get("hv_ratio", 0.50))
-    hv2 = float(f2.get("hv_ratio", 0.50))
-    if abs(hv1 - hv2) > 0.11:
-        penalty += 6
+    s1 = float(f1.get("center_mean_s", 0.25))
+    s2 = float(f2.get("center_mean_s", 0.25))
+    if abs(s1 - s2) > 0.20:
+        penalty += min(16, int(round((abs(s1 - s2) - 0.18) * 75)))
 
     return min(22, penalty)
 
@@ -788,7 +743,7 @@ def image_score(
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác (0–50): Màu sắc (25đ) + Hình khối & Đường nét (25đ) - Phạt đối lập mẫu mã."""
+    """Chấm điểm thị giác (0–50): Màu sắc (26đ) + Hình khối & Đường nét (24đ) - Phạt đối lập mẫu mã."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -803,7 +758,7 @@ def image_score(
 
         ar1 = float(f1.get("aspect_ratio", 0.7))
         ar2 = float(f2.get("aspect_ratio", 0.7))
-        aspect_sim = max(0.0, 1.0 - max(0.0, abs(ar1 - ar2) - 0.12))
+        aspect_sim = max(0.0, 1.0 - max(0.0, abs(ar1 - ar2) - 0.14))
 
         hu_sim = _hu_moments_similarity(f1.get("hu_moments", []), f2.get("hu_moments", []))
         circ_edge_sim = _circular_edge_similarity(f1.get("edge_hist", []), f2.get("edge_hist", []))
@@ -813,16 +768,16 @@ def image_score(
             h_inter = float(cv2.compareHist(f1["global_h"], f2["global_h"], cv2.HISTCMP_INTERSECT))
             ab_inter = float(cv2.compareHist(f1["ab_hist"], f2["ab_hist"], cv2.HISTCMP_INTERSECT))
             color_sim = 0.50 * h_inter + 0.50 * ab_inter
-            color_points = max(0, min(25, int(round(((color_sim - 0.22) / 0.44) * 25))))
+            color_points = max(0, min(26, int(round(((color_sim - 0.20) / 0.42) * 26))))
 
             p1 = int(f1["phash"])
             p2_list = f2.get("phashes", [int(f2["phash"])])
             min_hamming = min((p1 ^ int(p2)).bit_count() for p2 in p2_list)
             phash_score = max(0.0, 1.0 - min_hamming / 63.0)
-            phash_pts = max(0, min(7, int(round(((phash_score - 0.28) / 0.34) * 7))))
+            phash_pts = max(0, min(7, int(round(((phash_score - 0.26) / 0.34) * 7))))
 
             hu_pts = max(0, min(6, int(round(hu_sim * 6))))
-            edge_pts = max(0, min(5, int(round(((circ_edge_sim - 0.55) / 0.35) * 5))))
+            edge_pts = max(0, min(5, int(round(((circ_edge_sim - 0.52) / 0.36) * 5))))
             aspect_pts = max(0, min(2, int(round(aspect_sim * 2))))
 
             d1, d2 = f1.get("orb_descriptors"), f2.get("orb_descriptors")
@@ -837,13 +792,13 @@ def image_score(
                 mutual = sum((m.queryIdx, m.trainIdx) in reverse_pairs for m in good_f)
 
                 if mutual >= 5:
-                    orb_points = 5
+                    orb_points = 4
                 elif mutual >= 3:
-                    orb_points = 3
+                    orb_points = 2
                 elif mutual >= 1:
                     orb_points = 1
 
-            raw_total = max(6, color_points + phash_pts + hu_pts + edge_pts + aspect_pts + orb_points - contra_penalty)
+            raw_total = max(8, color_points + phash_pts + hu_pts + edge_pts + aspect_pts + orb_points - contra_penalty)
 
             if color_conflict and raw_total > 10:
                 raw_total = 10
@@ -877,7 +832,7 @@ def image_score(
                 ring_sim = cross_color
 
             color_sim = 0.55 * cross_color + 0.45 * ring_sim
-            color_points = max(0, min(25, int(round(((color_sim - 0.22) / 0.44) * 25))))
+            color_points = max(0, min(26, int(round(((color_sim - 0.20) / 0.42) * 26))))
 
             d1 = int(f1.get("dhash", 0))
             d2_list = f2.get("phashes", [int(f2.get("dhash", 0))])
@@ -891,10 +846,10 @@ def image_score(
             hash_points = max(0, min(8, int(round(((36.0 - combined_dist) / 24.0) * 8))))
 
             hu_points = max(0, min(7, int(round(hu_sim * 7))))
-            edge_points = max(0, min(6, int(round(((circ_edge_sim - 0.56) / 0.34) * 6))))
+            edge_points = max(0, min(6, int(round(((circ_edge_sim - 0.52) / 0.36) * 6))))
             aspect_points = max(0, min(3, int(round(aspect_sim * 3))))
 
-            raw_total = max(6, color_points + hash_points + hu_points + edge_points + aspect_points - contra_penalty)
+            raw_total = max(8, color_points + hash_points + hu_points + edge_points + aspect_points - contra_penalty)
             total = min(48, raw_total)
 
             if color_conflict:
@@ -1439,7 +1394,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh tổng quát v30: Gỡ khóa trần cứng 24đ + Phạt đối lập mẫu mã chính xác."""
+    """Đối sánh tổng quát v31: Không phạt nhầm nền/góc đặt, chấm chuẩn vòng tay, sữa, sách, áo khoác."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1527,7 +1482,7 @@ def match_items(item_id=None):
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
-        eval_limit = min(total_matches, page * per_page + 10)
+        eval_limit = min(total_matches, max(60, page * per_page + 20))
         top_candidates = candidates[:eval_limit]
 
         urls_to_fetch = set()
