@@ -392,10 +392,7 @@ def _compute_masked_color_hist(small_48, fg_mask):
 
 
 def _compute_fine_structure_8x8(fg_crop):
-    """
-    Trích xuất đặc trưng cấu trúc chi tiết lưới 8x8 (64 vùng) + Biểu đồ hướng cạnh HOG:
-    Phân biệt rõ mặt dây chuyền hoa vs giọt nước, áo khoác trơn vs áo kẻ ngang, chuột trơn vs chuột LED.
-    """
+    """Trích xuất đặc trưng cấu trúc chi tiết lưới 8x8 + HOG dự phòng nhẹ RAM."""
     base_64 = ImageOps.equalize(fg_crop.convert("L")).resize((64, 64), Image.Resampling.BILINEAR)
     rot_signatures = []
 
@@ -403,7 +400,6 @@ def _compute_fine_structure_8x8(fg_crop):
         g_img = base_64.rotate(angle) if angle else base_64
         g_px = list(g_img.getdata())
 
-        # 1. Lưới 8x8 ô (mỗi ô 8x8 pixel): lưu độ sáng trung bình và mật độ biên ngang/dọc
         cell_vec = []
         hog_bins = [0.0] * 8
 
@@ -505,7 +501,6 @@ def _cosine_sim(v1, v2):
 
 
 def _pearson_corr(v1, v2):
-    """Tương quan Pearson chuẩn hóa trừ trung bình (nhạy với hoa văn cục bộ từng ô 8x8)."""
     if not v1 or not v2 or len(v1) != len(v2):
         return 0.0
     if HAS_NUMPY:
@@ -529,12 +524,7 @@ def image_score(
     is_same_keyword=False,
     color_conflict=False
 ):
-    """
-    Chấm điểm thị giác v39 (0–50):
-    - 16đ Sắc độ chuẩn hóa vật thể (HSV + Chromaticity).
-    - 24đ Tương quan chi tiết lưới 8x8 (trừ trung bình để bắt khác biệt mặt dây chuyền, sọc áo, LED chuột).
-    - 10đ Biểu đồ hướng cạnh HOG + tỷ lệ khung hình.
-    """
+    """Chấm điểm thị giác nền (0–50) + khóa trần 10/50 nếu khác màu HSV."""
     try:
         if not check_real_image(img1_filename) or not check_real_image(img2_filename):
             return 0, 0.0
@@ -552,13 +542,11 @@ def image_score(
         if f1 is None or f2 is None:
             return 0, 0.0
 
-        # 1. Điểm sắc độ vật thể (0–16đ)
         h1 = f1.get("fg_color_hist", [])
         h2 = f2.get("fg_color_hist", [])
         color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
         color_pts = max(0, min(16, int(round(((color_inter - 0.14) / 0.36) * 16))))
 
-        # 2. Điểm cấu trúc chi tiết lưới 8x8 + hướng cạnh HOG qua 4 góc xoay (0–32đ)
         s1_list = f1.get("rot_sigs", [])
         s2_list = f2.get("rot_sigs", [])
         if s1_list and s2_list:
@@ -571,7 +559,6 @@ def image_score(
                 if combined > best_struct:
                     best_struct = combined
 
-            # Ngưỡng tương quan chi tiết: 0.45 -> 4đ | 0.65 -> 16đ | >= 0.85 -> 32đ
             struct_pts = max(2, min(32, int(round(((best_struct - 0.42) / 0.44) * 32))))
         else:
             struct_pts = 14
@@ -1120,7 +1107,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v39: Siêu nhẹ RAM (< 70MB) + Lưới chi tiết 8x8 + HOG + Sắc độ HSV."""
+    """Đối sánh v39: Siêu nhẹ RAM (< 70MB) kết hợp MobileNetV2 Client-Side."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1329,6 +1316,7 @@ def teacher_check(lost_id, found_id):
     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key, v_cols1, v_cols2)
     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+    base_score = ten_score + mau_score + vi_tri_score + ngay_score
 
     if has1 and has2:
         anh_score, image_ratio = image_score(
@@ -1340,7 +1328,7 @@ def teacher_check(lost_id, found_id):
     else:
         anh_score, image_ratio = 0, 0.0
 
-    score = anh_score + ten_score + mau_score + vi_tri_score + ngay_score
+    score = anh_score + base_score
 
     if score >= 75:
         ket_luan = "🟢 Khả năng trùng khớp cao"
@@ -1365,6 +1353,9 @@ def teacher_check(lost_id, found_id):
         lost=lost,
         found=found,
         score=score,
+        base_score=base_score,
+        color_score=mau_score,
+        server_img_score=anh_score,
         ket_luan=ket_luan,
         image_warning=image_warning
     )
