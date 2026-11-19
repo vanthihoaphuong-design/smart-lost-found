@@ -19,7 +19,7 @@ Báo nhặt được đồ
                 type="text" 
                 name="ten_do" 
                 class="form-control" 
-                placeholder="Ví dụ: Sách Tin học 11, Laptop Dell..." 
+                placeholder="Ví dụ: Áo khoác đồng phục, Laptop Dell..." 
                 required>
         </div>
 
@@ -118,24 +118,21 @@ Báo nhặt được đồ
         </div>
 
         <div class="col-md-6">
-            <label class="form-label">Ảnh đồ vật</label>
+            <label class="form-label">Ảnh đồ vật (Có thể chọn tối đa 3 ảnh: mặt trước, mặt sau, chi tiết)</label>
             <input 
                 type="file" 
                 name="hinh_anh" 
                 class="form-control" 
                 accept="image/*" 
+                multiple
                 id="previewImage">
+            <small class="text-muted">💡 Chọn tối đa 3 ảnh để AI nhận diện chuẩn xác hơn.</small>
         </div>
     </div>
 
     <br>
 
-    <div class="text-center">
-        <img 
-            id="imgPreview" 
-            src="" 
-            style="display:none;max-width:250px;border-radius:12px;border: 1px solid #ddd; padding: 4px;">
-    </div>
+    <div id="multiImgPreview" class="d-flex justify-content-center flex-wrap gap-3"></div>
 
     <br>
 
@@ -152,15 +149,28 @@ Báo nhặt được đồ
 
 <script>
 const imageInput = document.getElementById("previewImage");
-const preview = document.getElementById("imgPreview");
+const previewContainer = document.getElementById("multiImgPreview");
 
 if (imageInput) {
     imageInput.addEventListener("change", function(){
-        const file = this.files[0];
-        if(file){
-            preview.src = URL.createObjectURL(file);
-            preview.style.display = "inline-block";
+        previewContainer.innerHTML = "";
+        const files = Array.from(this.files);
+        if (files.length > 3) {
+            alert("⚠️ Hệ thống chỉ hỗ trợ tối đa 3 ảnh (mặt trước, mặt sau, chi tiết). Hệ thống sẽ lấy 3 ảnh đầu tiên!");
         }
+        files.slice(0, 3).forEach((file, idx) => {
+            const wrapper = document.createElement("div");
+            wrapper.className = "text-center";
+            const img = document.createElement("img");
+            img.src = URL.createObjectURL(file);
+            img.style.cssText = "width:140px;height:140px;object-fit:cover;border-radius:12px;border:1px solid #ddd;padding:4px;";
+            const label = document.createElement("div");
+            label.className = "small text-muted mt-1 fw-bold";
+            label.innerText = `Ảnh ${idx + 1}`;
+            wrapper.appendChild(img);
+            wrapper.appendChild(label);
+            previewContainer.appendChild(wrapper);
+        });
     });
 }
 </script>
