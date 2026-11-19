@@ -184,11 +184,39 @@ Danh sách đồ nhặt được
         border: 1px solid #cbd5e1;
         font-size: 0.78rem;
         font-weight: 600;
-        padding: 5px 11px;
+        padding: 5px 10px;
         border-radius: 8px;
         white-space: nowrap;
     }
     .btn-row-edit:hover { background-color: #f1f5f9; color: #0f172a; }
+
+    .btn-row-del {
+        background-color: #fef2f2;
+        color: #dc2626;
+        border: 1px solid #fecaca;
+        font-size: 0.78rem;
+        font-weight: 600;
+        padding: 5px 9px;
+        border-radius: 8px;
+        white-space: nowrap;
+    }
+    .btn-row-del:hover { background-color: #ef4444; color: #ffffff; }
+
+    .gallery-strip-thumb {
+        width: 52px;
+        height: 52px;
+        object-fit: cover;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 2px solid transparent;
+        opacity: 0.6;
+        transition: all 0.15s ease;
+    }
+    .gallery-strip-thumb.active {
+        border-color: #10b981;
+        opacity: 1;
+        transform: scale(1.06);
+    }
 </style>
 
 <div class="found-list-container">
@@ -221,7 +249,7 @@ Danh sách đồ nhặt được
                         <th>Nơi lưu giữ / Liên hệ</th>
                         <th style="width: 155px;">Trạng thái</th>
                         <th style="width: 130px;">Thời điểm trả</th>
-                        <th style="width: 90px;">Thao tác</th>
+                        <th style="width: 135px;">Thao tác</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -230,12 +258,30 @@ Danh sách đồ nhặt được
                         <td><span class="stt-pill">{{ items|length - loop.index0 }}</span></td>
                         <td>
                             {% if item.hinh_anh %}
-                                {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
-                                <img src="{{ img_url }}" 
-                                     class="item-thumb" 
-                                     onclick="zoomImage('{{ img_url }}')"
-                                     title="Bấm để xem phóng to"
-                                     onerror="this.onerror=null; this.outerHTML='<div class=\'item-thumb-empty\'>Chưa có ảnh</div>';">
+                                {% set ns = namespace(urls=[]) %}
+                                {% for raw in item.hinh_anh.split(',') %}
+                                    {% set clean = raw.strip() %}
+                                    {% if clean %}
+                                        {% set full_url = clean if clean.startswith('http') else url_for('uploaded_file', filename=clean) %}
+                                        {% set ns.urls = ns.urls + [full_url] %}
+                                    {% endif %}
+                                {% endfor %}
+
+                                {% if ns.urls %}
+                                    <div class="position-relative d-inline-block">
+                                        <img src="{{ ns.urls[0] }}"
+                                             class="item-thumb"
+                                             data-gallery="{{ ns.urls | join('|') }}"
+                                             onclick="openGalleryModal(this)"
+                                             title="Bấm để xem phóng to ({{ ns.urls|length }} ảnh)"
+                                             onerror="this.onerror=null; this.parentElement.outerHTML='<div class=\'item-thumb-empty\'>Chưa có ảnh</div>';">
+                                        {% if ns.urls|length > 1 %}
+                                            <span class="badge bg-dark position-absolute bottom-0 end-0 shadow-sm" style="font-size: 0.65rem; pointer-events: none;">+{{ ns.urls|length - 1 }}</span>
+                                        {% endif %}
+                                    </div>
+                                {% else %}
+                                    <div class="item-thumb-empty">Chưa có ảnh</div>
+                                {% endif %}
                             {% else %}
                                 <div class="item-thumb-empty">Chưa có ảnh</div>
                             {% endif %}
@@ -282,9 +328,14 @@ Danh sách đồ nhặt được
                             {% endif %}
                         </td>
                         <td>
-                            <a href="{{ url_for('edit_found', item_id=item.id) }}" class="btn btn-row-edit">
-                                ✏️ Sửa
-                            </a>
+                            <div class="d-flex justify-content-center align-items-center gap-1 flex-nowrap">
+                                <a href="{{ url_for('edit_found', item_id=item.id) }}" class="btn btn-row-edit">
+                                    ✏️ Sửa
+                                </a>
+                                <a href="{{ url_for('delete_found', item_id=item.id) }}" class="btn btn-row-del" title="Xóa" onclick="confirmDeletePIN(event, this.href);">
+                                    🗑️
+                                </a>
+                            </div>
                         </td>
                     </tr>
                     {% else %}
@@ -310,7 +361,8 @@ Danh sách đồ nhặt được
                 <p>Xác nhận món đồ: <strong id="returnItemName" class="text-primary"></strong> đã được trao trả lại cho người mất?</p>
                 <div class="mb-2 text-start">
                     <label class="form-label fw-bold">Nhập Mã PIN Giáo viên:</label>
-                    <input type="password" id="inputReturnPin" class="form-control text-center fs-4" placeholder="••••••" maxlength="10">
+                    <input type="password" id="inputReturnPin" class="form-control text-center fs-4" placeholder="••••••" maxlength="10"
+                           onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitReturn(); }">
                     <div id="returnPinError" class="text-danger small mt-1" style="display: none;">❌ Mã PIN không chính xác!</div>
                 </div>
             </div>
@@ -322,20 +374,32 @@ Danh sách đồ nhặt được
     </div>
 </div>
 
-<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT -->
+<!-- MODAL PHÓNG TO & CHUYỂN ĐỔI ĐA GÓC ẢNH -->
 <div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
-            <div class="modal-header border-0 pb-0 pt-2 pe-3">
+            <div class="modal-header border-0 pb-0 pt-2 px-3 d-flex align-items-center">
+                <span id="galleryCounterBadge" class="badge bg-success" style="display: none;">Góc ảnh 1 / 3</span>
                 <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
+            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 64vh; position: relative; user-select: none;" id="zoomViewport">
+                <button type="button" id="btnPrevPhoto" onclick="stepGallery(-1)"
+                        class="btn btn-dark border-secondary position-absolute start-0 ms-3 rounded-circle shadow"
+                        style="z-index: 20; width: 42px; height: 42px; opacity: 0.85; display: none;">
+                    ❮
+                </button>
                 <img id="zoomModalImage" src="" 
                      draggable="false"
                      style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
+                <button type="button" id="btnNextPhoto" onclick="stepGallery(1)"
+                        class="btn btn-dark border-secondary position-absolute end-0 me-3 rounded-circle shadow"
+                        style="z-index: 20; width: 42px; height: 42px; opacity: 0.85; display: none;">
+                    ❯
+                </button>
             </div>
+            <div id="galleryThumbStrip" class="d-flex justify-content-center gap-2 py-2" style="background-color: rgba(0,0,0,0.7); display: none !important;"></div>
             <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
-                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem</small>
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Kéo chuột để di chuyển | Bấm ❮ ❯ hoặc phím mũi tên để đổi góc ảnh</small>
             </div>
         </div>
     </div>
@@ -351,30 +415,90 @@ function confirmReturn(id, name) {
     document.getElementById("returnPinError").style.display = "none";
     let modal = new bootstrap.Modal(document.getElementById('pinReturnModal'));
     modal.show();
+    setTimeout(() => document.getElementById("inputReturnPin").focus(), 250);
 }
 
 function submitReturn() {
     let inputPin = document.getElementById("inputReturnPin").value.trim();
-    fetch('/get-pin')
-        .then(response => response.json())
-        .then(data => {
-            if (inputPin === data.pin) {
-                window.location.href = "/found-return/" + selectedReturnId;
-            } else {
-                document.getElementById("returnPinError").style.display = "block";
-            }
-        })
-        .catch(err => alert("Lỗi kết nối máy chủ!"));
+    const errEl = document.getElementById("returnPinError");
+    if (!inputPin) {
+        errEl.textContent = "❌ Vui lòng nhập Mã PIN!";
+        errEl.style.display = "block";
+        return;
+    }
+    fetch('/verify-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: inputPin })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.valid) {
+            window.location.href = "/found-return/" + selectedReturnId;
+        } else {
+            errEl.textContent = "❌ Mã PIN không chính xác!";
+            errEl.style.display = "block";
+        }
+    })
+    .catch(() => alert("Lỗi kết nối máy chủ!"));
 }
 
 let scale = 1, pointX = 0, pointY = 0, startX = 0, startY = 0, isDragging = false;
+let currentGallery = [];
+let currentGalleryIdx = 0;
 
-function zoomImage(src) {
+function openGalleryModal(imgTag) {
+    const raw = imgTag.dataset.gallery || imgTag.src;
+    currentGallery = raw.split('|').map(s => s.trim()).filter(Boolean);
+    currentGalleryIdx = 0;
+    buildThumbStrip();
+    renderGallerySlide();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('imageZoomModal')).show();
+}
+
+function buildThumbStrip() {
+    const strip = document.getElementById('galleryThumbStrip');
+    strip.innerHTML = '';
+    if (currentGallery.length <= 1) {
+        strip.style.setProperty('display', 'none', 'important');
+        return;
+    }
+    strip.style.setProperty('display', 'flex', 'important');
+    currentGallery.forEach((url, idx) => {
+        const t = document.createElement('img');
+        t.src = url;
+        t.className = 'gallery-strip-thumb';
+        t.onclick = () => { currentGalleryIdx = idx; renderGallerySlide(); };
+        strip.appendChild(t);
+    });
+}
+
+function stepGallery(delta) {
+    if (currentGallery.length <= 1) return;
+    currentGalleryIdx = (currentGalleryIdx + delta + currentGallery.length) % currentGallery.length;
+    renderGallerySlide();
+}
+
+function renderGallerySlide() {
     const imgEl = document.getElementById('zoomModalImage');
+    const prevBtn = document.getElementById('btnPrevPhoto');
+    const nextBtn = document.getElementById('btnNextPhoto');
+    const counter = document.getElementById('galleryCounterBadge');
+
     scale = 1; pointX = 0; pointY = 0; isDragging = false;
     updateTransform(imgEl);
-    imgEl.src = src;
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('imageZoomModal')).show();
+    imgEl.src = currentGallery[currentGalleryIdx] || '';
+
+    const hasMulti = currentGallery.length > 1;
+    prevBtn.style.display = hasMulti ? 'inline-block' : 'none';
+    nextBtn.style.display = hasMulti ? 'inline-block' : 'none';
+    counter.style.display = hasMulti ? 'inline-block' : 'none';
+    if (hasMulti) {
+        counter.textContent = `Góc ảnh ${currentGalleryIdx + 1} / ${currentGallery.length}`;
+    }
+    document.querySelectorAll('#galleryThumbStrip .gallery-strip-thumb').forEach((el, idx) => {
+        el.classList.toggle('active', idx === currentGalleryIdx);
+    });
 }
 
 function updateTransform(img) {
@@ -410,6 +534,13 @@ window.addEventListener('mousemove', function(e) {
 
 window.addEventListener('mouseup', function() {
     if (isDragging) { isDragging = false; imgEl.style.cursor = 'grab'; }
+});
+
+document.addEventListener('keydown', function(e) {
+    const modalEl = document.getElementById('imageZoomModal');
+    if (!modalEl.classList.contains('show')) return;
+    if (e.key === 'ArrowLeft') stepGallery(-1);
+    if (e.key === 'ArrowRight') stepGallery(1);
 });
 </script>
 {% endblock %}
