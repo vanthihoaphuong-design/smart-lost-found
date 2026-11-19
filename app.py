@@ -868,7 +868,8 @@ def lost():
             db.session.add(item)
             db.session.commit()
         except Exception as db_err:
-           try:
+            print("LOI LUU LOST:", db_err)
+            try:
                 db.session.rollback()
             except Exception:
                 pass
@@ -895,7 +896,8 @@ def found():
             )
             db.session.add(item)
             db.session.commit()
-        except Exception:
+        except Exception as db_err:
+            print("LOI LUU FOUND:", db_err)
             try:
                 db.session.rollback()
             except Exception:
