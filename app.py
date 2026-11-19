@@ -105,8 +105,18 @@ except Exception as e:
 with app.app_context():
     try:
         db.create_all()
-        db.session.execute(text("ALTER TABLE found_item ADD COLUMN noi_luu_giu VARCHAR(200);"))
-        db.session.commit()
+        for sql_cmd in [
+            "ALTER TABLE found_item ADD COLUMN noi_luu_giu VARCHAR(200);",
+            "ALTER TABLE found_item ADD COLUMN thoi_diem_tra TIMESTAMP;",
+            "ALTER TABLE lost_item ADD COLUMN thoi_diem_tra TIMESTAMP;",
+            "ALTER TABLE found_item ALTER COLUMN hinh_anh TYPE TEXT;",
+            "ALTER TABLE lost_item ALTER COLUMN hinh_anh TYPE TEXT;"
+        ]:
+            try:
+                db.session.execute(text(sql_cmd))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
     except Exception as e:
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
@@ -858,8 +868,10 @@ def lost():
             db.session.add(item)
             db.session.commit()
         except Exception as db_err:
-            print("LOI LUU DATABASE:", db_err)
-            db.session.rollback()
+           try:
+                db.session.rollback()
+            except Exception:
+                pass
         return redirect(url_for("list_items"))
     return render_template("lost_form.html")
 
