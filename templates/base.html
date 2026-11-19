@@ -118,7 +118,80 @@
         {% block content %}{% endblock %}
     </main>
 
+    <!-- MODAL XÁC NHẬN MÃ PIN DÙNG CHUNG CHO THAO TÁC XÓA -->
+    <div class="modal fade" id="globalPinModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content border-0 shadow">
+                <div class="modal-header bg-warning text-dark">
+                    <h5 class="modal-title fw-bold">🔒 Xác Nhận Quyền Quản Trị</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body p-4">
+                    <p class="text-secondary mb-2">Thao tác này cần quyền giáo viên / quản trị viên. Vui lòng nhập Mã PIN:</p>
+                    <input type="password" id="globalModalPinInput" class="form-control form-control-lg text-center" placeholder="••••••••" autocomplete="new-password"
+                           onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitGlobalPinCheck(); }">
+                    <div id="globalPinErrorMsg" class="text-danger mt-2 small text-center" style="display: none;">❌ Mã PIN không chính xác!</div>
+                </div>
+                <div class="modal-footer border-0 pt-0">
+                    <button type="button" class="btn btn-light" data-bs-dismiss="modal">Hủy</button>
+                    <button type="button" class="btn btn-danger fw-bold px-4" onclick="submitGlobalPinCheck()">Xác nhận xóa</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Bootstrap 5 JS -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+    let globalPendingDeleteUrl = "";
+
+    function confirmDeletePIN(event, deleteUrl) {
+        if (event) event.preventDefault();
+        globalPendingDeleteUrl = deleteUrl;
+        const inputEl = document.getElementById('globalModalPinInput');
+        const errEl = document.getElementById('globalPinErrorMsg');
+        inputEl.value = '';
+        errEl.style.display = 'none';
+        const modal = bootstrap.Modal.getOrCreateInstance(document.getElementById('globalPinModal'));
+        modal.show();
+        setTimeout(() => inputEl.focus(), 250);
+    }
+
+    function submitGlobalPinCheck() {
+        const userPin = document.getElementById('globalModalPinInput').value.trim();
+        const errEl = document.getElementById('globalPinErrorMsg');
+        if (!userPin) {
+            errEl.textContent = "❌ Vui lòng nhập Mã PIN!";
+            errEl.style.display = 'block';
+            return;
+        }
+        fetch('/verify-pin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pin: userPin })
+        })
+        .then(res => res.json())
+        .then(data => {
+            if (data.valid) {
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = globalPendingDeleteUrl;
+
+                const hiddenPin = document.createElement('input');
+                hiddenPin.type = 'hidden';
+                hiddenPin.name = 'pin_code';
+                hiddenPin.value = userPin;
+
+                form.appendChild(hiddenPin);
+                document.body.appendChild(form);
+                form.submit();
+            } else {
+                errEl.textContent = "❌ Mã PIN không chính xác!";
+                errEl.style.display = 'block';
+            }
+        })
+        .catch(() => alert("❌ Lỗi kết nối kiểm tra mã PIN!"));
+    }
+    </script>
 </body>
 </html>
