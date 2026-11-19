@@ -72,7 +72,7 @@ def format_vn_date(date_val):
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 5 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 12_000_000
 
 db_url = os.environ.get("DATABASE_URL", "sqlite:///lost_found.db")
@@ -177,26 +177,79 @@ def extract_colors(text):
     return found
 
 
+def split_image_list(img_field):
+    """Tách chuỗi lưu trữ (1 hoặc nhiều URL/tên file cách nhau bằng dấu phẩy) thành danh sách."""
+    if not img_field:
+        return []
+    parts = [p.strip() for p in str(img_field).split(",") if p.strip()]
+    valid = []
+    invalid = ["chua co anh", "chưa có ảnh", "no_image", "placeholder", "120?text="]
+    for p in parts:
+        low = p.lower()
+        if low in {"none", "null", "undefined"} or any(tok in low for tok in invalid):
+            continue
+        valid.append(p)
+    return valid
+
+
+def cleanup_local_images(img_field):
+    """Xóa file ảnh cục bộ trong static/uploads nếu không dùng Cloudinary."""
+    for img in split_image_list(img_field):
+        if not img.lower().startswith(("http://", "https://")):
+            local_path = img if os.path.isabs(img) else os.path.join(
+                app.config.get("UPLOAD_FOLDER", "static/uploads"), img
+            )
+            try:
+                if os.path.isfile(local_path):
+                    os.remove(local_path)
+            except Exception as e:
+                print(f"Không thể xóa file ảnh cục bộ {local_path}: {e}")
+
+
+def upload_multiple_images(file_list, max_images=3):
+    """Tải tối đa 3 ảnh lên Cloudinary (hoặc lưu cục bộ dự phòng) và nối thành chuỗi."""
+    saved_urls = []
+    valid_files = [f for f in file_list if f and f.filename != ""][:max_images]
+    for file in valid_files:
+        url = ""
+        try:
+            res = cloudinary.uploader.upload(file)
+            url = res.get("secure_url", "")
+        except Exception as cloud_err:
+            print("Chuyển sang lưu ảnh cục bộ do:", cloud_err)
+            file.seek(0)
+            os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
+            url = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
+            file.save(os.path.join(app.config["UPLOAD_FOLDER"], url))
+        if url:
+            saved_urls.append(url)
+            try:
+                calculate_image_features(url)
+            except Exception as feat_err:
+                print("Bỏ qua tính feature server:", feat_err)
+    if saved_urls:
+        try:
+            _persist_disk_cache()
+        except Exception:
+            pass
+    return ",".join(saved_urls)
+
+
 def check_real_image(img_path):
-    """Kiểm tra URL hoặc file ảnh tồn tại trước khi trích xuất đặc trưng."""
-    if not img_path:
+    """Kiểm tra ít nhất 1 URL hoặc file ảnh hợp lệ."""
+    imgs = split_image_list(img_path)
+    if not imgs:
         return False
-    try:
-        value = str(img_path).strip()
+    for value in imgs:
         low = value.lower()
-        if low in {"", "none", "null", "undefined"}:
-            return False
-        invalid = ["chua co anh", "chưa có ảnh", "no_image", "placeholder", "120?text="]
-        if any(token in low for token in invalid):
-            return False
         if low.startswith(("http://", "https://")):
             return True
         path = value if os.path.isabs(value) else os.path.join(
             app.config.get("UPLOAD_FOLDER", "static/uploads"), value
         )
-        return os.path.isfile(path)
-    except Exception:
-        return False
+        if os.path.isfile(path):
+            return True
+    return False
 
 
 def get_feature_cache(img_path):
@@ -518,61 +571,77 @@ def _pearson_corr(v1, v2):
     return (sum(x * y for x, y in zip(a, b)) / denom) if denom > 1e-6 else 0.0
 
 
+def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False):
+    if u1 == u2:
+        return 50, 1.0
+
+    if color_conflict:
+        return 10, 0.20
+
+    f1 = calculate_image_features(u1)
+    f2 = calculate_image_features(u2)
+    if f1 is None or f2 is None:
+        return 0, 0.0
+
+    h1 = f1.get("fg_color_hist", [])
+    h2 = f2.get("fg_color_hist", [])
+    color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
+    color_pts = max(0, min(16, int(round(((color_inter - 0.14) / 0.36) * 16))))
+
+    s1_list = f1.get("rot_sigs", [])
+    s2_list = f2.get("rot_sigs", [])
+    if s1_list and s2_list:
+        base_s1 = s1_list[0]
+        best_struct = -1.0
+        for s2 in s2_list:
+            cell_corr = max(0.0, _pearson_corr(base_s1["cells"], s2["cells"]))
+            hog_sim = max(0.0, _cosine_sim(base_s1["hog"], s2["hog"]))
+            combined = 0.72 * cell_corr + 0.28 * hog_sim
+            if combined > best_struct:
+                best_struct = combined
+
+        struct_pts = max(2, min(32, int(round(((best_struct - 0.42) / 0.44) * 32))))
+    else:
+        struct_pts = 14
+
+    ar1 = float(f1.get("aspect_ratio", 0.7))
+    ar2 = float(f2.get("aspect_ratio", 0.7))
+    ar_pts = 2 if abs(ar1 - ar2) < 0.22 else 0
+
+    total = max(10, min(48, color_pts + struct_pts + ar_pts))
+
+    if not is_same_keyword and total > 12:
+        total = 12
+
+    return int(total), float(total / 50.0)
+
+
 def image_score(
     img1_filename,
     img2_filename,
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác nền (0–50) + khóa trần 10/50 nếu khác màu HSV."""
+    """Chấm điểm thị giác đa góc nhìn (0–50): so sánh chéo và lấy mức điểm cao nhất."""
     try:
-        if not check_real_image(img1_filename) or not check_real_image(img2_filename):
+        list1 = split_image_list(img1_filename)
+        list2 = split_image_list(img2_filename)
+        if not list1 or not list2:
             return 0, 0.0
 
-        u1 = str(img1_filename).strip()
-        u2 = str(img2_filename).strip()
-        if u1 == u2:
-            return 50, 1.0
-
-        if color_conflict:
-            return 10, 0.20
-
-        f1 = calculate_image_features(u1)
-        f2 = calculate_image_features(u2)
-        if f1 is None or f2 is None:
-            return 0, 0.0
-
-        h1 = f1.get("fg_color_hist", [])
-        h2 = f2.get("fg_color_hist", [])
-        color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
-        color_pts = max(0, min(16, int(round(((color_inter - 0.14) / 0.36) * 16))))
-
-        s1_list = f1.get("rot_sigs", [])
-        s2_list = f2.get("rot_sigs", [])
-        if s1_list and s2_list:
-            base_s1 = s1_list[0]
-            best_struct = -1.0
-            for s2 in s2_list:
-                cell_corr = max(0.0, _pearson_corr(base_s1["cells"], s2["cells"]))
-                hog_sim = max(0.0, _cosine_sim(base_s1["hog"], s2["hog"]))
-                combined = 0.72 * cell_corr + 0.28 * hog_sim
-                if combined > best_struct:
-                    best_struct = combined
-
-            struct_pts = max(2, min(32, int(round(((best_struct - 0.42) / 0.44) * 32))))
-        else:
-            struct_pts = 14
-
-        ar1 = float(f1.get("aspect_ratio", 0.7))
-        ar2 = float(f2.get("aspect_ratio", 0.7))
-        ar_pts = 2 if abs(ar1 - ar2) < 0.22 else 0
-
-        total = max(10, min(48, color_pts + struct_pts + ar_pts))
-
-        if not is_same_keyword and total > 12:
-            total = 12
-
-        return int(total), float(total / 50.0)
+        best_score = 0
+        best_ratio = 0.0
+        for u1 in list1:
+            for u2 in list2:
+                sc, rt = _single_pair_image_score(
+                    u1, u2,
+                    is_same_keyword=is_same_keyword,
+                    color_conflict=color_conflict
+                )
+                if sc > best_score:
+                    best_score = sc
+                    best_ratio = rt
+        return best_score, best_ratio
     except Exception as exc:
         print(f"Lỗi tính điểm hình ảnh: {exc}")
         return 0, 0.0
@@ -773,19 +842,8 @@ def home():
 @app.route("/lost", methods=["GET", "POST"])
 def lost():
     if request.method == "POST":
-        filename = ""
-        file = request.files.get("hinh_anh")
-        if file and file.filename != "":
-            try:
-                res = cloudinary.uploader.upload(file)
-                filename = res.get("secure_url", "")
-            except Exception:
-                filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
-                file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-
-        if filename:
-            calculate_image_features(filename)
-            _persist_disk_cache()
+        files = request.files.getlist("hinh_anh")
+        filename = upload_multiple_images(files, max_images=3)
 
         try:
             item = LostItem(
@@ -799,11 +857,9 @@ def lost():
             )
             db.session.add(item)
             db.session.commit()
-        except Exception:
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
+        except Exception as db_err:
+            print("LOI LUU DATABASE:", db_err)
+            db.session.rollback()
         return redirect(url_for("list_items"))
     return render_template("lost_form.html")
 
@@ -811,19 +867,8 @@ def lost():
 @app.route("/found", methods=["GET", "POST"])
 def found():
     if request.method == "POST":
-        filename = ""
-        file = request.files.get("hinh_anh")
-        if file and file.filename != "":
-            try:
-                res = cloudinary.uploader.upload(file)
-                filename = res.get("secure_url", "")
-            except Exception:
-                filename = f"{uuid.uuid4().hex[:8]}_{secure_filename(file.filename)}"
-                file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-
-        if filename:
-            calculate_image_features(filename)
-            _persist_disk_cache()
+        files = request.files.getlist("hinh_anh")
+        filename = upload_multiple_images(files, max_images=3)
 
         try:
             item = FoundItem(
@@ -938,11 +983,24 @@ def search():
     )
 
 
-@app.route("/delete-lost/<int:item_id>")
-@app.route("/delete/<int:item_id>")
+@app.route("/delete-lost/<int:item_id>", methods=["GET", "POST"])
+@app.route("/delete/<int:item_id>", methods=["GET", "POST"])
 def delete_item(item_id):
+    pin_code = (
+        request.form.get("pin_code", "").strip()
+        if request.method == "POST"
+        else request.args.get("pin_code", "").strip()
+    )
+    if pin_code != get_current_pin():
+        return """
+        <script>
+            alert("Mã PIN Giáo viên không chính xác! Không thể xóa bài đăng.");
+            window.history.back();
+        </script>
+        """
     try:
         item = LostItem.query.get_or_404(item_id)
+        cleanup_local_images(item.hinh_anh)
         db.session.delete(item)
         db.session.commit()
     except Exception:
@@ -951,6 +1009,33 @@ def delete_item(item_id):
         except Exception:
             pass
     return redirect(url_for("list_items"))
+
+
+@app.route("/delete-found/<int:item_id>", methods=["GET", "POST"])
+def delete_found(item_id):
+    pin_code = (
+        request.form.get("pin_code", "").strip()
+        if request.method == "POST"
+        else request.args.get("pin_code", "").strip()
+    )
+    if pin_code != get_current_pin():
+        return """
+        <script>
+            alert("Mã PIN Giáo viên không chính xác! Không thể xóa bài đăng.");
+            window.history.back();
+        </script>
+        """
+    try:
+        item = FoundItem.query.get_or_404(item_id)
+        cleanup_local_images(item.hinh_anh)
+        db.session.delete(item)
+        db.session.commit()
+    except Exception:
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+    return redirect(url_for("found_list"))
 
 
 @app.route("/edit-lost/<int:item_id>", methods=["GET", "POST"])
@@ -962,22 +1047,28 @@ def edit_lost(item_id):
         return redirect(url_for("list_items"))
 
     if request.method == "POST":
+        old_all = split_image_list(item.hinh_anh)
+
         item.ten_do = request.form.get("ten_do")
         item.loai_do = request.form.get("loai_do")
         item.mau_sac = request.form.get("mau_sac")
         item.noi_mat = normalize_location_text(request.form.get("noi_mat", ""))
         item.ngay_mat = request.form.get("ngay_mat")
 
-        file = request.files.get("hinh_anh")
-        if file and file.filename != "":
-            try:
-                res = cloudinary.uploader.upload(file)
-                item.hinh_anh = res.get("secure_url", "")
-                if item.hinh_anh:
-                    calculate_image_features(item.hinh_anh)
-                    _persist_disk_cache()
-            except Exception:
-                pass
+        kept_old = split_image_list(request.form.get("existing_images", item.hinh_anh))
+        files = request.files.getlist("hinh_anh")
+        if any(f and f.filename != "" for f in files):
+            new_imgs = upload_multiple_images(files, max_images=3)
+            new_list = split_image_list(new_imgs)
+            merged = (kept_old + new_list)[:3]
+            item.hinh_anh = ",".join(merged)
+        else:
+            item.hinh_anh = ",".join(kept_old)
+
+        new_all = set(split_image_list(item.hinh_anh))
+        removed_imgs = [u for u in old_all if u not in new_all]
+        if removed_imgs:
+            cleanup_local_images(",".join(removed_imgs))
 
         try:
             db.session.commit()
@@ -996,6 +1087,8 @@ def edit_found(item_id):
         return redirect(url_for("found_list"))
 
     if request.method == "POST":
+        old_all = split_image_list(item.hinh_anh)
+
         item.ten_do = request.form.get("ten_do")
         item.loai_do = request.form.get("loai_do")
         item.mau_sac = request.form.get("mau_sac")
@@ -1003,16 +1096,20 @@ def edit_found(item_id):
         item.ngay_nhat = request.form.get("ngay_nhat")
         item.noi_luu_giu = normalize_location_text(request.form.get("noi_luu_giu", ""))
 
-        file = request.files.get("hinh_anh")
-        if file and file.filename != "":
-            try:
-                res = cloudinary.uploader.upload(file)
-                item.hinh_anh = res.get("secure_url", "")
-                if item.hinh_anh:
-                    calculate_image_features(item.hinh_anh)
-                    _persist_disk_cache()
-            except Exception:
-                pass
+        kept_old = split_image_list(request.form.get("existing_images", item.hinh_anh))
+        files = request.files.getlist("hinh_anh")
+        if any(f and f.filename != "" for f in files):
+            new_imgs = upload_multiple_images(files, max_images=3)
+            new_list = split_image_list(new_imgs)
+            merged = (kept_old + new_list)[:3]
+            item.hinh_anh = ",".join(merged)
+        else:
+            item.hinh_anh = ",".join(kept_old)
+
+        new_all = set(split_image_list(item.hinh_anh))
+        removed_imgs = [u for u in old_all if u not in new_all]
+        if removed_imgs:
+            cleanup_local_images(",".join(removed_imgs))
 
         try:
             db.session.commit()
@@ -1107,7 +1204,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v39: Siêu nhẹ RAM (< 70MB) kết hợp MobileNetV2 Client-Side."""
+    """Đối sánh v39: Siêu nhẹ RAM (< 70MB), hỗ trợ đa góc ảnh & nới lỏng danh mục khi trùng tên."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1141,8 +1238,11 @@ def match_items(item_id=None):
             key1 = get_core_keyword(lost.ten_do)
             for found in found_items:
                 try:
-                    if (lost.loai_do and found.loai_do and
-                            str(lost.loai_do).strip().lower() != str(found.loai_do).strip().lower()):
+                    key2 = get_core_keyword(found.ten_do)
+                    ten_sim = similarity(lost.ten_do, found.ten_do)
+                    is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
+
+                    if not is_same_key:
                         continue
 
                     sig = (
@@ -1156,13 +1256,6 @@ def match_items(item_id=None):
                     if sig in seen_signatures:
                         continue
                     seen_signatures.add(sig)
-
-                    key2 = get_core_keyword(found.ten_do)
-                    ten_sim = similarity(lost.ten_do, found.ten_do)
-                    is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
-
-                    if not is_same_key:
-                        continue
 
                     ten_score = 15 if ten_sim >= 0.85 else int(ten_sim * 15)
                     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
@@ -1206,10 +1299,12 @@ def match_items(item_id=None):
         urls_to_fetch = set()
         for item in page_candidates:
             if item["lost"].has_image and item["found"].has_image:
-                if get_feature_cache(item["lost"].hinh_anh) is None:
-                    urls_to_fetch.add(item["lost"].hinh_anh)
-                if get_feature_cache(item["found"].hinh_anh) is None:
-                    urls_to_fetch.add(item["found"].hinh_anh)
+                for u in split_image_list(item["lost"].hinh_anh):
+                    if get_feature_cache(u) is None:
+                        urls_to_fetch.add(u)
+                for u in split_image_list(item["found"].hinh_anh):
+                    if get_feature_cache(u) is None:
+                        urls_to_fetch.add(u)
 
         if urls_to_fetch:
             with ThreadPoolExecutor(max_workers=6) as executor:
@@ -1219,15 +1314,19 @@ def match_items(item_id=None):
         page_matches = []
         for item in page_candidates:
             lost, found = item["lost"], item["found"]
-            v_cols1, v_cols2 = None, None
+            v_cols1, v_cols2 = set(), set()
             if lost.has_image and found.has_image:
-                f1 = get_feature_cache(lost.hinh_anh)
-                f2 = get_feature_cache(found.hinh_anh)
-                v_cols1 = f1.get("visual_colors") if f1 else None
-                v_cols2 = f2.get("visual_colors") if f2 else None
+                for u in split_image_list(lost.hinh_anh):
+                    f1 = get_feature_cache(u)
+                    if f1 and f1.get("visual_colors"):
+                        v_cols1.update(f1.get("visual_colors"))
+                for u in split_image_list(found.hinh_anh):
+                    f2 = get_feature_cache(u)
+                    if f2 and f2.get("visual_colors"):
+                        v_cols2.update(f2.get("visual_colors"))
 
             mau_score, color_conflict = evaluate_color_match(
-                lost, found, item["is_same_key"], v_cols1, v_cols2
+                lost, found, item["is_same_key"], v_cols1 or None, v_cols2 or None
             )
 
             if lost.has_image and found.has_image:
@@ -1306,14 +1405,18 @@ def teacher_check(lost_id, found_id):
 
     ten_score = 15 if ten_sim >= 0.85 else int(ten_sim * 15)
 
-    v_cols1, v_cols2 = None, None
+    v_cols1, v_cols2 = set(), set()
     if has1 and has2:
-        f1 = calculate_image_features(lost.hinh_anh)
-        f2 = calculate_image_features(found.hinh_anh)
-        v_cols1 = f1.get("visual_colors") if f1 else None
-        v_cols2 = f2.get("visual_colors") if f2 else None
+        for u in split_image_list(lost.hinh_anh):
+            f1 = calculate_image_features(u)
+            if f1 and f1.get("visual_colors"):
+                v_cols1.update(f1.get("visual_colors"))
+        for u in split_image_list(found.hinh_anh):
+            f2 = calculate_image_features(u)
+            if f2 and f2.get("visual_colors"):
+                v_cols2.update(f2.get("visual_colors"))
 
-    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key, v_cols1, v_cols2)
+    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key, v_cols1 or None, v_cols2 or None)
     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
     base_score = ten_score + mau_score + vi_tri_score + ngay_score
@@ -1420,20 +1523,36 @@ def export_excel():
             found_query = found_query.filter(FoundItem.trang_thai.in_(["DANG_LUU_GIU", "Đang lưu giữ"]))
             status_label = "Dang_Luu_Giu"
 
-        time_label = "Toan_Thoi_Gian"
-        if year:
-            lost_query = lost_query.filter(LostItem.ngay_mat.like(f"{year}-%"))
-            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"{year}-%"))
-            time_label = f"Nam_{year}"
-
-        if month:
-            m_str = f"{int(month):02d}"
-            lost_query = lost_query.filter(LostItem.ngay_mat.like(f"%-{m_str}-%"))
-            found_query = found_query.filter(FoundItem.ngay_nhat.like(f"%-{m_str}-%"))
-            time_label = f"Thang_{m_str}_{year if year else ''}".strip("_")
-
         lost_items = lost_query.all()
         found_items = found_query.all()
+
+        time_label = "Toan_Thoi_Gian"
+        if year or month:
+            time_label = (
+                f"Thang_{int(month):02d}_{year}" if (month and year)
+                else (f"Thang_{int(month):02d}" if month else f"Nam_{year}")
+            )
+            filtered_lost = []
+            for item in lost_items:
+                dt = parse_date_flexible(item.ngay_mat)
+                if dt:
+                    if year and str(dt.year) != str(year):
+                        continue
+                    if month and dt.month != int(month):
+                        continue
+                    filtered_lost.append(item)
+            lost_items = filtered_lost
+
+            filtered_found = []
+            for item in found_items:
+                dt = parse_date_flexible(item.ngay_nhat)
+                if dt:
+                    if year and str(dt.year) != str(year):
+                        continue
+                    if month and dt.month != int(month):
+                        continue
+                    filtered_found.append(item)
+            found_items = filtered_found
 
         lost_data = [{
             "STT": i + 1,
@@ -1479,9 +1598,12 @@ def export_excel():
         return "Lỗi xuất Excel", 500
 
 
-@app.route("/get-pin")
-def get_pin():
-    return jsonify({"pin": get_current_pin()})
+@app.route("/verify-pin", methods=["POST"])
+def verify_pin():
+    """Kiểm tra mã PIN giáo viên qua POST (không lộ PIN ra ngoài)."""
+    data = request.get_json(silent=True) or {}
+    pin_input = str(data.get("pin", request.form.get("pin", ""))).strip()
+    return jsonify({"valid": pin_input == get_current_pin()})
 
 
 @app.route("/change-pin", methods=["GET", "POST"])
@@ -1511,5 +1633,6 @@ def change_pin():
 
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True)
