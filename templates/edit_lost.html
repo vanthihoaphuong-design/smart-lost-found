@@ -138,34 +138,60 @@
                 required>
         </div>
 
-        <!-- 6. Ảnh đồ vật -->
+        <!-- 6. Ảnh đồ vật (Hỗ trợ chọn tối đa 3 ảnh) -->
         <div class="col-md-6">
-            <label class="form-label fw-bold">Ảnh đồ vật (Tải tệp mới để thay đổi)</label>
+            <label class="form-label fw-bold">📸 Thêm / Đổi ảnh đồ vật (Giữ Ctrl để chọn tối đa 3 ảnh)</label>
             <input 
                 type="file" 
                 name="hinh_anh" 
                 class="form-control" 
                 accept="image/*" 
+                multiple
                 id="previewImage">
         </div>
     </div>
 
     <br>
 
-    <!-- Hiển thị ảnh xem trước / ảnh hiện tại -->
+    <!-- Lưu danh sách ảnh cũ được giữ lại -->
+    {% set raw_imgs = item.hinh_anh if item.hinh_anh else item.image_path %}
+    <input type="hidden" name="existing_images" id="existingImagesInput" value="{{ raw_imgs or '' }}">
+
+    <!-- Hiển thị danh sách ảnh hiện tại & ảnh mới chọn -->
     <div class="text-center p-3 bg-light rounded border mb-3">
-        {% set img_file = item.hinh_anh if item.hinh_anh else item.image_path %}
-        {% set img_url = img_file if (img_file and img_file.startswith('http')) else (url_for('uploaded_file', filename=img_file) if img_file else '') %}
-        
-        <div class="mb-2">
-            <img 
-                id="imgPreview" 
-                src="{{ img_url }}" 
-                style="{% if img_file %}display:inline-block;{% else %}display:none;{% endif %}max-height:200px; width: auto; object-fit: contain;"
-                class="rounded shadow-sm border"
-                onerror="this.onerror=null; this.src='https://via.placeholder.com/200?text=Chưa+có+ảnh+hợp+lệ';">
+        <div class="fw-bold text-secondary small mb-2">📌 Ảnh hiện có (Bấm dấu ✕ đỏ nếu muốn xóa ảnh cũ)</div>
+        <div id="existingGallery" class="d-flex flex-wrap justify-content-center gap-3 mb-2">
+            {% if raw_imgs %}
+                {% for img_path in raw_imgs.split(',') %}
+                    {% set clean_p = img_path.strip() %}
+                    {% if clean_p %}
+                        {% set full_u = clean_p if clean_p.startswith('http') else url_for('uploaded_file', filename=clean_p) %}
+                        <div class="position-relative d-inline-block existing-img-card" data-raw="{{ clean_p }}">
+                            <img src="{{ full_u }}"
+                                 style="height: 150px; width: 150px; object-fit: cover;"
+                                 class="rounded shadow-sm border bg-white"
+                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/150?text=Lỗi+ảnh';">
+                            <span class="badge bg-dark position-absolute bottom-0 start-0 m-1">Góc {{ loop.index }}</span>
+                            <button type="button"
+                                    class="btn btn-danger btn-sm rounded-circle position-absolute top-0 end-0 m-1 shadow"
+                                    style="width: 26px; height: 26px; padding: 0; line-height: 1;"
+                                    title="Xóa ảnh này"
+                                    onclick="removeExistingImage(this)">
+                                ✕
+                            </button>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                <span class="text-muted small" id="noExistingText">Chưa có ảnh nào được lưu.</span>
+            {% endif %}
         </div>
-        <small class="text-muted d-block">Ảnh hiện tại (Bấm 'Chọn tệp' bên trên để xem trước ảnh mới)</small>
+
+        <!-- Khung xem trước ảnh mới chọn -->
+        <div id="newPreviewSection" style="display: none;" class="mt-3 pt-3 border-top">
+            <div class="fw-bold text-success small mb-2">✨ Ảnh mới vừa chọn (Sẽ được gộp chung tối đa 3 ảnh):</div>
+            <div id="newPreviewContainer" class="d-flex flex-wrap justify-content-center gap-3"></div>
+        </div>
     </div>
 
     <div class="text-center">
@@ -180,14 +206,47 @@
 </form>
 
 <script>
-const imageInput = document.getElementById("previewImage");
-const preview = document.getElementById("imgPreview");
+function removeExistingImage(btn) {
+    const card = btn.closest('.existing-img-card');
+    if (card) card.remove();
 
-imageInput.addEventListener("change", function(){
-    const file = this.files[0];
-    if(file){
-        preview.src = URL.createObjectURL(file);
-        preview.style.display = "inline-block";
+    const remaining = [];
+    document.querySelectorAll('#existingGallery .existing-img-card').forEach(el => {
+        remaining.push(el.dataset.raw);
+    });
+    document.getElementById('existingImagesInput').value = remaining.join(',');
+}
+
+const imageInput = document.getElementById("previewImage");
+const newPreviewSection = document.getElementById("newPreviewSection");
+const newPreviewContainer = document.getElementById("newPreviewContainer");
+
+imageInput.addEventListener("change", function() {
+    newPreviewContainer.innerHTML = "";
+    const files = Array.from(this.files || []).slice(0, 3);
+    if (files.length > 0) {
+        newPreviewSection.style.display = "block";
+        files.forEach((file, idx) => {
+            const box = document.createElement("div");
+            box.className = "position-relative d-inline-block";
+
+            const img = document.createElement("img");
+            img.src = URL.createObjectURL(file);
+            img.style.height = "150px";
+            img.style.width = "150px";
+            img.style.objectFit = "cover";
+            img.className = "rounded shadow-sm border border-success bg-white";
+
+            const badge = document.createElement("span");
+            badge.className = "badge bg-success position-absolute bottom-0 start-0 m-1";
+            badge.textContent = "Mới " + (idx + 1);
+
+            box.appendChild(img);
+            box.appendChild(badge);
+            newPreviewContainer.appendChild(box);
+        });
+    } else {
+        newPreviewSection.style.display = "none";
     }
 });
 </script>
