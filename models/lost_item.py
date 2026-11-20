@@ -9,7 +9,7 @@ class LostItem(db.Model):
     noi_mat = db.Column(db.String(100))
     ngay_mat = db.Column(db.String(20))
     mau_sac = db.Column(db.String(50))
-    hinh_anh = db.Column(db.String(200))
+    hinh_anh = db.Column(db.Text)
     # JSON chứa pHash, ORB descriptors và HSV histogram.
     image_features = db.Column(db.Text, nullable=True)
     trang_thai = db.Column(db.String(30), default="DANG_TIM")
