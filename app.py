@@ -72,7 +72,7 @@ def format_vn_date(date_val):
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
-app.config["MAX_CONTENT_LENGTH"] = 12 * 1024 * 1024
+app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024
 Image.MAX_IMAGE_PIXELS = 12_000_000
 
 db_url = os.environ.get("DATABASE_URL", "sqlite:///lost_found.db")
