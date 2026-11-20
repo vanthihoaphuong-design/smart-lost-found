@@ -8,7 +8,6 @@ Danh sách đồ thất lạc
 <style>
     .lost-list-container { max-width: 1280px; margin: 24px auto 44px auto; padding: 0 15px; }
 
-    /* Thanh tiêu đề đầu trang gọn gàng, hiện đại */
     .page-top-bar {
         display: flex;
         justify-content: space-between;
@@ -26,7 +25,6 @@ Danh sách đồ thất lạc
     .page-top-bar h3 { margin: 0; font-weight: 800; color: #0f172a; font-size: 1.45rem; }
     .page-top-bar p { margin: 2px 0 0 0; color: #64748b; font-size: 0.88rem; }
 
-    /* Khung bảng chính có thanh cuộn và ghim tiêu đề */
     .premium-table-card {
         background: #ffffff;
         border-radius: 16px;
@@ -79,6 +77,12 @@ Danh sách đồ thất lạc
         display: inline-block;
     }
 
+    .thumb-wrapper {
+        position: relative;
+        display: inline-block;
+        width: 64px;
+        height: 64px;
+    }
     .item-thumb {
         width: 64px;
         height: 64px;
@@ -93,6 +97,20 @@ Danh sách đồ thất lạc
         transform: scale(1.08);
         box-shadow: 0 4px 12px rgba(37, 99, 235, 0.2);
         border-color: #3b82f6;
+    }
+    .multi-img-badge {
+        position: absolute;
+        bottom: -4px;
+        right: -4px;
+        background: #2563eb;
+        color: #ffffff;
+        font-size: 0.68rem;
+        font-weight: 800;
+        padding: 1px 6px;
+        border-radius: 999px;
+        border: 1.5px solid #ffffff;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        pointer-events: none;
     }
     .item-thumb-empty {
         width: 64px;
@@ -221,12 +239,32 @@ Danh sách đồ thất lạc
                         <td><span class="stt-pill">{{ items|length - loop.index0 }}</span></td>
                         <td>
                             {% if item.hinh_anh %}
-                                {% set img_url = item.hinh_anh if item.hinh_anh.startswith('http') else url_for('uploaded_file', filename=item.hinh_anh) %}
-                                <img src="{{ img_url }}" 
-                                     class="item-thumb" 
-                                     onclick="zoomImage('{{ img_url }}')"
-                                     title="Bấm để phóng to"
-                                     onerror="this.onerror=null; this.outerHTML='<div class=\'item-thumb-empty\'>Chưa có ảnh</div>';">
+                                {% set raw_list = item.hinh_anh.split(',') %}
+                                {% set ns = namespace(urls=[]) %}
+                                {% for p in raw_list %}
+                                    {% set cp = p.strip() %}
+                                    {% if cp %}
+                                        {% set full_u = cp if cp.startswith('http') else url_for('uploaded_file', filename=cp) %}
+                                        {% set ns.urls = ns.urls + [full_u] %}
+                                    {% endif %}
+                                {% endfor %}
+
+                                {% if ns.urls %}
+                                    {% set joined_urls = ns.urls | join('|') %}
+                                    <div class="thumb-wrapper">
+                                        <img src="{{ ns.urls[0] }}"
+                                             class="item-thumb"
+                                             data-urls="{{ joined_urls }}"
+                                             onclick="zoomGallery(this.dataset.urls)"
+                                             title="Bấm để xem {{ ns.urls|length }} ảnh"
+                                             onerror="this.onerror=null; this.parentElement.outerHTML='<div class=\'item-thumb-empty\'>Chưa có ảnh</div>';">
+                                        {% if ns.urls|length > 1 %}
+                                            <span class="multi-img-badge">+{{ ns.urls|length - 1 }}</span>
+                                        {% endif %}
+                                    </div>
+                                {% else %}
+                                    <div class="item-thumb-empty">Chưa có ảnh</div>
+                                {% endif %}
                             {% else %}
                                 <div class="item-thumb-empty">Chưa có ảnh</div>
                             {% endif %}
@@ -303,17 +341,26 @@ Danh sách đồ thất lạc
     </div>
 </div>
 
-<!-- MODAL PHÓNG TO & KÉO THẢ CHUỘT -->
+<!-- MODAL PHÓNG TO & XEM NHIỀU GÓC ẢNH -->
 <div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
     <div class="modal-dialog modal-dialog-centered modal-lg">
         <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
-            <div class="modal-header border-0 pb-0 pt-2 pe-3">
+            <div class="modal-header border-0 pb-0 pt-2 pe-3 d-flex align-items-center">
+                <span id="zoomCounterBadge" class="badge bg-primary ms-2" style="display: none;">Ảnh 1 / 1</span>
                 <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 70vh; position: relative; user-select: none;" id="zoomViewport">
+                <button type="button" id="prevImgBtn" onclick="stepGallery(-1)"
+                        class="btn btn-dark btn-lg position-absolute start-0 ms-3 rounded-circle shadow"
+                        style="z-index: 20; opacity: 0.85; display: none;">❮</button>
+
                 <img id="zoomModalImage" src="" 
                      draggable="false"
                      style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
+
+                <button type="button" id="nextImgBtn" onclick="stepGallery(1)"
+                        class="btn btn-dark btn-lg position-absolute end-0 me-3 rounded-circle shadow"
+                        style="z-index: 20; opacity: 0.85; display: none;">❯</button>
             </div>
             <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
                 <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Nhấp giữ chuột trái và Kéo để di chuyển góc xem</small>
@@ -336,26 +383,60 @@ function confirmDeletePIN(event, deleteUrl) {
 
 function submitPinCheck() {
     let userPin = document.getElementById('modalPinInput').value.trim();
-    fetch('/get-pin?t=' + new Date().getTime())
-        .then(response => response.json())
-        .then(data => {
-            if (userPin === String(data.pin).trim()) {
-                window.location.href = pendingDeleteUrl;
-            } else {
-                document.getElementById('pinErrorMsg').style.display = 'block';
-            }
-        })
-        .catch(err => alert("❌ Lỗi kiểm tra mã PIN!"));
+    fetch('/verify-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: userPin })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.valid) {
+            const sep = pendingDeleteUrl.includes('?') ? '&' : '?';
+            window.location.href = pendingDeleteUrl + sep + 'pin_code=' + encodeURIComponent(userPin);
+        } else {
+            document.getElementById('pinErrorMsg').style.display = 'block';
+        }
+    })
+    .catch(err => alert("❌ Lỗi kiểm tra mã PIN!"));
 }
 
+let galleryUrls = [];
+let galleryIndex = 0;
 let scale = 1, pointX = 0, pointY = 0, startX = 0, startY = 0, isDragging = false;
 
-function zoomImage(src) {
+function zoomGallery(joinedUrls) {
+    galleryUrls = (joinedUrls || "").split("|").filter(Boolean);
+    galleryIndex = 0;
+    renderGalleryImage();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('imageZoomModal')).show();
+}
+
+function stepGallery(delta) {
+    if (galleryUrls.length <= 1) return;
+    galleryIndex = (galleryIndex + delta + galleryUrls.length) % galleryUrls.length;
+    renderGalleryImage();
+}
+
+function renderGalleryImage() {
     const imgEl = document.getElementById('zoomModalImage');
+    const prevBtn = document.getElementById('prevImgBtn');
+    const nextBtn = document.getElementById('nextImgBtn');
+    const badge = document.getElementById('zoomCounterBadge');
+
     scale = 1; pointX = 0; pointY = 0; isDragging = false;
     updateTransform(imgEl);
-    imgEl.src = src;
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('imageZoomModal')).show();
+    imgEl.src = galleryUrls[galleryIndex] || "";
+
+    if (galleryUrls.length > 1) {
+        prevBtn.style.display = "block";
+        nextBtn.style.display = "block";
+        badge.style.display = "inline-block";
+        badge.textContent = `Góc ảnh ${galleryIndex + 1} / ${galleryUrls.length}`;
+    } else {
+        prevBtn.style.display = "none";
+        nextBtn.style.display = "none";
+        badge.style.display = "none";
+    }
 }
 
 function updateTransform(img) {
