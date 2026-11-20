@@ -166,6 +166,47 @@ STOP_WORDS_VN = {
 }
 COLOR_WORDS_VN = ["đen", "đỏ", "xanh", "vàng", "trắng", "hồng", "tím", "nâu", "xám", "cam", "bạc"]
 
+CATEGORIES_MAP = {
+    "Sách vở / Dụng cụ học tập": [
+        "Sách vở / Dụng cụ học tập", "Sách vở", "Sách", "Vở", "Tập", "Bút",
+        "Thước", "Compa", "Bóp viết", "Hộp bút", "Sách Tin học", "Sách tin 11",
+        "Dụng cụ học tập", "Đồ dùng học tập", "Dụng cụ học toán", "Đồ học toán"
+    ],
+    "Thiết bị điện tử (Laptop, Điện thoại...)": [
+        "Thiết bị điện tử (Laptop, Điện thoại...)", "Thiết bị điện tử", "Laptop",
+        "Điện thoại", "Máy tính Casio", "Casio", "mouse", "máy tính", "Chuột",
+        "Tai nghe", "Sạc dự phòng", "Đồng hồ thông minh"
+    ],
+    "Trang phục / Phụ kiện (Áo khoác, Ví...)": [
+        "Trang phục / Phụ kiện (Áo khoác, Ví...)", "Trang phục / Phụ kiện",
+        "Áo khoác", "Balo", "Ba lô", "Mũ", "Ví", "Bóp", "Vali", "Cặp", "Nón", "Kính"
+    ],
+    "Giấy tờ / Thẻ học sinh": [
+        "Giấy tờ / Thẻ học sinh", "Giấy tờ", "Thẻ học sinh", "Thẻ HS", "Căn cước", "Thẻ", "CCCD"
+    ],
+    "Khác": [
+        "Khác", "Bình nước", "Chai nước", "Ly", "Không xác định", "vase", "Khu vực khác"
+    ]
+}
+
+
+def auto_normalize_category(ten_do, selected_loai_do):
+    """Tự động điều chỉnh lại Loại đồ nếu tên đồ rõ ràng nhưng người dùng chọn nhầm danh mục."""
+    raw_name = str(ten_do or "").strip().lower()
+    raw_cat = str(selected_loai_do or "").strip()
+
+    explicit_rules = [
+        ("Trang phục / Phụ kiện (Áo khoác, Ví...)", ["balo", "ba lô", "áo khoác", "áo ấm", "ví ", "bóp ", "mũ ", "nón ", "vali", "cặp sách"]),
+        ("Thiết bị điện tử (Laptop, Điện thoại...)", ["casio", "fx580", "fx 580", "880btg", "laptop", "điện thoại", "iphone", "samsung", "chuột máy", "tai nghe", "đồng hồ thông minh"]),
+        ("Giấy tờ / Thẻ học sinh", ["thẻ học sinh", "thẻ hs", "căn cước", "cccd", "giấy tờ", "chứng minh"]),
+        ("Sách vở / Dụng cụ học tập", ["sách ", "vở ", "tập ", "bút ", "thước", "compa", "hộp bút", "bóp viết", "dụng cụ học", "đồ dùng học"]),
+        ("Khác", ["bình nước", "chai nước", "bình giữ nhiệt", "chìa khóa", "ô ", "dù "]),
+    ]
+    for target_cat, keywords in explicit_rules:
+        if any(kw in f"{raw_name} " for kw in keywords):
+            return target_cat
+    return raw_cat
+
 
 def normalize_location_text(loc):
     """Chuẩn hóa tên địa điểm (sửa Căng tin -> Căn tin)."""
@@ -620,8 +661,9 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
 
     total = max(10, min(48, color_pts + struct_pts + ar_pts))
 
-    if not is_same_keyword and total > 12:
-        total = 12
+    # Nếu tên gọi hoặc danh mục khác nhau nhưng hình ảnh trùng khớp, vẫn cho phép đạt tối đa 42/50
+    if not is_same_keyword and total > 42:
+        total = 42
 
     return int(total), float(total / 50.0)
 
@@ -632,17 +674,19 @@ def image_score(
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác đa góc nhìn (0–50): so sánh chéo và lấy mức điểm cao nhất."""
+    """Chấm điểm thị giác đa góc nhìn (0–50): so sánh chéo mọi cặp góc (3x3, 3x2, 2x3, 1x3) và lấy điểm cao nhất."""
     try:
         list1 = split_image_list(img1_filename)
         list2 = split_image_list(img2_filename)
         if not list1 or not list2:
-            return 0, 0.0
+            return 0, 0.0, 0, 0
 
         best_score = 0
         best_ratio = 0.0
-        for u1 in list1:
-            for u2 in list2:
+        best_i1 = 0
+        best_i2 = 0
+        for i1, u1 in enumerate(list1):
+            for i2, u2 in enumerate(list2):
                 sc, rt = _single_pair_image_score(
                     u1, u2,
                     is_same_keyword=is_same_keyword,
@@ -651,10 +695,12 @@ def image_score(
                 if sc > best_score:
                     best_score = sc
                     best_ratio = rt
-        return best_score, best_ratio
+                    best_i1 = i1
+                    best_i2 = i2
+        return best_score, best_ratio, best_i1, best_i2
     except Exception as exc:
         print(f"Lỗi tính điểm hình ảnh: {exc}")
-        return 0, 0.0
+        return 0, 0.0, 0, 0
 
 
 def _tokenize_meaningful_words(text_name):
@@ -699,7 +745,7 @@ def get_core_keyword(text_name):
 
 
 def similarity(text1, text2):
-    """So khớp tên tổng quát."""
+    """So khớp tên tự động: kết hợp từ khóa cốt lõi, giao thoa từ và độ tương đồng chuỗi."""
     if not text1 or not text2:
         return 0.0
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
@@ -724,16 +770,16 @@ def similarity(text1, text2):
     w2 = _tokenize_meaningful_words(t2)
     common = w1.intersection(w2)
     if common:
-        non_generic = {w for w in common if w not in {"sách", "vở", "tập", "đồ", "vật", "máy"}}
+        non_generic = {w for w in common if w not in {"sách", "vở", "tập", "đồ", "vật", "máy", "dùng", "cụ"}}
         if non_generic:
             overlap_ratio = len(non_generic) / max(1, min(len(w1), len(w2)))
             return min(0.95, 0.75 + 0.20 * overlap_ratio)
-        return 0.0
 
     if len(t1) >= 3 and len(t2) >= 3 and (t1 in t2 or t2 in t1):
         return 0.85
 
-    return 0.0
+    seq_ratio = SequenceMatcher(None, t1, t2).ratio()
+    return round(seq_ratio * 0.70, 2) if seq_ratio >= 0.45 else 0.0
 
 
 def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None, visual_colors2=None):
@@ -761,7 +807,7 @@ def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None
         sim = SequenceMatcher(None, m1, m2).ratio()
         return int(sim * 15), (sim < 0.3)
 
-    return (10 if is_same_key else 0), False
+    return (10 if is_same_key else 6), False
 
 
 def location_score(loc1, loc2):
@@ -854,11 +900,13 @@ def lost():
     if request.method == "POST":
         files = request.files.getlist("hinh_anh")
         filename = upload_multiple_images(files, max_images=3)
+        ten_do = request.form.get("ten_do", "")
+        loai_do = auto_normalize_category(ten_do, request.form.get("loai_do", ""))
 
         try:
             item = LostItem(
-                ten_do=request.form.get("ten_do", ""),
-                loai_do=request.form.get("loai_do", ""),
+                ten_do=ten_do,
+                loai_do=loai_do,
                 mau_sac=request.form.get("mau_sac", ""),
                 noi_mat=normalize_location_text(request.form.get("noi_mat", "")),
                 ngay_mat=request.form.get("ngay_mat", ""),
@@ -882,11 +930,13 @@ def found():
     if request.method == "POST":
         files = request.files.getlist("hinh_anh")
         filename = upload_multiple_images(files, max_images=3)
+        ten_do = request.form.get("ten_do", "")
+        loai_do = auto_normalize_category(ten_do, request.form.get("loai_do", ""))
 
         try:
             item = FoundItem(
-                ten_do=request.form.get("ten_do", ""),
-                loai_do=request.form.get("loai_do", ""),
+                ten_do=ten_do,
+                loai_do=loai_do,
                 mau_sac=request.form.get("mau_sac", ""),
                 noi_nhat=normalize_location_text(request.form.get("noi_nhat", "")),
                 ngay_nhat=request.form.get("ngay_nhat", ""),
@@ -1064,7 +1114,7 @@ def edit_lost(item_id):
         old_all = split_image_list(item.hinh_anh)
 
         item.ten_do = request.form.get("ten_do")
-        item.loai_do = request.form.get("loai_do")
+        item.loai_do = auto_normalize_category(item.ten_do, request.form.get("loai_do"))
         item.mau_sac = request.form.get("mau_sac")
         item.noi_mat = normalize_location_text(request.form.get("noi_mat", ""))
         item.ngay_mat = request.form.get("ngay_mat")
@@ -1104,7 +1154,7 @@ def edit_found(item_id):
         old_all = split_image_list(item.hinh_anh)
 
         item.ten_do = request.form.get("ten_do")
-        item.loai_do = request.form.get("loai_do")
+        item.loai_do = auto_normalize_category(item.ten_do, request.form.get("loai_do"))
         item.mau_sac = request.form.get("mau_sac")
         item.noi_nhat = normalize_location_text(request.form.get("noi_nhat", ""))
         item.ngay_nhat = request.form.get("ngay_nhat")
@@ -1142,14 +1192,6 @@ def dashboard():
     except Exception:
         tong_so = 0
         all_items = []
-
-    CATEGORIES_MAP = {
-        "Sách vở / Dụng cụ học tập": ["Sách vở / Dụng cụ học tập", "Sách vở", "Sách", "Vở", "Tập", "Bút", "Thước", "Bóp viết", "Sách Tin học", "Sách tin 11", "Dụng cụ học tập"],
-        "Thiết bị điện tử (Laptop, Điện thoại...)": ["Thiết bị điện tử (Laptop, Điện thoại...)", "Thiết bị điện tử", "Laptop", "Điện thoại", "Máy tính Casio", "Casio", "mouse", "máy tính", "Chuột"],
-        "Trang phục / Phụ kiện (Áo khoác, Ví...)": ["Trang phục / Phụ kiện (Áo khoác, Ví...)", "Trang phục / Phụ kiện", "Áo khoác", "Balo", "Mũ", "Ví", "Vali", "Cặp", "Nón"],
-        "Giấy tờ / Thẻ học sinh": ["Giấy tờ / Thẻ học sinh", "Giấy tờ", "Thẻ học sinh", "Thẻ HS", "Căn cước", "Thẻ"],
-        "Khác": ["Khác", "Bình nước", "Không xác định", "vase", "Khu vực khác"]
-    }
 
     category_counts = {cat: 0 for cat in CATEGORIES_MAP.keys()}
 
@@ -1218,7 +1260,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v39: Siêu nhẹ RAM (< 70MB), hỗ trợ đa góc ảnh & nới lỏng danh mục khi trùng tên."""
+    """Đối sánh v40: Bộ lọc thông minh 3 cửa (chống sai tên + sai loại đồ) & so chéo đa góc ảnh."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1256,7 +1298,12 @@ def match_items(item_id=None):
                     ten_sim = similarity(lost.ten_do, found.ten_do)
                     is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
 
-                    if not is_same_key:
+                    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
+                    both_have_imgs = lost.has_image and found.has_image
+
+                    # Cửa 1: Trùng tên
+                    # Cửa 2 & 3: Khác tên / chọn nhầm loại đồ nhưng đều có ảnh và không trái màu
+                    if not is_same_key and not (both_have_imgs and not color_conflict):
                         continue
 
                     sig = (
@@ -1271,14 +1318,16 @@ def match_items(item_id=None):
                         continue
                     seen_signatures.add(sig)
 
-                    ten_score = 15 if ten_sim >= 0.85 else int(ten_sim * 15)
-                    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
+                    if is_same_key:
+                        ten_score = 15 if ten_sim >= 0.85 else max(11, int(ten_sim * 15))
+                    else:
+                        ten_score = max(6, int(ten_sim * 15))
 
                     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
                     base_score = ten_score + mau_score + vi_tri_score + ngay_score
 
-                    has_both_images = 1 if (lost.has_image and found.has_image) else 0
+                    has_both_images = 1 if both_have_imgs else 0
                     non_conflict = 0 if color_conflict else 1
 
                     sequence += 1
@@ -1344,13 +1393,13 @@ def match_items(item_id=None):
             )
 
             if lost.has_image and found.has_image:
-                anh_score, _ = image_score(
+                anh_score, _, best_i1, best_i2 = image_score(
                     lost.hinh_anh, found.hinh_anh,
                     is_same_keyword=item["is_same_key"],
                     color_conflict=color_conflict
                 )
             else:
-                anh_score = 0
+                anh_score, best_i1, best_i2 = 0, 0, 0
 
             total_score = item["score_name"] + mau_score + item["score_location"] + item["score_date"] + anh_score
             if total_score >= 75:
@@ -1372,6 +1421,8 @@ def match_items(item_id=None):
                 "score_color": mau_score,
                 "score_location": item["score_location"],
                 "score_date": item["score_date"],
+                "best_lost_idx": best_i1,
+                "best_found_idx": best_i2,
             })
 
         page_matches.sort(key=lambda x: x["score"], reverse=True)
@@ -1417,7 +1468,10 @@ def teacher_check(lost_id, found_id):
     ten_sim = similarity(lost.ten_do, found.ten_do)
     is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
 
-    ten_score = 15 if ten_sim >= 0.85 else int(ten_sim * 15)
+    if is_same_key:
+        ten_score = 15 if ten_sim >= 0.85 else max(11, int(ten_sim * 15))
+    else:
+        ten_score = max(6, int(ten_sim * 15))
 
     v_cols1, v_cols2 = set(), set()
     if has1 and has2:
@@ -1436,7 +1490,7 @@ def teacher_check(lost_id, found_id):
     base_score = ten_score + mau_score + vi_tri_score + ngay_score
 
     if has1 and has2:
-        anh_score, image_ratio = image_score(
+        anh_score, image_ratio, _, _ = image_score(
             lost.hinh_anh, found.hinh_anh,
             is_same_keyword=is_same_key,
             color_conflict=color_conflict
