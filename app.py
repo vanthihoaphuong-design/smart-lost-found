@@ -109,6 +109,8 @@ with app.app_context():
             "ALTER TABLE found_item ADD COLUMN noi_luu_giu VARCHAR(200);",
             "ALTER TABLE found_item ADD COLUMN thoi_diem_tra TIMESTAMP;",
             "ALTER TABLE lost_item ADD COLUMN thoi_diem_tra TIMESTAMP;",
+            "ALTER TABLE found_item ADD COLUMN mo_ta TEXT;",
+            "ALTER TABLE lost_item ADD COLUMN mo_ta TEXT;",
             "ALTER TABLE found_item ALTER COLUMN hinh_anh TYPE TEXT;",
             "ALTER TABLE lost_item ALTER COLUMN hinh_anh TYPE TEXT;"
         ]:
@@ -166,6 +168,17 @@ STOP_WORDS_VN = {
 }
 COLOR_WORDS_VN = ["đen", "đỏ", "xanh", "vàng", "trắng", "hồng", "tím", "nâu", "xám", "cam", "bạc"]
 
+# Từ điển chuẩn hóa dấu hiệu riêng (xử lý nhiều cách diễn đạt khác nhau của học sinh)
+MARK_SYNONYM_GROUPS = {
+    "hu_khoa": ["hỏng khóa", "hư khóa", "kẹt khóa", "gãy khóa", "mất đầu khóa", "tuột khóa", "dây kéo hỏng", "dây kéo kẹt", "hư dây kéo", "hỏng dây kéo"],
+    "rach_son": ["rách", "thủng", "sờn", "sứt chỉ", "bung chỉ", "trầy", "xước", "mẻ", "nứt", "vỡ"],
+    "vet_ban": ["dính mực", "vết mực", "bẩn", "ố", "dính sơn", "bút xóa", "vết bẩn", "lem mực"],
+    "mat_cuc": ["mất cúc", "rụng cúc", "mất nút", "rụng nút", "đứt cúc", "thiếu cúc", "thiếu nút"],
+    "tem_mac": ["mác", "tem", "nhãn", "cổ áo", "vạt áo", "nắp máy", "mặt sau", "bên trong"],
+    "moc_khoa": ["móc khóa", "gấu bông", "dây đeo", "sticker", "hình dán", "nhãn dán", "bảng tên"],
+    "vi_tri_chi_tiet": ["tay trái", "tay phải", "túi áo", "túi trái", "túi phải", "lưng áo", "góc dưới", "góc trên", "ngăn ngoài", "ngăn trong"],
+}
+
 CATEGORIES_MAP = {
     "Sách vở / Dụng cụ học tập": [
         "Sách vở / Dụng cụ học tập", "Sách vở", "Sách", "Vở", "Tập", "Bút",
@@ -218,6 +231,14 @@ def normalize_location_text(loc):
     return re.sub(r'căng\s*tin', 'Căn tin', s, flags=re.IGNORECASE)
 
 
+def clean_note_text(note):
+    """Làm sạch chuỗi mô tả / dấu hiệu riêng."""
+    if not note:
+        return ""
+    s = str(note).strip()
+    return "" if s.lower() in {"none", "null"} else s
+
+
 def extract_colors(text):
     if not text:
         return set()
@@ -226,6 +247,103 @@ def extract_colors(text):
     if "bạc" in found or "trắng" in found:
         found.update({"trắng", "bạc"})
     return found
+
+
+def _extract_mark_entities(raw_text):
+    """Trích xuất thực thể đặc trưng từ mô tả: Tên riêng, Mã lớp/số, Nhóm lỗi đồng nghĩa và Từ khóa."""
+    text = clean_note_text(raw_text)
+    if not text:
+        return {"names": set(), "codes": set(), "concepts": set(), "words": set()}
+
+    low = text.lower()
+    names = set()
+
+    # 1. Bắt từ đứng sau các từ khóa chỉ tên/chữ ký: "tên An", "chữ Huy", "ký Minh", "đề chữ Lan"
+    for m in re.finditer(r'(?:tên|chữ|ký|kí|ghi|đề)\s+([a-zA-ZÀ-ỹ]{2,15})', low):
+        cand = m.group(1).strip()
+        if cand not in {"là", "ở", "bằng", "mực", "bút", "nhỏ", "to", "mờ", "rõ", "lớp"}:
+            names.add(cand)
+
+    # 2. Bắt từ viết hoa đứng giữa câu (tên riêng học sinh viết hoa chữ cái đầu)
+    tokens_raw = re.findall(r'[A-Za-zÀ-ỹ]+', text)
+    for idx, tok in enumerate(tokens_raw):
+        if idx > 0 and tok[0].isupper() and len(tok) >= 2:
+            low_tok = tok.lower()
+            if low_tok not in STOP_WORDS_VN and low_tok not in COLOR_WORDS_VN:
+                names.add(low_tok)
+
+    # 3. Bắt mã lớp hoặc số hiệu (10A1, 8A2, 580, 123...)
+    codes = {c.lower() for c in re.findall(r'\b(?:\d{1,2}[a-zA-Z]\d{1,2}|\d{2,6})\b', text)}
+
+    # 4. Chuẩn hóa nhóm từ đồng nghĩa
+    concepts = set()
+    for group_key, phrases in MARK_SYNONYM_GROUPS.items():
+        if any(p in low for p in phrases):
+            concepts.add(group_key)
+
+    # 5. Từ khóa có nghĩa
+    ignore_words = STOP_WORDS_VN | {
+        "có", "bị", "ở", "trong", "ngoài", "trên", "dưới", "một", "hai", "rất",
+        "hơi", "nhỏ", "lớn", "phía", "bên", "ghi", "viết", "tên", "chữ", "lớp", "áo", "đồ"
+    }
+    clean_words = {
+        w for w in re.sub(r'[^\w\s]', ' ', low).split()
+        if len(w) >= 2 and w not in ignore_words
+    }
+
+    return {
+        "names": names,
+        "codes": codes,
+        "concepts": concepts,
+        "words": clean_words
+    }
+
+
+def evaluate_distinctive_marks(lost_item, found_item):
+    """
+    Đối chiếu dấu hiệu nhận dạng riêng giữa bài mất và bài nhặt (0–15 điểm thưởng).
+    Trả về: (mark_bonus_pts, matched_hints_list)
+    """
+    m1 = clean_note_text(getattr(lost_item, "mo_ta", ""))
+    m2 = clean_note_text(getattr(found_item, "mo_ta", ""))
+    if not m1 or not m2:
+        return 0, []
+
+    e1 = _extract_mark_entities(m1)
+    e2 = _extract_mark_entities(m2)
+
+    pts = 0
+    hints = []
+
+    # Khớp tên riêng (ví dụ cùng ghi tên "An" hoặc "Huy") -> độ tin cậy cực cao
+    common_names = e1["names"].intersection(e2["names"])
+    if common_names:
+        pts += 12
+        hints.append(f"Trùng tên riêng: {', '.join(sorted(common_names)).title()}")
+
+    # Khớp mã lớp hoặc số hiệu (10A1, 8A2...)
+    common_codes = e1["codes"].intersection(e2["codes"])
+    if common_codes:
+        pts += 10
+        hints.append(f"Trùng mã/lớp: {', '.join(sorted(common_codes)).upper()}")
+
+    # Khớp nhóm đặc điểm đồng nghĩa (hư khóa, dính mực, mất cúc...)
+    common_concepts = e1["concepts"].intersection(e2["concepts"])
+    if common_concepts:
+        pts += min(8, len(common_concepts) * 5)
+        hints.append("Trùng đặc điểm chi tiết")
+
+    # Khớp từ khóa mô tả trực tiếp
+    common_words = e1["words"].intersection(e2["words"])
+    if common_words:
+        pts += min(6, len(common_words) * 2)
+
+    # Độ tương đồng chuỗi tổng thể nếu câu ngắn gọn
+    seq = SequenceMatcher(None, m1.lower(), m2.lower()).ratio()
+    if seq >= 0.65:
+        pts = max(pts, int(round(seq * 15)))
+
+    return min(15, pts), hints
 
 
 def split_image_list(img_field):
@@ -661,7 +779,6 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
 
     total = max(10, min(48, color_pts + struct_pts + ar_pts))
 
-    # Nếu tên gọi hoặc danh mục khác nhau nhưng hình ảnh trùng khớp, vẫn cho phép đạt tối đa 42/50
     if not is_same_keyword and total > 42:
         total = 42
 
@@ -783,14 +900,22 @@ def similarity(text1, text2):
 
 
 def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None, visual_colors2=None):
-    """Tính điểm màu sắc (0–15), tự bổ sung màu chủ đạo từ HSV ảnh nếu bài đăng thiếu màu chữ."""
+    """Tính điểm màu sắc (0–15), tự bổ sung màu từ mô tả chi tiết & HSV ảnh nếu thiếu."""
     m1 = str(lost_item.mau_sac or "").strip().lower()
     m2 = str(found_item.mau_sac or "").strip().lower()
     has_m1 = m1 not in ["none", "null", ""]
     has_m2 = m2 not in ["none", "null", ""]
 
-    colors1 = extract_colors(m1) | extract_colors(lost_item.ten_do)
-    colors2 = extract_colors(m2) | extract_colors(found_item.ten_do)
+    colors1 = (
+        extract_colors(m1)
+        | extract_colors(lost_item.ten_do)
+        | extract_colors(getattr(lost_item, "mo_ta", ""))
+    )
+    colors2 = (
+        extract_colors(m2)
+        | extract_colors(found_item.ten_do)
+        | extract_colors(getattr(found_item, "mo_ta", ""))
+    )
 
     if not colors1 and visual_colors1:
         colors1 = set(visual_colors1)
@@ -902,6 +1027,7 @@ def lost():
         filename = upload_multiple_images(files, max_images=3)
         ten_do = request.form.get("ten_do", "")
         loai_do = auto_normalize_category(ten_do, request.form.get("loai_do", ""))
+        mo_ta = clean_note_text(request.form.get("mo_ta", ""))
 
         try:
             item = LostItem(
@@ -910,6 +1036,7 @@ def lost():
                 mau_sac=request.form.get("mau_sac", ""),
                 noi_mat=normalize_location_text(request.form.get("noi_mat", "")),
                 ngay_mat=request.form.get("ngay_mat", ""),
+                mo_ta=mo_ta,
                 hinh_anh=filename,
                 trang_thai="DANG_TIM"
             )
@@ -932,6 +1059,7 @@ def found():
         filename = upload_multiple_images(files, max_images=3)
         ten_do = request.form.get("ten_do", "")
         loai_do = auto_normalize_category(ten_do, request.form.get("loai_do", ""))
+        mo_ta = clean_note_text(request.form.get("mo_ta", ""))
 
         try:
             item = FoundItem(
@@ -941,6 +1069,7 @@ def found():
                 noi_nhat=normalize_location_text(request.form.get("noi_nhat", "")),
                 ngay_nhat=request.form.get("ngay_nhat", ""),
                 noi_luu_giu=normalize_location_text(request.form.get("noi_luu_giu", "")),
+                mo_ta=mo_ta,
                 hinh_anh=filename,
                 trang_thai="DANG_LUU_GIU"
             )
@@ -997,7 +1126,9 @@ def search():
     try:
         lost_query = LostItem.query
         if keyword:
-            lost_query = lost_query.filter(LostItem.ten_do.ilike(f"%{keyword}%"))
+            lost_query = lost_query.filter(
+                (LostItem.ten_do.ilike(f"%{keyword}%")) | (LostItem.mo_ta.ilike(f"%{keyword}%"))
+            )
         if category:
             lost_query = lost_query.filter(LostItem.loai_do == category)
         if location:
@@ -1017,7 +1148,9 @@ def search():
     try:
         found_query = FoundItem.query
         if keyword:
-            found_query = found_query.filter(FoundItem.ten_do.ilike(f"%{keyword}%"))
+            found_query = found_query.filter(
+                (FoundItem.ten_do.ilike(f"%{keyword}%")) | (FoundItem.mo_ta.ilike(f"%{keyword}%"))
+            )
         if category:
             found_query = found_query.filter(FoundItem.loai_do == category)
         if location:
@@ -1118,6 +1251,7 @@ def edit_lost(item_id):
         item.mau_sac = request.form.get("mau_sac")
         item.noi_mat = normalize_location_text(request.form.get("noi_mat", ""))
         item.ngay_mat = request.form.get("ngay_mat")
+        item.mo_ta = clean_note_text(request.form.get("mo_ta", ""))
 
         kept_old = split_image_list(request.form.get("existing_images", item.hinh_anh))
         files = request.files.getlist("hinh_anh")
@@ -1159,6 +1293,7 @@ def edit_found(item_id):
         item.noi_nhat = normalize_location_text(request.form.get("noi_nhat", ""))
         item.ngay_nhat = request.form.get("ngay_nhat")
         item.noi_luu_giu = normalize_location_text(request.form.get("noi_luu_giu", ""))
+        item.mo_ta = clean_note_text(request.form.get("mo_ta", ""))
 
         kept_old = split_image_list(request.form.get("existing_images", item.hinh_anh))
         files = request.files.getlist("hinh_anh")
@@ -1260,7 +1395,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v40: Bộ lọc thông minh 3 cửa (chống sai tên + sai loại đồ) & so chéo đa góc ảnh."""
+    """Đối sánh v41: Bộ lọc 3 cửa + Đối chiếu Dấu hiệu nhận dạng riêng (chống nhầm đồ đồng phục)."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1299,20 +1434,21 @@ def match_items(item_id=None):
                     is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
 
                     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
+                    mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
                     both_have_imgs = lost.has_image and found.has_image
 
-                    # Cửa 1: Trùng tên
-                    # Cửa 2 & 3: Khác tên / chọn nhầm loại đồ nhưng đều có ảnh và không trái màu
-                    if not is_same_key and not (both_have_imgs and not color_conflict):
+                    if not is_same_key and mark_score < 8 and not (both_have_imgs and not color_conflict):
                         continue
 
                     sig = (
                         str(lost.ten_do or "").strip().lower(),
                         str(lost.noi_mat or "").strip().lower(),
                         str(lost.ngay_mat or "").strip(),
+                        str(lost.mo_ta or "").strip().lower(),
                         str(found.ten_do or "").strip().lower(),
                         str(found.noi_nhat or "").strip().lower(),
                         str(found.ngay_nhat or "").strip(),
+                        str(found.mo_ta or "").strip().lower(),
                     )
                     if sig in seen_signatures:
                         continue
@@ -1325,7 +1461,7 @@ def match_items(item_id=None):
 
                     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-                    base_score = ten_score + mau_score + vi_tri_score + ngay_score
+                    base_score = ten_score + mau_score + vi_tri_score + ngay_score + mark_score
 
                     has_both_images = 1 if both_have_imgs else 0
                     non_conflict = 0 if color_conflict else 1
@@ -1343,13 +1479,15 @@ def match_items(item_id=None):
                         "score_color": mau_score,
                         "score_location": vi_tri_score,
                         "score_date": ngay_score,
+                        "score_mark": mark_score,
+                        "mark_hints": mark_hints,
                         "seq": sequence
                     })
                 except Exception:
                     continue
 
         candidates.sort(
-            key=lambda x: (x["has_both_images"], x["non_conflict"], x["base_score"], x["seq"]),
+            key=lambda x: (x["non_conflict"], x["score_mark"], x["has_both_images"], x["base_score"], x["seq"]),
             reverse=True
         )
         total_matches = len(candidates)
@@ -1401,7 +1539,16 @@ def match_items(item_id=None):
             else:
                 anh_score, best_i1, best_i2 = 0, 0, 0
 
-            total_score = item["score_name"] + mau_score + item["score_location"] + item["score_date"] + anh_score
+            raw_total = (
+                item["score_name"]
+                + mau_score
+                + item["score_location"]
+                + item["score_date"]
+                + anh_score
+                + item["score_mark"]
+            )
+            total_score = min(100, raw_total)
+
             if total_score >= 75:
                 ket_luan = "🟢 Khả năng trùng khớp cao"
             elif total_score >= 55:
@@ -1421,6 +1568,8 @@ def match_items(item_id=None):
                 "score_color": mau_score,
                 "score_location": item["score_location"],
                 "score_date": item["score_date"],
+                "score_mark": item["score_mark"],
+                "mark_hints": item["mark_hints"],
                 "best_lost_idx": best_i1,
                 "best_found_idx": best_i2,
             })
@@ -1487,7 +1636,8 @@ def teacher_check(lost_id, found_id):
     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key, v_cols1 or None, v_cols2 or None)
     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-    base_score = ten_score + mau_score + vi_tri_score + ngay_score
+    mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
+    base_score = ten_score + mau_score + vi_tri_score + ngay_score + mark_score
 
     if has1 and has2:
         anh_score, image_ratio, _, _ = image_score(
@@ -1499,7 +1649,7 @@ def teacher_check(lost_id, found_id):
     else:
         anh_score, image_ratio = 0, 0.0
 
-    score = anh_score + base_score
+    score = min(100, anh_score + base_score)
 
     if score >= 75:
         ket_luan = "🟢 Khả năng trùng khớp cao"
@@ -1527,6 +1677,8 @@ def teacher_check(lost_id, found_id):
         base_score=base_score,
         color_score=mau_score,
         server_img_score=anh_score,
+        score_mark=mark_score,
+        mark_hints=mark_hints,
         ket_luan=ket_luan,
         image_warning=image_warning
     )
@@ -1627,6 +1779,7 @@ def export_excel():
             "Tên đồ vật": item.ten_do,
             "Loại đồ": item.loai_do,
             "Màu sắc": item.mau_sac,
+            "Dấu hiệu riêng / Mô tả": clean_note_text(getattr(item, "mo_ta", "")),
             "Nơi mất": normalize_location_text(item.noi_mat),
             "Ngày mất": format_vn_date(item.ngay_mat),
             "Trạng thái": "Đã tìm thấy" if item.trang_thai in ["DA_TIM", "Đã tìm thấy"] else "Đang tìm"
@@ -1637,6 +1790,7 @@ def export_excel():
             "Tên đồ vật": item.ten_do,
             "Loại đồ": item.loai_do,
             "Màu sắc": item.mau_sac,
+            "Dấu hiệu riêng / Mô tả": clean_note_text(getattr(item, "mo_ta", "")),
             "Nơi nhặt": normalize_location_text(item.noi_nhat),
             "Ngày nhặt": format_vn_date(item.ngay_nhat),
             "Nơi lưu giữ / Liên hệ": normalize_location_text(item.noi_luu_giu),
