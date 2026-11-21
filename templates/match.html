@@ -487,15 +487,29 @@ Kết quả đối sánh thông minh
     </div>
     {% endfor %}
 
-    <!-- Phân trang -->
+    <!-- Phân trang thu gọn thông minh -->
     {% if total_pages > 1 %}
-    <nav class="mt-4">
-        <ul class="pagination justify-content-center">
-            {% for p in range(1, total_pages + 1) %}
-            <li class="page-item {% if p == page %}active{% endif %}">
-                <a class="page-link" href="{{ url_for('match_items', page=p, category=selected_category) }}">{{ p }}</a>
+    <nav class="mt-4" aria-label="Phân trang đối sánh">
+        <ul class="pagination justify-content-center flex-wrap gap-1">
+            <!-- Nút Trước -->
+            <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+                <a class="page-link" href="{{ url_for('match_items', page=page-1, category=selected_category) }}">« Trước</a>
             </li>
+
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+                    <li class="page-item {% if p == page %}active{% endif %}">
+                        <a class="page-link" href="{{ url_for('match_items', page=p, category=selected_category) }}">{{ p }}</a>
+                    </li>
+                {% elif p == page - 3 or p == page + 3 %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                {% endif %}
             {% endfor %}
+
+            <!-- Nút Sau -->
+            <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+                <a class="page-link" href="{{ url_for('match_items', page=page+1, category=selected_category) }}">Sau »</a>
+            </li>
         </ul>
     </nav>
     {% endif %}
