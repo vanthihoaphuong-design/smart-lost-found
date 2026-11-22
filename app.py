@@ -129,7 +129,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_VERSION = 50
+CACHE_VERSION = 51
 CACHE_FILE = f"feature_cache_mobilenet_v{CACHE_VERSION}.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 400
@@ -223,15 +223,11 @@ def _get_mobilenet_session():
 
 
 def _extract_mobilenet_embedding(pil_img):
-    """
-    Trích xuất vector đặc trưng sâu từ MobileNetV2 (chuẩn hóa ImageNet + L2-norm),
-    giúp nhận diện đúng cùng một đồ vật dù thay đổi góc chụp nghiêng hay chính diện.
-    """
+    """Trích xuất vector đặc trưng sâu từ MobileNetV2 (chuẩn hóa ImageNet + L2-norm)."""
     sess = _get_mobilenet_session()
     if sess is None:
         return None
     try:
-        # Cắt tập trung 82% vùng trung tâm để giảm nhiễu nền tường/cửa
         w, h = pil_img.size
         mx, my = int(w * 0.09), int(h * 0.09)
         if (w - 2 * mx) >= 32 and (h - 2 * my) >= 32:
@@ -244,7 +240,7 @@ def _extract_mobilenet_embedding(pil_img):
         mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
         std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
         arr = (arr - mean) / std
-        arr = np.transpose(arr, (2, 0, 1))[None, ...]  # (1, 3, 224, 224)
+        arr = np.transpose(arr, (2, 0, 1))[None, ...]
 
         input_name = sess.get_inputs()[0].name
         out = sess.run(None, {input_name: arr})[0].flatten().astype(np.float32)
@@ -689,7 +685,6 @@ def calculate_image_features(img_path):
             visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
             fg_color_hist = _compute_masked_color_hist(small_48, fg_mask)
 
-            # Trích xuất vector MobileNetV2 (ảnh gốc + ảnh lật ngang để bất biến góc chụp trái/phải)
             emb_orig = _extract_mobilenet_embedding(image)
             emb_flip = _extract_mobilenet_embedding(ImageOps.mirror(image)) if emb_orig is not None else None
 
@@ -730,23 +725,20 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
     if u1 == u2:
         return 50, 1.0
 
-    if color_conflict:
-        return 8, 0.16
-
     f1 = calculate_image_features(u1)
     f2 = calculate_image_features(u2)
     if f1 is None or f2 is None:
         return 0, 0.0
 
-    # 1. Điểm màu sắc chủ đạo vật thể (0–16 điểm)
+    # 1. Điểm màu sắc chủ đạo vật thể (0–18 điểm)
     h1 = f1.get("fg_color_hist", [])
     h2 = f2.get("fg_color_hist", [])
     color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
     color_cos = _cosine_sim(h1, h2) if (h1 and h2) else 0.0
-    color_blend = 0.55 * color_inter + 0.45 * color_cos
-    color_pts = max(0, min(16, int(round(((color_blend - 0.16) / 0.52) * 16))))
+    color_blend = 0.50 * color_inter + 0.50 * color_cos
+    color_pts = max(2, min(18, int(round(((color_blend - 0.12) / 0.50) * 18))))
 
-    # 2. Điểm đặc trưng sâu MobileNetV2 (0–34 điểm)
+    # 2. Điểm đặc trưng sâu MobileNetV2 (0–32 điểm)
     e1 = f1.get("mobilenet_emb")
     e2 = f2.get("mobilenet_emb")
     e2_flip = f2.get("mobilenet_flip")
@@ -755,15 +747,19 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
         sim_orig = _cosine_sim(e1, e2)
         sim_flip = _cosine_sim(e1, e2_flip) if e2_flip else sim_orig
         deep_sim = max(sim_orig, sim_flip)
-        # Cosine similarity của MobileNetV2 thường nằm trong [0.35, 0.92]
-        deep_pts = max(4, min(34, int(round(((deep_sim - 0.35) / 0.50) * 34))))
+        deep_pts = max(8, min(32, int(round(((deep_sim - 0.30) / 0.52) * 32))))
     else:
-        # Dự phòng nếu ONNX chưa tải xong
         ar1 = float(f1.get("aspect_ratio", 0.7))
         ar2 = float(f2.get("aspect_ratio", 0.7))
-        deep_pts = 18 if abs(ar1 - ar2) < 0.25 else 12
+        ar_sim = 1.0 - min(1.0, abs(ar1 - ar2))
+        deep_pts = int(round(12 + ar_sim * 14))
 
-    total = max(12, min(49, color_pts + deep_pts))
+    total = color_pts + deep_pts
+
+    if color_conflict:
+        total = int(round(total * 0.75))
+
+    total = max(12, min(49, total))
 
     if not is_same_keyword and total > 42:
         total = 42
@@ -1376,7 +1372,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v50: MobileNetV2 ONNX (Deep Learning) + Dấu hiệu nhận dạng riêng."""
+    """Đối sánh v51: MobileNetV2 ONNX (Deep Learning) + Dấu hiệu nhận dạng riêng."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
