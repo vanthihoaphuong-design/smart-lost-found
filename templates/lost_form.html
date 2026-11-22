@@ -38,44 +38,60 @@ Báo mất đồ
 
     <br>
 
-    <label class="form-label">Màu sắc</label>
-    <input 
-        type="text" 
-        name="mau_sac" 
-        class="form-control" 
-        placeholder="Ví dụ: Đen, Xanh, Trắng, Vàng..." 
-        required>
+    <div class="row">
+        <div class="col-md-6">
+            <label class="form-label">Màu sắc</label>
+            <input 
+                type="text" 
+                name="mau_sac" 
+                class="form-control" 
+                placeholder="Ví dụ: Đen, Xanh, Trắng, Vàng..." 
+                required>
+        </div>
+
+        <div class="col-md-6">
+            <label class="form-label">Nơi mất</label>
+            <select name="noi_mat" class="form-select" required>
+                <option value="">-- Chọn nơi mất --</option>
+                <option>Sân trường</option>
+                <option>Nhà xe</option>
+                <option>Căn tin</option>
+                <option>Thư viện</option>
+                <option>Sân bóng</option>
+
+                <option>Phòng STEM</option>
+                <option>Phòng Tin học 1</option>
+                <option>Phòng Tin học 2</option>
+
+                <option>Phòng Văn</option>
+                <option>Phòng Sử - Địa</option>
+                <option>Phòng Hội trường</option>
+                <option>Phòng Đoàn - Đội</option>
+                <option>Khu Văn phòng</option>
+                <option>Phòng Tâm lý</option>
+
+                <option>6A1</option><option>6A2</option><option>6A3</option>
+                <option>7A1</option><option>7A2</option><option>7A3</option>
+                <option>8A1</option><option>8A2</option><option>8A3</option>
+                <option>9A1</option><option>9A2</option><option>9A3</option>
+                <option>10A1</option><option>10A2</option><option>10A3</option>
+                <option>11A1</option><option>11A2</option>
+                <option>12A1</option><option>12A2</option>
+            </select>
+        </div>
+    </div>
 
     <br>
 
-    <label class="form-label">Nơi mất</label>
-    <select name="noi_mat" class="form-select" required>
-        <option value="">-- Chọn nơi mất --</option>
-        <option>Sân trường</option>
-        <option>Nhà xe</option>
-        <option>Căn tin</option>
-        <option>Thư viện</option>
-        <option>Sân bóng</option>
-
-        <option>Phòng STEM</option>
-        <option>Phòng Tin học 1</option>
-        <option>Phòng Tin học 2</option>
-
-        <option>Phòng Văn</option>
-        <option>Phòng Sử - Địa</option>
-        <option>Phòng Hội trường</option>
-        <option>Phòng Đoàn - Đội</option>
-        <option>Khu Văn phòng</option>
-        <option>Phòng Tâm lý</option>
-
-        <option>6A1</option><option>6A2</option><option>6A3</option>
-        <option>7A1</option><option>7A2</option><option>7A3</option>
-        <option>8A1</option><option>8A2</option><option>8A3</option>
-        <option>9A1</option><option>9A2</option><option>9A3</option>
-        <option>10A1</option><option>10A2</option><option>10A3</option>
-        <option>11A1</option><option>11A2</option>
-        <option>12A1</option><option>12A2</option>
-    </select>
+    <div>
+        <label class="form-label fw-semibold">🔍 Dấu hiệu nhận dạng riêng <span class="text-muted fw-normal">(Rất hữu ích với đồ đồng phục giống nhau)</span></label>
+        <textarea 
+            name="mo_ta" 
+            class="form-control" 
+            rows="2" 
+            placeholder="Ví dụ: Có ghi tên Minh ở mác cổ áo, khóa kéo hơi kẹt, tay trái dính vết mực nhỏ, gắn móc khóa gấu bông..."></textarea>
+        <small class="text-muted">💡 Ghi rõ tên viết trên mác/vỏ, lớp, vết xước, khóa hỏng hoặc đồ để trong túi để AI phân biệt chính xác.</small>
+    </div>
 
     <br>
 
