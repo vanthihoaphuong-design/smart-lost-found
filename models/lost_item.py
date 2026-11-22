@@ -18,3 +18,302 @@ class LostItem(db.Model):
 
     def __repr__(self):
         return self.ten_do or ""
+```[cite: 11]
+
+---
+
+### 2. File `models/found_item.py`
+```python
+from database import db
+
+class FoundItem(db.Model):
+    __tablename__ = "found_item"
+
+    id = db.Column(db.Integer, primary_key=True)
+    ten_do = db.Column(db.String(100))
+    loai_do = db.Column(db.String(100))
+    noi_nhat = db.Column(db.String(200))
+    ngay_nhat = db.Column(db.String(50))
+    mau_sac = db.Column(db.String(50))
+    noi_luu_giu = db.Column(db.String(200), nullable=True)
+    hinh_anh = db.Column(db.Text)
+    mo_ta = db.Column(db.Text)
+    # JSON chứa pHash, ORB descriptors và HSV histogram.
+    image_features = db.Column(db.Text, nullable=True)
+    trang_thai = db.Column(db.String(20), default="DANG_LUU_GIU")
+    thoi_diem_tra = db.Column(db.DateTime, nullable=True)
+
+    def __repr__(self):
+        return self.ten_do or ""
+```[cite: 12]
+
+---
+
+### 3. File `templates/edit_lost.html`
+```html
+{% extends "base.html" %}
+
+{% block title %}
+{% if is_lost is defined and not is_lost %}Chỉnh sửa đồ nhặt được{% else %}Chỉnh sửa đồ thất lạc{% endif %}
+{% endblock %}
+
+{% block content %}
+
+<h2 class="mb-4 text-primary fw-bold">
+✏️ {% if is_lost is defined and not is_lost %}Chỉnh sửa thông tin đồ nhặt được{% else %}Chỉnh sửa thông tin đồ thất lạc{% endif %}
+</h2>
+
+<form method="POST" enctype="multipart/form-data">
+
+    <div class="row">
+        <!-- 1. Tên đồ -->
+        <div class="col-md-6">
+            <label class="form-label fw-bold">Tên đồ</label>
+            <input 
+                type="text" 
+                name="ten_do" 
+                class="form-control" 
+                value="{{ item.ten_do or '' }}" 
+                placeholder="Ví dụ: Sách Tin học 11, Laptop Dell..." 
+                required>
+        </div>
+
+        <!-- 2. Loại đồ -->
+        <div class="col-md-6">
+            <label class="form-label fw-bold">Loại đồ</label>
+            <select name="loai_do" class="form-select" required>
+                {% set current_loai = item.loai_do or '' %}
+                <option value="Sách vở / Dụng cụ học tập" {% if current_loai == 'Sách vở / Dụng cụ học tập' or current_loai == 'Sách vở' %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
+                <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if current_loai == 'Thiết bị điện tử (Laptop, Điện thoại...)' or current_loai == 'Thiết bị điện tử' or current_loai == 'Điện thoại' or current_loai == 'Máy tính Casio' %}selected{% endif %}>Thiết bị điện tử (Laptop, Điện thoại...)</option>
+                <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if current_loai == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' or current_loai == 'Trang phục / Phụ kiện' or current_loai == 'Áo khoác' or current_loai == 'Balo' or current_loai == 'Mũ' or current_loai == 'Ví' %}selected{% endif %}>Trang phục / Phụ kiện (Áo khoác, Ví...)</option>
+                <option value="Giấy tờ / Thẻ học sinh" {% if current_loai == 'Giấy tờ / Thẻ học sinh' %}selected{% endif %}>Giấy tờ / Thẻ học sinh</option>
+                <option value="Khác" {% if current_loai == 'Khác' or current_loai == 'Bình nước' or current_loai == '' %}selected{% endif %}>Khác</option>
+            </select>
+        </div>
+    </div>
+
+    <br>
+
+    <!-- 3. Màu sắc & Nơi mất/nhặt -->
+    <div class="row">
+        <div class="col-md-6">
+            <label class="form-label fw-bold">Màu sắc</label>
+            <input 
+                type="text" 
+                name="mau_sac" 
+                class="form-control" 
+                value="{{ item.mau_sac or '' }}" 
+                placeholder="Ví dụ: Đen, Xanh, Trắng, Vàng..." 
+                required>
+        </div>
+
+        <div class="col-md-6">
+            <label class="form-label fw-bold">
+                {% if is_lost is defined and not is_lost %}Nơi nhặt{% else %}Nơi mất{% endif %}
+            </label>
+            <select name="{% if is_lost is defined and not is_lost %}noi_nhat{% else %}noi_mat{% endif %}" class="form-select" required>
+                {% set current_noi = item.noi_nhat if (is_lost is defined and not is_lost) else item.noi_mat %}
+                <option {% if current_noi == 'Sân trường' %}selected{% endif %}>Sân trường</option>
+                <option {% if current_noi == 'Nhà xe' %}selected{% endif %}>Nhà xe</option>
+                <option {% if current_noi == 'Căn tin' %}selected{% endif %}>Căn tin</option>
+                <option {% if current_noi == 'Thư viện' %}selected{% endif %}>Thư viện</option>
+                <option {% if current_noi == 'Sân bóng' %}selected{% endif %}>Sân bóng</option>
+
+                <option {% if current_noi == 'Phòng STEM' %}selected{% endif %}>Phòng STEM</option>
+                <option {% if current_noi == 'Phòng Tin học 1' %}selected{% endif %}>Phòng Tin học 1</option>
+                <option {% if current_noi == 'Phòng Tin học 2' %}selected{% endif %}>Phòng Tin học 2</option>
+
+                <option {% if current_noi == 'Phòng Văn' %}selected{% endif %}>Phòng Văn</option>
+                <option {% if current_noi == 'Phòng Sử - Địa' %}selected{% endif %}>Phòng Sử - Địa</option>
+                <option {% if current_noi == 'Phòng Hội trường' %}selected{% endif %}>Phòng Hội trường</option>
+                <option {% if current_noi == 'Phòng Đoàn - Đội' %}selected{% endif %}>Phòng Đoàn - Đội</option>
+                <option {% if current_noi == 'Khu Văn phòng' %}selected{% endif %}>Khu Văn phòng</option>
+                <option {% if current_noi == 'Phòng Tâm lý' %}selected{% endif %}>Phòng Tâm lý</option>
+
+                <option {% if current_noi == '6A1' %}selected{% endif %}>6A1</option><option {% if current_noi == '6A2' %}selected{% endif %}>6A2</option><option {% if current_noi == '6A3' %}selected{% endif %}>6A3</option>
+                <option {% if current_noi == '7A1' %}selected{% endif %}>7A1</option><option {% if current_noi == '7A2' %}selected{% endif %}>7A2</option><option {% if current_noi == '7A3' %}selected{% endif %}>7A3</option>
+                <option {% if current_noi == '8A1' %}selected{% endif %}>8A1</option><option {% if current_noi == '8A2' %}selected{% endif %}>8A2</option><option {% if current_noi == '8A3' %}selected{% endif %}>8A3</option>
+                <option {% if current_noi == '9A1' %}selected{% endif %}>9A1</option><option {% if current_noi == '9A2' %}selected{% endif %}>9A2</option><option {% if current_noi == '9A3' %}selected{% endif %}>9A3</option>
+                <option {% if current_noi == '10A1' %}selected{% endif %}>10A1</option><option {% if current_noi == '10A2' %}selected{% endif %}>10A2</option><option {% if current_noi == '10A3' %}selected{% endif %}>10A3</option>
+                <option {% if current_noi == '11A1' %}selected{% endif %}>11A1</option><option {% if current_noi == '11A2' %}selected{% endif %}>11A2</option>
+                <option {% if current_noi == '12A1' %}selected{% endif %}>12A1</option><option {% if current_noi == '12A2' %}selected{% endif %}>12A2</option>
+            </select>
+        </div>
+    </div>
+
+    {% if is_lost is defined and not is_lost %}
+    <br>
+    <div class="row">
+        <div class="col-md-12">
+            <label class="form-label fw-bold">📦 Nơi đang gửi đồ / Liên hệ người nhặt</label>
+            <input 
+                type="text" 
+                name="noi_luu_giu" 
+                id="editNoiLuuGiuInput"
+                list="editStorageSuggestions"
+                class="form-control" 
+                value="{{ item.noi_luu_giu or '' }}" 
+                placeholder="Phòng Bảo vệ, Phòng Đoàn - Đội, hoặc Tên + Lớp..." 
+                required>
+            <datalist id="editStorageSuggestions">
+                <option value="Phòng Bảo vệ">
+                <option value="Phòng Đoàn - Đội">
+            </datalist>
+            <div class="mt-2 d-flex flex-wrap gap-2">
+                <small class="text-muted align-self-center">Chọn nhanh:</small>
+                <button type="button" class="btn btn-sm btn-outline-primary rounded-pill" onclick="document.getElementById('editNoiLuuGiuInput').value='Phòng Bảo vệ'">
+                    🛡️ Phòng Bảo vệ
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-success rounded-pill" onclick="document.getElementById('editNoiLuuGiuInput').value='Phòng Đoàn - Đội'">
+                    🚩 Phòng Đoàn - Đội
+                </button>
+                <button type="button" class="btn btn-sm btn-outline-secondary rounded-pill" onclick="let el=document.getElementById('editNoiLuuGiuInput'); el.value=''; el.focus();">
+                    ✍️ Nhập tên người giữ
+                </button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <br>
+
+    <div>
+        <label class="form-label fw-bold">🔍 Dấu hiệu nhận dạng riêng</label>
+        <textarea 
+            name="mo_ta" 
+            class="form-control" 
+            rows="2" 
+            placeholder="Ví dụ: Có ghi tên Minh ở mác cổ áo, khóa kéo hơi kẹt, tay trái dính vết mực nhỏ, gắn móc khóa gấu bông...">{{ item.mo_ta or '' }}</textarea>
+        <small class="text-muted">💡 Ghi rõ tên viết trên mác/vỏ, lớp, vết xước, khóa hỏng hoặc đồ để trong túi để AI phân biệt chính xác.</small>
+    </div>
+
+    <br>
+
+    <div class="row">
+        <!-- 5. Ngày mất / Ngày nhặt -->
+        <div class="col-md-6">
+            <label class="form-label fw-bold">
+                {% if is_lost is defined and not is_lost %}Ngày nhặt{% else %}Ngày mất{% endif %}
+            </label>
+            <input 
+                type="date" 
+                name="{% if is_lost is defined and not is_lost %}ngay_nhat{% else %}ngay_mat{% endif %}" 
+                class="form-control" 
+                value="{{ item.ngay_nhat if (is_lost is defined and not is_lost) else item.ngay_mat }}" 
+                required>
+        </div>
+
+        <!-- 6. Ảnh đồ vật (Hỗ trợ chọn tối đa 3 ảnh) -->
+        <div class="col-md-6">
+            <label class="form-label fw-bold">📸 Thêm / Đổi ảnh đồ vật (Giữ Ctrl để chọn tối đa 3 ảnh)</label>
+            <input 
+                type="file" 
+                name="hinh_anh" 
+                class="form-control" 
+                accept="image/*" 
+                multiple
+                id="previewImage">
+        </div>
+    </div>
+
+    <br>
+
+    <!-- Lưu danh sách ảnh cũ được giữ lại -->
+    {% set raw_imgs = item.hinh_anh or '' %}
+    <input type="hidden" name="existing_images" id="existingImagesInput" value="{{ raw_imgs }}">
+
+    <!-- Hiển thị danh sách ảnh hiện tại & ảnh mới chọn -->
+    <div class="text-center p-3 bg-light rounded border mb-3">
+        <div class="fw-bold text-secondary small mb-2">📌 Ảnh hiện có (Bấm dấu ✕ đỏ nếu muốn xóa ảnh cũ)</div>
+        <div id="existingGallery" class="d-flex flex-wrap justify-content-center gap-3 mb-2">
+            {% if raw_imgs %}
+                {% for img_path in raw_imgs.split(',') %}
+                    {% set clean_p = img_path.strip() %}
+                    {% if clean_p %}
+                        {% set full_u = clean_p if clean_p.startswith('http') else url_for('uploaded_file', filename=clean_p) %}
+                        <div class="position-relative d-inline-block existing-img-card" data-raw="{{ clean_p }}">
+                            <img src="{{ full_u }}"
+                                 style="height: 150px; width: 150px; object-fit: cover;"
+                                 class="rounded shadow-sm border bg-white"
+                                 onerror="this.onerror=null; this.src='https://via.placeholder.com/150?text=Lỗi+ảnh';">
+                            <span class="badge bg-dark position-absolute bottom-0 start-0 m-1">Góc {{ loop.index }}</span>
+                            <button type="button"
+                                    class="btn btn-danger btn-sm rounded-circle position-absolute top-0 end-0 m-1 shadow"
+                                    style="width: 26px; height: 26px; padding: 0; line-height: 1;"
+                                    title="Xóa ảnh này"
+                                    onclick="removeExistingImage(this)">
+                                ✕
+                            </button>
+                        </div>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                <span class="text-muted small" id="noExistingText">Chưa có ảnh nào được lưu.</span>
+            {% endif %}
+        </div>
+
+        <!-- Khung xem trước ảnh mới chọn -->
+        <div id="newPreviewSection" style="display: none;" class="mt-3 pt-3 border-top">
+            <div class="fw-bold text-success small mb-2">✨ Ảnh mới vừa chọn (Sẽ được gộp chung tối đa 3 ảnh):</div>
+            <div id="newPreviewContainer" class="d-flex flex-wrap justify-content-center gap-3"></div>
+        </div>
+    </div>
+
+    <div class="text-center">
+        <button type="submit" class="btn btn-success btn-lg px-4 fw-bold">
+            💾 Lưu thay đổi
+        </button>
+        <a href="{% if is_lost is defined and not is_lost %}/found-list{% else %}/lost-list{% endif %}" class="btn btn-secondary btn-lg px-4">
+            📋 Danh sách
+        </a>
+    </div>
+
+</form>
+
+<script>
+function removeExistingImage(btn) {
+    const card = btn.closest('.existing-img-card');
+    if (card) card.remove();
+
+    const remaining = [];
+    document.querySelectorAll('#existingGallery .existing-img-card').forEach(el => {
+        remaining.push(el.dataset.raw);
+    });
+    document.getElementById('existingImagesInput').value = remaining.join(',');
+}
+
+const imageInput = document.getElementById("previewImage");
+const newPreviewSection = document.getElementById("newPreviewSection");
+const newPreviewContainer = document.getElementById("newPreviewContainer");
+
+imageInput.addEventListener("change", function() {
+    newPreviewContainer.innerHTML = "";
+    const files = Array.from(this.files || []).slice(0, 3);
+    if (files.length > 0) {
+        newPreviewSection.style.display = "block";
+        files.forEach((file, idx) => {
+            const box = document.createElement("div");
+            box.className = "position-relative d-inline-block";
+
+            const img = document.createElement("img");
+            img.src = URL.createObjectURL(file);
+            img.style.height = "150px";
+            img.style.width = "150px";
+            img.style.objectFit = "cover";
+            img.className = "rounded shadow-sm border border-success bg-white";
+
+            const badge = document.createElement("span");
+            badge.className = "badge bg-success position-absolute bottom-0 start-0 m-1";
+            badge.textContent = "Mới " + (idx + 1);
+
+            box.appendChild(img);
+            box.appendChild(badge);
+            newPreviewContainer.appendChild(box);
+        });
+    } else {
+        newPreviewSection.style.display = "none";
+    }
+});
+</script>
+
+{% endblock %}
