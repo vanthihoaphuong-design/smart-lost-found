@@ -129,7 +129,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_VERSION = 51
+CACHE_VERSION = 52
 CACHE_FILE = f"feature_cache_mobilenet_v{CACHE_VERSION}.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 400
@@ -736,7 +736,7 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
     color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
     color_cos = _cosine_sim(h1, h2) if (h1 and h2) else 0.0
     color_blend = 0.50 * color_inter + 0.50 * color_cos
-    color_pts = max(2, min(18, int(round(((color_blend - 0.12) / 0.50) * 18))))
+    color_pts = max(4, min(18, int(round(((color_blend - 0.12) / 0.45) * 18))))
 
     # 2. Điểm đặc trưng sâu MobileNetV2 (0–32 điểm)
     e1 = f1.get("mobilenet_emb")
@@ -747,17 +747,18 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
         sim_orig = _cosine_sim(e1, e2)
         sim_flip = _cosine_sim(e1, e2_flip) if e2_flip else sim_orig
         deep_sim = max(sim_orig, sim_flip)
-        deep_pts = max(8, min(32, int(round(((deep_sim - 0.30) / 0.52) * 32))))
+        deep_pts = max(10, min(32, int(round(((deep_sim - 0.28) / 0.48) * 32))))
     else:
         ar1 = float(f1.get("aspect_ratio", 0.7))
         ar2 = float(f2.get("aspect_ratio", 0.7))
         ar_sim = 1.0 - min(1.0, abs(ar1 - ar2))
-        deep_pts = int(round(12 + ar_sim * 14))
+        deep_pts = int(round(14 + ar_sim * 16))
 
     total = color_pts + deep_pts
 
-    if color_conflict:
-        total = int(round(total * 0.75))
+    # Chỉ giảm nhẹ 15% nếu hai bên khai báo màu chữ trái ngược hoàn toàn VÀ điểm ảnh chưa quá cao
+    if color_conflict and total < 44:
+        total = int(round(total * 0.85))
 
     total = max(12, min(49, total))
 
@@ -884,33 +885,48 @@ def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None
     has_m1 = m1 not in ["none", "null", ""]
     has_m2 = m2 not in ["none", "null", ""]
 
-    colors1 = (
+    text_colors1 = (
         extract_colors(m1)
         | extract_colors(lost_item.ten_do)
         | extract_colors(getattr(lost_item, "mo_ta", ""))
     )
-    colors2 = (
+    text_colors2 = (
         extract_colors(m2)
         | extract_colors(found_item.ten_do)
         | extract_colors(getattr(found_item, "mo_ta", ""))
     )
 
-    if not colors1 and visual_colors1:
-        colors1 = set(visual_colors1)
-    if not colors2 and visual_colors2:
-        colors2 = set(visual_colors2)
+    vis1 = set(visual_colors1) if visual_colors1 else set()
+    vis2 = set(visual_colors2) if visual_colors2 else set()
 
-    if colors1 and colors2:
-        if colors1.intersection(colors2):
+    # 1. Cả hai đều khai báo màu bằng chữ rõ ràng
+    if text_colors1 and text_colors2:
+        if text_colors1.intersection(text_colors2):
             return 15, False
-        else:
-            return 0, True
+        return 0, True
+
+    # 2. Một bên có màu chữ, bên kia bỏ trống -> đối chiếu màu chữ với màu quét từ ảnh
+    if text_colors1 and not text_colors2:
+        if vis2 and text_colors1.intersection(vis2):
+            return 14, False
+        return (12 if is_same_key else 8), False
+
+    if text_colors2 and not text_colors1:
+        if vis1 and text_colors2.intersection(vis1):
+            return 14, False
+        return (12 if is_same_key else 8), False
+
+    # 3. Cả hai đều không có màu chữ -> đối chiếu màu quét từ ảnh
+    if vis1 and vis2:
+        if vis1.intersection(vis2):
+            return 14, False
+        return 5, False
 
     if has_m1 and has_m2:
         sim = SequenceMatcher(None, m1, m2).ratio()
         return int(sim * 15), (sim < 0.3)
 
-    return (10 if is_same_key else 6), False
+    return (12 if is_same_key else 8), False
 
 
 def location_score(loc1, loc2):
@@ -1372,7 +1388,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v51: MobileNetV2 ONNX (Deep Learning) + Dấu hiệu nhận dạng riêng."""
+    """Đối sánh v52: MobileNetV2 ONNX (Deep Learning) + Tự nhận màu từ ảnh + Dấu hiệu riêng."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
