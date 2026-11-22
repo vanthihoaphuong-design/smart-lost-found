@@ -264,7 +264,7 @@ imageInput.addEventListener("change", function() {
 </script>
 
 {% endblock %}
-```[cite: 17]
+```[cite: 5]
 
 ---
 
@@ -432,7 +432,7 @@ if (imageInput) {
 </script>
 
 {% endblock %}
-```[cite: 15]
+```[cite: 3]
 
 ---
 
@@ -628,11 +628,11 @@ if (imageInput) {
 </script>
 
 {% endblock %}
-```[cite: 16]
+```[cite: 4]
 
 ---
 
-### 4. File `templates/match.html`
+### 4. File `templates/match.html` (Đã tích hợp Dấu hiệu riêng + Phân trang thu gọn `...`)
 ```html
 {% extends "base.html" %}
 
@@ -1166,15 +1166,27 @@ Kết quả đối sánh thông minh
     </div>
     {% endfor %}
 
-    <!-- Phân trang -->
+    <!-- Phân trang thu gọn thông minh -->
     {% if total_pages > 1 %}
-    <nav class="mt-4">
-        <ul class="pagination justify-content-center">
-            {% for p in range(1, total_pages + 1) %}
-            <li class="page-item {% if p == page %}active{% endif %}">
-                <a class="page-link" href="{{ url_for('match_items', page=p, category=selected_category) }}">{{ p }}</a>
+    <nav class="mt-4" aria-label="Phân trang đối sánh">
+        <ul class="pagination justify-content-center flex-wrap gap-1">
+            <li class="page-item {% if page <= 1 %}disabled{% endif %}">
+                <a class="page-link" href="{{ url_for('match_items', page=page-1, category=selected_category) }}">« Trước</a>
             </li>
+
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == 1 or p == total_pages or (p >= page - 2 and p <= page + 2) %}
+                    <li class="page-item {% if p == page %}active{% endif %}">
+                        <a class="page-link" href="{{ url_for('match_items', page=p, category=selected_category) }}">{{ p }}</a>
+                    </li>
+                {% elif p == page - 3 or p == page + 3 %}
+                    <li class="page-item disabled"><span class="page-link">...</span></li>
+                {% endif %}
             {% endfor %}
+
+            <li class="page-item {% if page >= total_pages %}disabled{% endif %}">
+                <a class="page-link" href="{{ url_for('match_items', page=page+1, category=selected_category) }}">Sau »</a>
+            </li>
         </ul>
     </nav>
     {% endif %}
@@ -1345,7 +1357,7 @@ document.addEventListener('keydown', function(e) {
 });
 </script>
 {% endblock %}
-```[cite: 14]
+```[cite: 2]
 
 ---
 
@@ -2051,4 +2063,6 @@ document.addEventListener('keydown', function(e) {
 });
 </script>
 {% endblock %}
-```[cite: 13]
+
+
+Bạn chỉ cần chép đè lần lượt từng file vào thư mục `templates/` trên GitHub rồi đợi Render deploy lại là hoàn tất.
