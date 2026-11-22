@@ -24,7 +24,6 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         margin: 0;
     }
 
-    /* Khung 3 cột đối sánh chính */
     .tc-compare-card {
         background: #ffffff;
         border-radius: 20px;
@@ -92,7 +91,6 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         box-shadow: 0 3px 8px rgba(16, 185, 129, 0.25);
     }
 
-    /* Khung 1 ảnh chính lớn + nút chuyển góc */
     .showcase-box {
         position: relative;
         width: 170px;
@@ -228,10 +226,19 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         font-size: 0.86rem;
         color: #334155;
     }
-    .tc-detail-list div { margin-bottom: 4px; }
+    .tc-detail-list div { margin-bottom: 5px; }
     .tc-detail-list div:last-child { margin-bottom: 0; }
 
-    /* Cột điểm AI gọn giống bản gốc */
+    .tc-note-highlight {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #78350f;
+        border-radius: 8px;
+        padding: 6px 10px;
+        margin-top: 6px;
+        font-size: 0.84rem;
+    }
+
     .tc-score-label {
         font-size: 0.85rem;
         font-weight: 800;
@@ -250,6 +257,17 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         font-weight: 700;
         color: #0f172a;
     }
+    .tc-mark-match-pill {
+        background: #eef2ff;
+        color: #3730a3;
+        border: 1px solid #c7d2fe;
+        border-radius: 8px;
+        padding: 5px 8px;
+        font-size: 0.76rem;
+        font-weight: 700;
+        margin-top: 10px;
+        width: 100%;
+    }
 
     .tc-warning-box {
         background: #fef3c7;
@@ -263,7 +281,6 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         width: 100%;
     }
 
-    /* Khung xác nhận trao trả phía dưới */
     .tc-confirm-card {
         background: #ffffff;
         border-radius: 18px;
@@ -340,7 +357,7 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
 <div class="tc-wrapper">
     <div class="tc-header">
         <h2>🧑‍🏫 Bảng Kiểm Tra Đối Sánh Chi Tiết</h2>
-        <p>Xác minh hình ảnh đa góc nhìn và thông tin chi tiết trước khi xác nhận trao trả đồ</p>
+        <p>Xác minh hình ảnh đa góc nhìn và dấu hiệu nhận dạng riêng trước khi xác nhận trao trả đồ</p>
     </div>
 
     <div class="tc-compare-card">
@@ -399,6 +416,9 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
                         <div>🎨 <strong>Màu sắc:</strong> {{ lost.mau_sac or 'Chưa rõ' }}</div>
                         <div>📍 <strong>Nơi mất:</strong> {{ lost.noi_mat or 'Chưa rõ' }}</div>
                         <div>📅 <strong>Ngày mất:</strong> {{ lost.ngay_mat | vn_date }}</div>
+                        <div class="tc-note-highlight">
+                            🔍 <strong>Dấu hiệu riêng:</strong> {{ lost.mo_ta or 'Không có ghi chú' }}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -458,15 +478,25 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
                         <div>📍 <strong>Nơi nhặt:</strong> {{ found.noi_nhat or 'Chưa rõ' }}</div>
                         <div>📅 <strong>Ngày nhặt:</strong> {{ found.ngay_nhat | vn_date }}</div>
                         <div>📦 <strong>Nơi lưu giữ:</strong> <span class="text-success fw-bold">{{ found.noi_luu_giu or 'Chưa cập nhật' }}</span></div>
+                        <div class="tc-note-highlight">
+                            🔍 <strong>Dấu hiệu riêng:</strong> {{ found.mo_ta or 'Không có ghi chú' }}
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- CỘT 3: ĐIỂM AI GỌN NHƯ BẢN GỐC (2/12) -->
+            <!-- CỘT 3: ĐIỂM AI GỌN (2/12) -->
             <div class="col-lg-2 tc-col-score text-center">
                 <div class="tc-score-label">ĐIỂM AI</div>
                 <div class="tc-score-number">{{ score }}</div>
                 <div class="tc-score-conclusion">{{ ket_luan }}</div>
+
+                {% if score_mark > 0 %}
+                    <div class="tc-mark-match-pill">
+                        🔍 +{{ score_mark }}đ dấu hiệu riêng
+                        {% if mark_hints %}<div class="fw-normal mt-1">{{ mark_hints | join(', ') }}</div>{% endif %}
+                    </div>
+                {% endif %}
 
                 {% if image_warning %}
                     <div class="tc-warning-box">{{ image_warning }}</div>
