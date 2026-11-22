@@ -123,7 +123,8 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_FILE = "feature_cache_v39.json"
+CACHE_VERSION = 42
+CACHE_FILE = f"feature_cache_v{CACHE_VERSION}.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 400
 
@@ -148,7 +149,7 @@ def _persist_disk_cache():
         with CACHE_LOCK:
             serializable = {
                 k: v for k, v in FEATURE_CACHE.items()
-                if isinstance(v, dict) and v.get("version") == 39
+                if isinstance(v, dict) and v.get("version") == CACHE_VERSION
             }
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(serializable, f)
@@ -258,13 +259,11 @@ def _extract_mark_entities(raw_text):
     low = text.lower()
     names = set()
 
-    # 1. Bắt từ đứng sau các từ khóa chỉ tên/chữ ký: "tên An", "chữ Huy", "ký Minh", "đề chữ Lan"
     for m in re.finditer(r'(?:tên|chữ|ký|kí|ghi|đề)\s+([a-zA-ZÀ-ỹ]{2,15})', low):
         cand = m.group(1).strip()
         if cand not in {"là", "ở", "bằng", "mực", "bút", "nhỏ", "to", "mờ", "rõ", "lớp"}:
             names.add(cand)
 
-    # 2. Bắt từ viết hoa đứng giữa câu (tên riêng học sinh viết hoa chữ cái đầu)
     tokens_raw = re.findall(r'[A-Za-zÀ-ỹ]+', text)
     for idx, tok in enumerate(tokens_raw):
         if idx > 0 and tok[0].isupper() and len(tok) >= 2:
@@ -272,16 +271,13 @@ def _extract_mark_entities(raw_text):
             if low_tok not in STOP_WORDS_VN and low_tok not in COLOR_WORDS_VN:
                 names.add(low_tok)
 
-    # 3. Bắt mã lớp hoặc số hiệu (10A1, 8A2, 580, 123...)
     codes = {c.lower() for c in re.findall(r'\b(?:\d{1,2}[a-zA-Z]\d{1,2}|\d{2,6})\b', text)}
 
-    # 4. Chuẩn hóa nhóm từ đồng nghĩa
     concepts = set()
     for group_key, phrases in MARK_SYNONYM_GROUPS.items():
         if any(p in low for p in phrases):
             concepts.add(group_key)
 
-    # 5. Từ khóa có nghĩa
     ignore_words = STOP_WORDS_VN | {
         "có", "bị", "ở", "trong", "ngoài", "trên", "dưới", "một", "hai", "rất",
         "hơi", "nhỏ", "lớn", "phía", "bên", "ghi", "viết", "tên", "chữ", "lớp", "áo", "đồ"
@@ -315,30 +311,25 @@ def evaluate_distinctive_marks(lost_item, found_item):
     pts = 0
     hints = []
 
-    # Khớp tên riêng (ví dụ cùng ghi tên "An" hoặc "Huy") -> độ tin cậy cực cao
     common_names = e1["names"].intersection(e2["names"])
     if common_names:
         pts += 12
         hints.append(f"Trùng tên riêng: {', '.join(sorted(common_names)).title()}")
 
-    # Khớp mã lớp hoặc số hiệu (10A1, 8A2...)
     common_codes = e1["codes"].intersection(e2["codes"])
     if common_codes:
         pts += 10
         hints.append(f"Trùng mã/lớp: {', '.join(sorted(common_codes)).upper()}")
 
-    # Khớp nhóm đặc điểm đồng nghĩa (hư khóa, dính mực, mất cúc...)
     common_concepts = e1["concepts"].intersection(e2["concepts"])
     if common_concepts:
         pts += min(8, len(common_concepts) * 5)
         hints.append("Trùng đặc điểm chi tiết")
 
-    # Khớp từ khóa mô tả trực tiếp
     common_words = e1["words"].intersection(e2["words"])
     if common_words:
         pts += min(6, len(common_words) * 2)
 
-    # Độ tương đồng chuỗi tổng thể nếu câu ngắn gọn
     seq = SequenceMatcher(None, m1.lower(), m2.lower()).ratio()
     if seq >= 0.65:
         pts = max(pts, int(round(seq * 15)))
@@ -436,10 +427,10 @@ def save_feature_cache(img_path, features):
 
 
 def _read_image_bytes(img_path, max_bytes=1536 * 1024):
-    """Tải ảnh thu nhỏ siêu nhẹ (w_160) từ Cloudinary qua Session Keep-Alive."""
+    """Tải ảnh thu nhỏ siêu nhẹ (w_200) từ Cloudinary qua Session Keep-Alive."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_160,c_limit,q_auto:low,f_jpg/", 1)
+        value = value.replace("/image/upload/", "/image/upload/w_200,c_limit,q_auto:low,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
         response = HTTP_SESSION.get(value, timeout=(2.0, 4.0), verify=False)
         response.raise_for_status()
@@ -456,10 +447,89 @@ def _read_image_bytes(img_path, max_bytes=1536 * 1024):
         return file.read(max_bytes + 1)
 
 
+def _apply_clahe_pil(gray_64, grid=4, clip_limit=2.5):
+    """
+    Cân bằng biểu đồ sáng cục bộ thích ứng (CLAHE thuần Python/PIL siêu nhẹ RAM)
+    trên ảnh xám 64x64 chia lưới 4x4 ô (mỗi ô 16x16), khắc phục chênh lệch sáng tối.
+    """
+    px = list(gray_64.getdata())
+    tile_sz = 64 // grid
+    cdfs = [[None] * grid for _ in range(grid)]
+
+    for ty in range(grid):
+        for tx in range(grid):
+            hist = [0] * 256
+            n_pix = tile_sz * tile_sz
+            for y in range(ty * tile_sz, (ty + 1) * tile_sz):
+                row_off = y * 64
+                for x in range(tx * tile_sz, (tx + 1) * tile_sz):
+                    hist[px[row_off + x]] += 1
+
+            # Giới hạn độ dốc tương phản (clip-limit) và phân phối lại phần dư
+            max_bin = max(1, int((n_pix / 256.0) * clip_limit))
+            excess = 0
+            for b in range(256):
+                if hist[b] > max_bin:
+                    excess += hist[b] - max_bin
+                    hist[b] = max_bin
+            redist = excess // 256
+            rem = excess % 256
+            for b in range(256):
+                hist[b] += redist + (1 if b < rem else 0)
+
+            cdf = [0] * 256
+            acc = 0
+            for b in range(256):
+                acc += hist[b]
+                cdf[b] = int(round((acc / float(n_pix)) * 255.0))
+            cdfs[ty][tx] = cdf
+
+    # Nội suy song tuyến tính (bilinear) mượt giữa tâm các ô lân cận
+    out_px = [0] * (64 * 64)
+    for y in range(64):
+        fy = (y + 0.5) / tile_sz - 0.5
+        ty0 = max(0, min(grid - 1, int(math.floor(fy))))
+        ty1 = min(grid - 1, ty0 + 1)
+        wy = max(0.0, min(1.0, fy - ty0))
+        row_off = y * 64
+        for x in range(64):
+            fx = (x + 0.5) / tile_sz - 0.5
+            tx0 = max(0, min(grid - 1, int(math.floor(fx))))
+            tx1 = min(grid - 1, tx0 + 1)
+            wx = max(0.0, min(1.0, fx - tx0))
+
+            v = px[row_off + x]
+            c00 = cdfs[ty0][tx0][v]
+            c10 = cdfs[ty0][tx1][v]
+            c01 = cdfs[ty1][tx0][v]
+            c11 = cdfs[ty1][tx1][v]
+
+            top = c00 * (1.0 - wx) + c10 * wx
+            bot = c01 * (1.0 - wx) + c11 * wx
+            out_px[row_off + x] = max(0, min(255, int(round(top * (1.0 - wy) + bot * wy))))
+
+    res = Image.new("L", (64, 64))
+    res.putdata(out_px)
+    return res
+
+
 def _extract_foreground_pil(pil_img):
-    """Tách nền nhẹ RAM trên lưới 48x48, cắt sát khung bao quanh vật thể."""
+    """
+    Kết hợp Center-Crop 75% (loại bỏ nền tường/cửa xung quanh) và tách nền màu thích ứng
+    trên lưới 48x48 để khoanh vùng chính xác vật thể ở trung tâm.
+    """
+    w0, h0 = pil_img.size
+    # Bước 1: Cắt bỏ 12.5% viền ngoài mỗi cạnh (giữ vùng trung tâm 75% chứa đồ vật)
+    margin_x = int(w0 * 0.125)
+    margin_y = int(h0 * 0.125)
+    if (w0 - 2 * margin_x) >= 16 and (h0 - 2 * margin_y) >= 16:
+        center_img = pil_img.crop((margin_x, margin_y, w0 - margin_x, h0 - margin_y))
+    else:
+        center_img = pil_img
+
+    # Bước 2: Tách nền thông minh trên vùng trung tâm 75%
     size = 48
-    small = pil_img.resize((size, size), Image.Resampling.BILINEAR)
+    small = center_img.resize((size, size), Image.Resampling.BILINEAR)
     px = list(small.getdata())
 
     border_samples = []
@@ -475,15 +545,15 @@ def _extract_foreground_pil(pil_img):
     mean_b = sum(p[2] for p in border_samples) / n_b
     _, bg_sat, _ = colorsys.rgb_to_hsv(mean_r / 255.0, mean_g / 255.0, mean_b / 255.0)
 
-    bg_palette = border_samples[::4]
+    bg_palette = border_samples[::3]
 
     mask = [False] * (size * size)
     min_x, min_y, max_x, max_y = size, size, 0, 0
     fg_count = 0
 
-    for y in range(2, size - 2):
+    for y in range(1, size - 1):
         row_off = y * size
-        for x in range(2, size - 2):
+        for x in range(1, size - 1):
             idx = row_off + x
             r, g, b = px[idx]
             _, sat, _ = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
@@ -496,11 +566,11 @@ def _extract_foreground_pil(pil_img):
                 dist_sq = dr * dr + dg * dg + db * db
                 if dist_sq < min_bg_dist:
                     min_bg_dist = dist_sq
-                    if min_bg_dist < 500:
+                    if min_bg_dist < 450:
                         break
 
             sat_diff = abs(sat - bg_sat)
-            if min_bg_dist > 800 or (sat_diff > 0.14 and min_bg_dist > 320):
+            if min_bg_dist > 700 or (sat_diff > 0.12 and min_bg_dist > 280):
                 mask[idx] = True
                 fg_count += 1
                 if x < min_x:
@@ -512,29 +582,28 @@ def _extract_foreground_pil(pil_img):
                 if y > max_y:
                     max_y = y
 
-    if fg_count < 12 or max_x <= min_x + 1 or max_y <= min_y + 1:
-        w, h = pil_img.size
-        cropped = pil_img.crop((int(w * 0.18), int(h * 0.18), int(w * 0.82), int(h * 0.82)))
-        fallback_mask = [
-            (9 <= (i % size) < 39 and 9 <= (i // size) < 39)
+    # Nếu đồ vật phủ kín gần hết vùng trung tâm 75%, lấy trọn vùng trung tâm 75%
+    if fg_count < 16 or max_x <= min_x + 2 or max_y <= min_y + 2:
+        full_mask = [
+            (4 <= (i % size) < 44 and 4 <= (i // size) < 44)
             for i in range(size * size)
         ]
-        return cropped, small, fallback_mask
+        return center_img, small, full_mask
 
-    w, h = pil_img.size
-    pad_x = max(1, int((max_x - min_x) * 0.04))
-    pad_y = max(1, int((max_y - min_y) * 0.04))
-    x0 = max(0, int(((min_x - pad_x) / size) * w))
-    y0 = max(0, int(((min_y - pad_y) / size) * h))
-    x1 = min(w, int(((max_x + pad_x) / size) * w))
-    y1 = min(h, int(((max_y + pad_y) / size) * h))
+    cw, ch = center_img.size
+    pad_x = max(1, int((max_x - min_x) * 0.05))
+    pad_y = max(1, int((max_y - min_y) * 0.05))
+    x0 = max(0, int(((min_x - pad_x) / size) * cw))
+    y0 = max(0, int(((min_y - pad_y) / size) * ch))
+    x1 = min(cw, int(((max_x + pad_x) / size) * cw))
+    y1 = min(ch, int(((max_y + pad_y) / size) * ch))
 
-    cropped = pil_img.crop((x0, y0, max(x0 + 4, x1), max(y0 + 4, y1)))
+    cropped = center_img.crop((x0, y0, max(x0 + 4, x1), max(y0 + 4, y1)))
     return cropped, small, mask
 
 
 def _detect_visual_colors_masked(small_48, fg_mask):
-    """Nhận diện màu sắc chủ đạo của vật thể."""
+    """Nhận diện màu sắc chủ đạo của vật thể (bỏ qua điểm lóa sáng/bóng đổ nền)."""
     try:
         px = list(small_48.getdata())
         counts = {}
@@ -571,7 +640,7 @@ def _detect_visual_colors_masked(small_48, fg_mask):
 
         if total == 0:
             return set()
-        detected = {c for c, cnt in counts.items() if (cnt / total) >= 0.18}
+        detected = {c for c, cnt in counts.items() if (cnt / total) >= 0.16}
         if "trắng" in detected or "xám" in detected:
             detected.add("bạc")
         return detected
@@ -580,7 +649,10 @@ def _detect_visual_colors_masked(small_48, fg_mask):
 
 
 def _compute_masked_color_hist(small_48, fg_mask):
-    """Histogram sắc độ bất biến ánh sáng trên đúng các điểm ảnh vật thể."""
+    """
+    Histogram sắc độ HSV + tỉ lệ sắc tố chuẩn hóa, tập trung vào các điểm ảnh thuộc vật thể
+    và nhấn mạnh màu chủ đạo (dominant hue) để chịu được thay đổi góc chụp.
+    """
     eq_48 = ImageOps.autocontrast(small_48, cutoff=2)
     px_eq = list(eq_48.getdata())
     fg_indices = [i for i, m in enumerate(fg_mask) if m] or list(range(48 * 48))
@@ -592,20 +664,22 @@ def _compute_masked_color_hist(small_48, fg_mask):
         h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
         if v > 0.92 and s < 0.16:
             continue
+        # Tăng trọng số cho các điểm ảnh có độ bão hòa màu rõ nét (màu đặc trưng của vật thể)
+        weight = 1.35 if s >= 0.30 else 0.85
         if s < 0.16:
-            bins[min(3, int(v * 4.0))] += 1.0
+            bins[min(3, int(v * 4.0))] += weight
         else:
             h_pos = (h * 12.0) % 12.0
             h0 = int(h_pos)
             frac = h_pos - h0
-            bins[4 + h0] += (1.0 - frac * 0.45)
-            bins[4 + ((h0 + 1) % 12)] += (frac * 0.45)
+            bins[4 + h0] += weight * (1.0 - frac * 0.45)
+            bins[4 + ((h0 + 1) % 12)] += weight * (frac * 0.45)
         rgb_sum = float(rv + gv + bv)
         if rgb_sum > 30.0:
             r_bin = min(3, int((rv / rgb_sum) * 4.0))
             g_bin = min(2, int((gv / rgb_sum) * 3.0))
-            bins[16 + r_bin * 3 + g_bin] += 0.8
-        count += 1.0
+            bins[16 + r_bin * 3 + g_bin] += 0.8 * weight
+        count += weight
 
     if count <= 0.0:
         return [1.0 / 28.0] * 28
@@ -614,64 +688,72 @@ def _compute_masked_color_hist(small_48, fg_mask):
 
 
 def _compute_fine_structure_8x8(fg_crop):
-    """Trích xuất đặc trưng cấu trúc chi tiết lưới 8x8 + HOG dự phòng nhẹ RAM."""
-    base_64 = ImageOps.equalize(fg_crop.convert("L")).resize((64, 64), Image.Resampling.BILINEAR)
+    """
+    Trích xuất đặc trưng cấu trúc sau chuẩn hóa sáng CLAHE:
+    Hỗ trợ 8 biến thể góc nhìn (4 góc xoay 0/90/180/270 × lật đối xứng trái-phải)
+    giúp nhận diện chính xác khi chụp nghiêng sườn trái/phải hoặc đặt ngược chiều.
+    """
+    raw_64 = fg_crop.convert("L").resize((64, 64), Image.Resampling.BILINEAR)
+    clahe_64 = _apply_clahe_pil(raw_64, grid=4, clip_limit=2.5)
+
+    variants = [clahe_64, ImageOps.mirror(clahe_64)]
     rot_signatures = []
 
-    for angle in (0, 90, 180, 270):
-        g_img = base_64.rotate(angle) if angle else base_64
-        g_px = list(g_img.getdata())
+    for base_variant in variants:
+        for angle in (0, 90, 180, 270):
+            g_img = base_variant.rotate(angle) if angle else base_variant
+            g_px = list(g_img.getdata())
 
-        cell_vec = []
-        hog_bins = [0.0] * 8
+            cell_vec = []
+            hog_bins = [0.0] * 8
 
-        for gy in range(8):
-            for gx in range(8):
-                lum_sum = 0.0
-                dx_sum = 0.0
-                dy_sum = 0.0
-                cnt = 0
-                for y in range(gy * 8, (gy + 1) * 8):
-                    row_off = y * 64
-                    for x in range(gx * 8, (gx + 1) * 8):
-                        val = float(g_px[row_off + x])
-                        lum_sum += val
-                        if 0 < x < 63 and 0 < y < 63:
-                            gx_val = float(g_px[row_off + x + 1]) - float(g_px[row_off + x - 1])
-                            gy_val = float(g_px[row_off + 64 + x]) - float(g_px[row_off - 64 + x])
-                            mag = math.hypot(gx_val, gy_val)
-                            dx_sum += abs(gx_val)
-                            dy_sum += abs(gy_val)
-                            if mag > 18.0:
-                                ang = (math.degrees(math.atan2(gy_val, gx_val)) + 180.0) % 180.0
-                                b_idx = min(7, int((ang / 180.0) * 8.0))
-                                hog_bins[b_idx] += mag
-                        cnt += 1
+            for gy in range(8):
+                for gx in range(8):
+                    lum_sum = 0.0
+                    dx_sum = 0.0
+                    dy_sum = 0.0
+                    cnt = 0
+                    for y in range(gy * 8, (gy + 1) * 8):
+                        row_off = y * 64
+                        for x in range(gx * 8, (gx + 1) * 8):
+                            val = float(g_px[row_off + x])
+                            lum_sum += val
+                            if 0 < x < 63 and 0 < y < 63:
+                                gx_val = float(g_px[row_off + x + 1]) - float(g_px[row_off + x - 1])
+                                gy_val = float(g_px[row_off + 64 + x]) - float(g_px[row_off - 64 + x])
+                                mag = math.hypot(gx_val, gy_val)
+                                dx_sum += abs(gx_val)
+                                dy_sum += abs(gy_val)
+                                if mag > 16.0:
+                                    ang = (math.degrees(math.atan2(gy_val, gx_val)) + 180.0) % 180.0
+                                    b_idx = min(7, int((ang / 180.0) * 8.0))
+                                    hog_bins[b_idx] += mag
+                            cnt += 1
 
-                cell_vec.extend([
-                    (lum_sum / max(1, cnt)) / 255.0,
-                    (dx_sum / max(1, cnt)) / 128.0,
-                    (dy_sum / max(1, cnt)) / 128.0,
-                ])
+                    cell_vec.extend([
+                        (lum_sum / max(1, cnt)) / 255.0,
+                        (dx_sum / max(1, cnt)) / 128.0,
+                        (dy_sum / max(1, cnt)) / 128.0,
+                    ])
 
-        hog_norm = math.sqrt(sum(v * v for v in hog_bins)) or 1.0
-        hog_vec = [v / hog_norm for v in hog_bins]
+            hog_norm = math.sqrt(sum(v * v for v in hog_bins)) or 1.0
+            hog_vec = [v / hog_norm for v in hog_bins]
 
-        rot_signatures.append({
-            "cells": cell_vec,
-            "hog": hog_vec
-        })
+            rot_signatures.append({
+                "cells": cell_vec,
+                "hog": hog_vec
+            })
 
     return rot_signatures
 
 
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng v39 siêu nhẹ RAM (< 8KB/ảnh)."""
+    """Trích xuất đặc trưng v42 (Center-Crop + CLAHE + 8 hướng xoay/lật) siêu nhẹ RAM."""
     if not check_real_image(img_path):
         return None
 
     cached = get_feature_cache(img_path)
-    if cached is not None:
+    if cached is not None and cached.get("version") == CACHE_VERSION:
         return cached
 
     try:
@@ -694,7 +776,7 @@ def calculate_image_features(img_path):
             aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
             features = {
-                "version": 39,
+                "version": CACHE_VERSION,
                 "fg_color_hist": fg_color_hist,
                 "rot_sigs": rot_sigs,
                 "aspect_ratio": aspect_ratio,
@@ -745,18 +827,22 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
         return 50, 1.0
 
     if color_conflict:
-        return 10, 0.20
+        return 8, 0.16
 
     f1 = calculate_image_features(u1)
     f2 = calculate_image_features(u2)
     if f1 is None or f2 is None:
         return 0, 0.0
 
+    # 1. Điểm màu sắc chủ đạo vùng vật thể (0–20 điểm)
     h1 = f1.get("fg_color_hist", [])
     h2 = f2.get("fg_color_hist", [])
     color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
-    color_pts = max(0, min(16, int(round(((color_inter - 0.14) / 0.36) * 16))))
+    color_cos = _cosine_sim(h1, h2) if (h1 and h2) else 0.0
+    color_blend = 0.55 * color_inter + 0.45 * color_cos
+    color_pts = max(0, min(20, int(round(((color_blend - 0.18) / 0.52) * 20))))
 
+    # 2. Điểm cấu trúc cạnh & họa tiết bất biến 8 hướng xoay/lật (0–28 điểm)
     s1_list = f1.get("rot_sigs", [])
     s2_list = f2.get("rot_sigs", [])
     if s1_list and s2_list:
@@ -765,19 +851,21 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
         for s2 in s2_list:
             cell_corr = max(0.0, _pearson_corr(base_s1["cells"], s2["cells"]))
             hog_sim = max(0.0, _cosine_sim(base_s1["hog"], s2["hog"]))
-            combined = 0.72 * cell_corr + 0.28 * hog_sim
+            combined = 0.62 * cell_corr + 0.38 * hog_sim
             if combined > best_struct:
                 best_struct = combined
 
-        struct_pts = max(2, min(32, int(round(((best_struct - 0.42) / 0.44) * 32))))
+        # Nới ngưỡng dưới (0.30) để không phạt quá nặng khi 1 ảnh chụp nghiêng góc
+        struct_pts = max(4, min(28, int(round(((best_struct - 0.30) / 0.55) * 28))))
     else:
-        struct_pts = 14
+        struct_pts = 12
 
+    # 3. Điểm tỉ lệ khung hình vật thể (0–2 điểm)
     ar1 = float(f1.get("aspect_ratio", 0.7))
     ar2 = float(f2.get("aspect_ratio", 0.7))
-    ar_pts = 2 if abs(ar1 - ar2) < 0.22 else 0
+    ar_pts = 2 if abs(ar1 - ar2) < 0.28 else 0
 
-    total = max(10, min(48, color_pts + struct_pts + ar_pts))
+    total = max(12, min(48, color_pts + struct_pts + ar_pts))
 
     if not is_same_keyword and total > 42:
         total = 42
@@ -1395,7 +1483,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v41: Bộ lọc 3 cửa + Đối chiếu Dấu hiệu nhận dạng riêng (chống nhầm đồ đồng phục)."""
+    """Đối sánh v42: Center-Crop + CLAHE + Bất biến 8 hướng + Dấu hiệu nhận dạng riêng."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1501,10 +1589,12 @@ def match_items(item_id=None):
         for item in page_candidates:
             if item["lost"].has_image and item["found"].has_image:
                 for u in split_image_list(item["lost"].hinh_anh):
-                    if get_feature_cache(u) is None:
+                    cached_f = get_feature_cache(u)
+                    if cached_f is None or cached_f.get("version") != CACHE_VERSION:
                         urls_to_fetch.add(u)
                 for u in split_image_list(item["found"].hinh_anh):
-                    if get_feature_cache(u) is None:
+                    cached_f = get_feature_cache(u)
+                    if cached_f is None or cached_f.get("version") != CACHE_VERSION:
                         urls_to_fetch.add(u)
 
         if urls_to_fetch:
