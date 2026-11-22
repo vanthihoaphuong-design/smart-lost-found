@@ -34,6 +34,13 @@ try:
 except Exception as e:
     print(f"Cảnh báo NumPy không khả dụng: {e}")
 
+HAS_ONNX = False
+try:
+    import onnxruntime as ort
+    HAS_ONNX = True
+except Exception as e:
+    print(f"Thông báo ONNX Runtime chưa cài đặt (dùng chế độ thị giác nhẹ): {e}")
+
 cloud_name = os.environ.get("CLOUDINARY_CLOUD_NAME", "")
 api_key = os.environ.get("CLOUDINARY_API_KEY", "")
 api_secret = os.environ.get("CLOUDINARY_API_SECRET", "")
@@ -55,7 +62,6 @@ app.secret_key = os.environ.get("SECRET_KEY", "smart_lost_found_secret_key_123")
 
 @app.template_filter("vn_date")
 def format_vn_date(date_val):
-    """Chuyển đổi chuỗi ngày YYYY-MM-DD hoặc YYYY/MM/DD sang DD-MM-YYYY."""
     if not date_val:
         return ""
     s = str(date_val).strip()
@@ -123,8 +129,8 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_VERSION = 42
-CACHE_FILE = f"feature_cache_v{CACHE_VERSION}.json"
+CACHE_VERSION = 50
+CACHE_FILE = f"feature_cache_mobilenet_v{CACHE_VERSION}.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 400
 
@@ -163,13 +169,100 @@ HTTP_SESSION.mount("http://", adapter)
 HTTP_SESSION.mount("https://", adapter)
 HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
 
+# ==============================================================================
+# MOBILENETV2 ONNX ENGINE (SIÊU NHẸ RAM ~3.5MB MODEL, CHẠY ĐƯỢC TRÊN RENDER)
+# ==============================================================================
+MOBILENET_MODEL_PATH = os.path.join("ai", "mobilenetv2-12.onnx")
+MOBILENET_URLS = [
+    "https://github.com/onnx/models/raw/main/validated/vision/classification/mobilenet/model/mobilenetv2-12.onnx",
+    "https://huggingface.co/onnxmodelzoo/mobilenetv2-12/resolve/main/mobilenetv2-12.onnx"
+]
+_ORT_SESSION = None
+_ORT_LOCK = threading.Lock()
+
+
+def _get_mobilenet_session():
+    """Nạp mô hình MobileNetV2 ONNX (tự động tải 1 lần duy nhất nếu chưa có trên đĩa)."""
+    global _ORT_SESSION
+    if not (HAS_ONNX and HAS_NUMPY):
+        return None
+    if _ORT_SESSION is not None:
+        return _ORT_SESSION
+
+    with _ORT_LOCK:
+        if _ORT_SESSION is not None:
+            return _ORT_SESSION
+        try:
+            os.makedirs("ai", exist_ok=True)
+            if not os.path.isfile(MOBILENET_MODEL_PATH) or os.path.getsize(MOBILENET_MODEL_PATH) < 1_000_000:
+                for url in MOBILENET_URLS:
+                    try:
+                        resp = HTTP_SESSION.get(url, timeout=(5.0, 25.0), verify=False)
+                        if resp.status_code == 200 and len(resp.content) > 1_000_000:
+                            with open(MOBILENET_MODEL_PATH, "wb") as f:
+                                f.write(resp.content)
+                            break
+                    except Exception:
+                        continue
+
+            if os.path.isfile(MOBILENET_MODEL_PATH) and os.path.getsize(MOBILENET_MODEL_PATH) > 1_000_000:
+                opts = ort.SessionOptions()
+                opts.intra_op_num_threads = 1
+                opts.inter_op_num_threads = 1
+                opts.enable_mem_pattern = False
+                _ORT_SESSION = ort.InferenceSession(
+                    MOBILENET_MODEL_PATH,
+                    sess_options=opts,
+                    providers=["CPUExecutionProvider"]
+                )
+                print("✅ Đã khởi động thành công MobileNetV2 ONNX!")
+        except Exception as e:
+            print(f"Không thể nạp MobileNetV2 ONNX: {e}")
+            _ORT_SESSION = None
+    return _ORT_SESSION
+
+
+def _extract_mobilenet_embedding(pil_img):
+    """
+    Trích xuất vector đặc trưng sâu từ MobileNetV2 (chuẩn hóa ImageNet + L2-norm),
+    giúp nhận diện đúng cùng một đồ vật dù thay đổi góc chụp nghiêng hay chính diện.
+    """
+    sess = _get_mobilenet_session()
+    if sess is None:
+        return None
+    try:
+        # Cắt tập trung 82% vùng trung tâm để giảm nhiễu nền tường/cửa
+        w, h = pil_img.size
+        mx, my = int(w * 0.09), int(h * 0.09)
+        if (w - 2 * mx) >= 32 and (h - 2 * my) >= 32:
+            crop = pil_img.crop((mx, my, w - mx, h - my))
+        else:
+            crop = pil_img
+
+        img_224 = crop.resize((224, 224), Image.Resampling.BILINEAR)
+        arr = np.asarray(img_224, dtype=np.float32) / 255.0
+        mean = np.array([0.485, 0.456, 0.406], dtype=np.float32)
+        std = np.array([0.229, 0.224, 0.225], dtype=np.float32)
+        arr = (arr - mean) / std
+        arr = np.transpose(arr, (2, 0, 1))[None, ...]  # (1, 3, 224, 224)
+
+        input_name = sess.get_inputs()[0].name
+        out = sess.run(None, {input_name: arr})[0].flatten().astype(np.float32)
+        norm = float(np.linalg.norm(out))
+        if norm > 1e-6:
+            out = out / norm
+        return [round(float(x), 5) for x in out]
+    except Exception as e:
+        print(f"Lỗi suy luận MobileNetV2: {e}")
+        return None
+
+
 STOP_WORDS_VN = {
     "con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái",
     "tấm", "bức", "tờ", "cục", "quyển", "cuốn", "cây", "vẽ", "màu", "loại", "để", "bàn", "học"
 }
 COLOR_WORDS_VN = ["đen", "đỏ", "xanh", "vàng", "trắng", "hồng", "tím", "nâu", "xám", "cam", "bạc"]
 
-# Từ điển chuẩn hóa dấu hiệu riêng (xử lý nhiều cách diễn đạt khác nhau của học sinh)
 MARK_SYNONYM_GROUPS = {
     "hu_khoa": ["hỏng khóa", "hư khóa", "kẹt khóa", "gãy khóa", "mất đầu khóa", "tuột khóa", "dây kéo hỏng", "dây kéo kẹt", "hư dây kéo", "hỏng dây kéo"],
     "rach_son": ["rách", "thủng", "sờn", "sứt chỉ", "bung chỉ", "trầy", "xước", "mẻ", "nứt", "vỡ"],
@@ -205,7 +298,6 @@ CATEGORIES_MAP = {
 
 
 def auto_normalize_category(ten_do, selected_loai_do):
-    """Tự động điều chỉnh lại Loại đồ nếu tên đồ rõ ràng nhưng người dùng chọn nhầm danh mục."""
     raw_name = str(ten_do or "").strip().lower()
     raw_cat = str(selected_loai_do or "").strip()
 
@@ -223,7 +315,6 @@ def auto_normalize_category(ten_do, selected_loai_do):
 
 
 def normalize_location_text(loc):
-    """Chuẩn hóa tên địa điểm (sửa Căng tin -> Căn tin)."""
     if not loc:
         return ""
     s = str(loc).strip()
@@ -233,7 +324,6 @@ def normalize_location_text(loc):
 
 
 def clean_note_text(note):
-    """Làm sạch chuỗi mô tả / dấu hiệu riêng."""
     if not note:
         return ""
     s = str(note).strip()
@@ -251,7 +341,6 @@ def extract_colors(text):
 
 
 def _extract_mark_entities(raw_text):
-    """Trích xuất thực thể đặc trưng từ mô tả: Tên riêng, Mã lớp/số, Nhóm lỗi đồng nghĩa và Từ khóa."""
     text = clean_note_text(raw_text)
     if not text:
         return {"names": set(), "codes": set(), "concepts": set(), "words": set()}
@@ -296,10 +385,6 @@ def _extract_mark_entities(raw_text):
 
 
 def evaluate_distinctive_marks(lost_item, found_item):
-    """
-    Đối chiếu dấu hiệu nhận dạng riêng giữa bài mất và bài nhặt (0–15 điểm thưởng).
-    Trả về: (mark_bonus_pts, matched_hints_list)
-    """
     m1 = clean_note_text(getattr(lost_item, "mo_ta", ""))
     m2 = clean_note_text(getattr(found_item, "mo_ta", ""))
     if not m1 or not m2:
@@ -338,7 +423,6 @@ def evaluate_distinctive_marks(lost_item, found_item):
 
 
 def split_image_list(img_field):
-    """Tách chuỗi lưu trữ (1 hoặc nhiều URL/tên file cách nhau bằng dấu phẩy) thành danh sách."""
     if not img_field:
         return []
     parts = [p.strip() for p in str(img_field).split(",") if p.strip()]
@@ -353,7 +437,6 @@ def split_image_list(img_field):
 
 
 def cleanup_local_images(img_field):
-    """Xóa file ảnh cục bộ trong static/uploads nếu không dùng Cloudinary."""
     for img in split_image_list(img_field):
         if not img.lower().startswith(("http://", "https://")):
             local_path = img if os.path.isabs(img) else os.path.join(
@@ -367,7 +450,6 @@ def cleanup_local_images(img_field):
 
 
 def upload_multiple_images(file_list, max_images=3):
-    """Tải tối đa 3 ảnh lên Cloudinary (hoặc lưu cục bộ dự phòng) và nối thành chuỗi."""
     saved_urls = []
     valid_files = [f for f in file_list if f and f.filename != ""][:max_images]
     for file in valid_files:
@@ -396,7 +478,6 @@ def upload_multiple_images(file_list, max_images=3):
 
 
 def check_real_image(img_path):
-    """Kiểm tra ít nhất 1 URL hoặc file ảnh hợp lệ."""
     imgs = split_image_list(img_path)
     if not imgs:
         return False
@@ -427,12 +508,12 @@ def save_feature_cache(img_path, features):
 
 
 def _read_image_bytes(img_path, max_bytes=1536 * 1024):
-    """Tải ảnh thu nhỏ siêu nhẹ (w_200) từ Cloudinary qua Session Keep-Alive."""
+    """Tải ảnh w_256 phục vụ MobileNetV2 (224x224) và phân tích màu sắc."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
-        value = value.replace("/image/upload/", "/image/upload/w_200,c_limit,q_auto:low,f_jpg/", 1)
+        value = value.replace("/image/upload/", "/image/upload/w_256,c_limit,q_auto:low,f_jpg/", 1)
     if value.startswith(("http://", "https://")):
-        response = HTTP_SESSION.get(value, timeout=(2.0, 4.0), verify=False)
+        response = HTTP_SESSION.get(value, timeout=(2.5, 5.0), verify=False)
         response.raise_for_status()
         if len(response.content) > max_bytes:
             return None
@@ -447,87 +528,11 @@ def _read_image_bytes(img_path, max_bytes=1536 * 1024):
         return file.read(max_bytes + 1)
 
 
-def _apply_clahe_pil(gray_64, grid=4, clip_limit=2.5):
-    """
-    Cân bằng biểu đồ sáng cục bộ thích ứng (CLAHE thuần Python/PIL siêu nhẹ RAM)
-    trên ảnh xám 64x64 chia lưới 4x4 ô (mỗi ô 16x16), khắc phục chênh lệch sáng tối.
-    """
-    px = list(gray_64.getdata())
-    tile_sz = 64 // grid
-    cdfs = [[None] * grid for _ in range(grid)]
-
-    for ty in range(grid):
-        for tx in range(grid):
-            hist = [0] * 256
-            n_pix = tile_sz * tile_sz
-            for y in range(ty * tile_sz, (ty + 1) * tile_sz):
-                row_off = y * 64
-                for x in range(tx * tile_sz, (tx + 1) * tile_sz):
-                    hist[px[row_off + x]] += 1
-
-            # Giới hạn độ dốc tương phản (clip-limit) và phân phối lại phần dư
-            max_bin = max(1, int((n_pix / 256.0) * clip_limit))
-            excess = 0
-            for b in range(256):
-                if hist[b] > max_bin:
-                    excess += hist[b] - max_bin
-                    hist[b] = max_bin
-            redist = excess // 256
-            rem = excess % 256
-            for b in range(256):
-                hist[b] += redist + (1 if b < rem else 0)
-
-            cdf = [0] * 256
-            acc = 0
-            for b in range(256):
-                acc += hist[b]
-                cdf[b] = int(round((acc / float(n_pix)) * 255.0))
-            cdfs[ty][tx] = cdf
-
-    # Nội suy song tuyến tính (bilinear) mượt giữa tâm các ô lân cận
-    out_px = [0] * (64 * 64)
-    for y in range(64):
-        fy = (y + 0.5) / tile_sz - 0.5
-        ty0 = max(0, min(grid - 1, int(math.floor(fy))))
-        ty1 = min(grid - 1, ty0 + 1)
-        wy = max(0.0, min(1.0, fy - ty0))
-        row_off = y * 64
-        for x in range(64):
-            fx = (x + 0.5) / tile_sz - 0.5
-            tx0 = max(0, min(grid - 1, int(math.floor(fx))))
-            tx1 = min(grid - 1, tx0 + 1)
-            wx = max(0.0, min(1.0, fx - tx0))
-
-            v = px[row_off + x]
-            c00 = cdfs[ty0][tx0][v]
-            c10 = cdfs[ty0][tx1][v]
-            c01 = cdfs[ty1][tx0][v]
-            c11 = cdfs[ty1][tx1][v]
-
-            top = c00 * (1.0 - wx) + c10 * wx
-            bot = c01 * (1.0 - wx) + c11 * wx
-            out_px[row_off + x] = max(0, min(255, int(round(top * (1.0 - wy) + bot * wy))))
-
-    res = Image.new("L", (64, 64))
-    res.putdata(out_px)
-    return res
-
-
 def _extract_foreground_pil(pil_img):
-    """
-    Kết hợp Center-Crop 75% (loại bỏ nền tường/cửa xung quanh) và tách nền màu thích ứng
-    trên lưới 48x48 để khoanh vùng chính xác vật thể ở trung tâm.
-    """
     w0, h0 = pil_img.size
-    # Bước 1: Cắt bỏ 12.5% viền ngoài mỗi cạnh (giữ vùng trung tâm 75% chứa đồ vật)
-    margin_x = int(w0 * 0.125)
-    margin_y = int(h0 * 0.125)
-    if (w0 - 2 * margin_x) >= 16 and (h0 - 2 * margin_y) >= 16:
-        center_img = pil_img.crop((margin_x, margin_y, w0 - margin_x, h0 - margin_y))
-    else:
-        center_img = pil_img
+    mx, my = int(w0 * 0.12), int(h0 * 0.12)
+    center_img = pil_img.crop((mx, my, w0 - mx, h0 - my)) if (w0 - 2 * mx >= 16 and h0 - 2 * my >= 16) else pil_img
 
-    # Bước 2: Tách nền thông minh trên vùng trung tâm 75%
     size = 48
     small = center_img.resize((size, size), Image.Resampling.BILINEAR)
     px = list(small.getdata())
@@ -544,7 +549,6 @@ def _extract_foreground_pil(pil_img):
     mean_g = sum(p[1] for p in border_samples) / n_b
     mean_b = sum(p[2] for p in border_samples) / n_b
     _, bg_sat, _ = colorsys.rgb_to_hsv(mean_r / 255.0, mean_g / 255.0, mean_b / 255.0)
-
     bg_palette = border_samples[::3]
 
     mask = [False] * (size * size)
@@ -557,53 +561,32 @@ def _extract_foreground_pil(pil_img):
             idx = row_off + x
             r, g, b = px[idx]
             _, sat, _ = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
-
             min_bg_dist = 999999
             for br, bg_c, bb in bg_palette:
-                dr = r - br
-                dg = g - bg_c
-                db = b - bb
-                dist_sq = dr * dr + dg * dg + db * db
+                dist_sq = (r - br) ** 2 + (g - bg_c) ** 2 + (b - bb) ** 2
                 if dist_sq < min_bg_dist:
                     min_bg_dist = dist_sq
                     if min_bg_dist < 450:
                         break
-
-            sat_diff = abs(sat - bg_sat)
-            if min_bg_dist > 700 or (sat_diff > 0.12 and min_bg_dist > 280):
+            if min_bg_dist > 700 or (abs(sat - bg_sat) > 0.12 and min_bg_dist > 280):
                 mask[idx] = True
                 fg_count += 1
-                if x < min_x:
-                    min_x = x
-                if x > max_x:
-                    max_x = x
-                if y < min_y:
-                    min_y = y
-                if y > max_y:
-                    max_y = y
+                min_x, max_x = min(min_x, x), max(max_x, x)
+                min_y, max_y = min(min_y, y), max(max_y, y)
 
-    # Nếu đồ vật phủ kín gần hết vùng trung tâm 75%, lấy trọn vùng trung tâm 75%
     if fg_count < 16 or max_x <= min_x + 2 or max_y <= min_y + 2:
-        full_mask = [
-            (4 <= (i % size) < 44 and 4 <= (i // size) < 44)
-            for i in range(size * size)
-        ]
+        full_mask = [(4 <= (i % size) < 44 and 4 <= (i // size) < 44) for i in range(size * size)]
         return center_img, small, full_mask
 
     cw, ch = center_img.size
-    pad_x = max(1, int((max_x - min_x) * 0.05))
-    pad_y = max(1, int((max_y - min_y) * 0.05))
-    x0 = max(0, int(((min_x - pad_x) / size) * cw))
-    y0 = max(0, int(((min_y - pad_y) / size) * ch))
-    x1 = min(cw, int(((max_x + pad_x) / size) * cw))
-    y1 = min(ch, int(((max_y + pad_y) / size) * ch))
-
-    cropped = center_img.crop((x0, y0, max(x0 + 4, x1), max(y0 + 4, y1)))
-    return cropped, small, mask
+    x0 = max(0, int(((min_x - 2) / size) * cw))
+    y0 = max(0, int(((min_y - 2) / size) * ch))
+    x1 = min(cw, int(((max_x + 2) / size) * cw))
+    y1 = min(ch, int(((max_y + 2) / size) * ch))
+    return center_img.crop((x0, y0, max(x0 + 4, x1), max(y0 + 4, y1))), small, mask
 
 
 def _detect_visual_colors_masked(small_48, fg_mask):
-    """Nhận diện màu sắc chủ đạo của vật thể (bỏ qua điểm lóa sáng/bóng đổ nền)."""
     try:
         px = list(small_48.getdata())
         counts = {}
@@ -649,10 +632,6 @@ def _detect_visual_colors_masked(small_48, fg_mask):
 
 
 def _compute_masked_color_hist(small_48, fg_mask):
-    """
-    Histogram sắc độ HSV + tỉ lệ sắc tố chuẩn hóa, tập trung vào các điểm ảnh thuộc vật thể
-    và nhấn mạnh màu chủ đạo (dominant hue) để chịu được thay đổi góc chụp.
-    """
     eq_48 = ImageOps.autocontrast(small_48, cutoff=2)
     px_eq = list(eq_48.getdata())
     fg_indices = [i for i, m in enumerate(fg_mask) if m] or list(range(48 * 48))
@@ -664,7 +643,6 @@ def _compute_masked_color_hist(small_48, fg_mask):
         h, s, v = colorsys.rgb_to_hsv(rv / 255.0, gv / 255.0, bv / 255.0)
         if v > 0.92 and s < 0.16:
             continue
-        # Tăng trọng số cho các điểm ảnh có độ bão hòa màu rõ nét (màu đặc trưng của vật thể)
         weight = 1.35 if s >= 0.30 else 0.85
         if s < 0.16:
             bins[min(3, int(v * 4.0))] += weight
@@ -687,68 +665,8 @@ def _compute_masked_color_hist(small_48, fg_mask):
     return [x * inv for x in bins]
 
 
-def _compute_fine_structure_8x8(fg_crop):
-    """
-    Trích xuất đặc trưng cấu trúc sau chuẩn hóa sáng CLAHE:
-    Hỗ trợ 8 biến thể góc nhìn (4 góc xoay 0/90/180/270 × lật đối xứng trái-phải)
-    giúp nhận diện chính xác khi chụp nghiêng sườn trái/phải hoặc đặt ngược chiều.
-    """
-    raw_64 = fg_crop.convert("L").resize((64, 64), Image.Resampling.BILINEAR)
-    clahe_64 = _apply_clahe_pil(raw_64, grid=4, clip_limit=2.5)
-
-    variants = [clahe_64, ImageOps.mirror(clahe_64)]
-    rot_signatures = []
-
-    for base_variant in variants:
-        for angle in (0, 90, 180, 270):
-            g_img = base_variant.rotate(angle) if angle else base_variant
-            g_px = list(g_img.getdata())
-
-            cell_vec = []
-            hog_bins = [0.0] * 8
-
-            for gy in range(8):
-                for gx in range(8):
-                    lum_sum = 0.0
-                    dx_sum = 0.0
-                    dy_sum = 0.0
-                    cnt = 0
-                    for y in range(gy * 8, (gy + 1) * 8):
-                        row_off = y * 64
-                        for x in range(gx * 8, (gx + 1) * 8):
-                            val = float(g_px[row_off + x])
-                            lum_sum += val
-                            if 0 < x < 63 and 0 < y < 63:
-                                gx_val = float(g_px[row_off + x + 1]) - float(g_px[row_off + x - 1])
-                                gy_val = float(g_px[row_off + 64 + x]) - float(g_px[row_off - 64 + x])
-                                mag = math.hypot(gx_val, gy_val)
-                                dx_sum += abs(gx_val)
-                                dy_sum += abs(gy_val)
-                                if mag > 16.0:
-                                    ang = (math.degrees(math.atan2(gy_val, gx_val)) + 180.0) % 180.0
-                                    b_idx = min(7, int((ang / 180.0) * 8.0))
-                                    hog_bins[b_idx] += mag
-                            cnt += 1
-
-                    cell_vec.extend([
-                        (lum_sum / max(1, cnt)) / 255.0,
-                        (dx_sum / max(1, cnt)) / 128.0,
-                        (dy_sum / max(1, cnt)) / 128.0,
-                    ])
-
-            hog_norm = math.sqrt(sum(v * v for v in hog_bins)) or 1.0
-            hog_vec = [v / hog_norm for v in hog_bins]
-
-            rot_signatures.append({
-                "cells": cell_vec,
-                "hog": hog_vec
-            })
-
-    return rot_signatures
-
-
 def calculate_image_features(img_path):
-    """Trích xuất đặc trưng v42 (Center-Crop + CLAHE + 8 hướng xoay/lật) siêu nhẹ RAM."""
+    """Trích xuất vector đặc trưng sâu MobileNetV2 + màu chủ đạo vật thể."""
     if not check_real_image(img_path):
         return None
 
@@ -770,15 +688,19 @@ def calculate_image_features(img_path):
             fg_crop, small_48, fg_mask = _extract_foreground_pil(image)
             visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
             fg_color_hist = _compute_masked_color_hist(small_48, fg_mask)
-            rot_sigs = _compute_fine_structure_8x8(fg_crop)
+
+            # Trích xuất vector MobileNetV2 (ảnh gốc + ảnh lật ngang để bất biến góc chụp trái/phải)
+            emb_orig = _extract_mobilenet_embedding(image)
+            emb_flip = _extract_mobilenet_embedding(ImageOps.mirror(image)) if emb_orig is not None else None
 
             cw, ch = fg_crop.size
             aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
 
             features = {
                 "version": CACHE_VERSION,
+                "mobilenet_emb": emb_orig,
+                "mobilenet_flip": emb_flip,
                 "fg_color_hist": fg_color_hist,
-                "rot_sigs": rot_sigs,
                 "aspect_ratio": aspect_ratio,
                 "visual_colors": list(visual_colors),
             }
@@ -804,24 +726,6 @@ def _cosine_sim(v1, v2):
     return (dot / (n1 * n2)) if (n1 > 1e-6 and n2 > 1e-6) else 0.0
 
 
-def _pearson_corr(v1, v2):
-    if not v1 or not v2 or len(v1) != len(v2):
-        return 0.0
-    if HAS_NUMPY:
-        a = np.asarray(v1, dtype=np.float32)
-        b = np.asarray(v2, dtype=np.float32)
-        a = a - np.mean(a)
-        b = b - np.mean(b)
-        denom = float(np.linalg.norm(a) * np.linalg.norm(b))
-        return float(np.dot(a, b) / denom) if denom > 1e-6 else 0.0
-    m1 = sum(v1) / len(v1)
-    m2 = sum(v2) / len(v2)
-    a = [x - m1 for x in v1]
-    b = [y - m2 for y in v2]
-    denom = math.sqrt(sum(x * x for x in a) * sum(y * y for y in b))
-    return (sum(x * y for x, y in zip(a, b)) / denom) if denom > 1e-6 else 0.0
-
-
 def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False):
     if u1 == u2:
         return 50, 1.0
@@ -834,38 +738,32 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
     if f1 is None or f2 is None:
         return 0, 0.0
 
-    # 1. Điểm màu sắc chủ đạo vùng vật thể (0–20 điểm)
+    # 1. Điểm màu sắc chủ đạo vật thể (0–16 điểm)
     h1 = f1.get("fg_color_hist", [])
     h2 = f2.get("fg_color_hist", [])
     color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
     color_cos = _cosine_sim(h1, h2) if (h1 and h2) else 0.0
     color_blend = 0.55 * color_inter + 0.45 * color_cos
-    color_pts = max(0, min(20, int(round(((color_blend - 0.18) / 0.52) * 20))))
+    color_pts = max(0, min(16, int(round(((color_blend - 0.16) / 0.52) * 16))))
 
-    # 2. Điểm cấu trúc cạnh & họa tiết bất biến 8 hướng xoay/lật (0–28 điểm)
-    s1_list = f1.get("rot_sigs", [])
-    s2_list = f2.get("rot_sigs", [])
-    if s1_list and s2_list:
-        base_s1 = s1_list[0]
-        best_struct = -1.0
-        for s2 in s2_list:
-            cell_corr = max(0.0, _pearson_corr(base_s1["cells"], s2["cells"]))
-            hog_sim = max(0.0, _cosine_sim(base_s1["hog"], s2["hog"]))
-            combined = 0.62 * cell_corr + 0.38 * hog_sim
-            if combined > best_struct:
-                best_struct = combined
+    # 2. Điểm đặc trưng sâu MobileNetV2 (0–34 điểm)
+    e1 = f1.get("mobilenet_emb")
+    e2 = f2.get("mobilenet_emb")
+    e2_flip = f2.get("mobilenet_flip")
 
-        # Nới ngưỡng dưới (0.30) để không phạt quá nặng khi 1 ảnh chụp nghiêng góc
-        struct_pts = max(4, min(28, int(round(((best_struct - 0.30) / 0.55) * 28))))
+    if e1 and e2:
+        sim_orig = _cosine_sim(e1, e2)
+        sim_flip = _cosine_sim(e1, e2_flip) if e2_flip else sim_orig
+        deep_sim = max(sim_orig, sim_flip)
+        # Cosine similarity của MobileNetV2 thường nằm trong [0.35, 0.92]
+        deep_pts = max(4, min(34, int(round(((deep_sim - 0.35) / 0.50) * 34))))
     else:
-        struct_pts = 12
+        # Dự phòng nếu ONNX chưa tải xong
+        ar1 = float(f1.get("aspect_ratio", 0.7))
+        ar2 = float(f2.get("aspect_ratio", 0.7))
+        deep_pts = 18 if abs(ar1 - ar2) < 0.25 else 12
 
-    # 3. Điểm tỉ lệ khung hình vật thể (0–2 điểm)
-    ar1 = float(f1.get("aspect_ratio", 0.7))
-    ar2 = float(f2.get("aspect_ratio", 0.7))
-    ar_pts = 2 if abs(ar1 - ar2) < 0.28 else 0
-
-    total = max(12, min(48, color_pts + struct_pts + ar_pts))
+    total = max(12, min(49, color_pts + deep_pts))
 
     if not is_same_keyword and total > 42:
         total = 42
@@ -879,7 +777,7 @@ def image_score(
     is_same_keyword=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác đa góc nhìn (0–50): so sánh chéo mọi cặp góc (3x3, 3x2, 2x3, 1x3) và lấy điểm cao nhất."""
+    """Chấm điểm thị giác đa góc nhìn (0–50): đối chiếu chéo toàn bộ các góc ảnh và lấy điểm cao nhất."""
     try:
         list1 = split_image_list(img1_filename)
         list2 = split_image_list(img2_filename)
@@ -909,7 +807,6 @@ def image_score(
 
 
 def _tokenize_meaningful_words(text_name):
-    """Tách tập từ khóa có nghĩa tự nhiên (bỏ từ dừng & từ chỉ màu sắc)."""
     if not text_name:
         return set()
     t = re.sub(r'[^\w\s]', ' ', str(text_name).lower())
@@ -918,7 +815,6 @@ def _tokenize_meaningful_words(text_name):
 
 
 def get_core_keyword(text_name):
-    """Chuẩn hóa danh từ cốt lõi, phân biệt cụm từ ghép (chuột máy tính != máy tính)."""
     if not text_name:
         return ""
     t = str(text_name).lower().strip()
@@ -950,7 +846,6 @@ def get_core_keyword(text_name):
 
 
 def similarity(text1, text2):
-    """So khớp tên tự động: kết hợp từ khóa cốt lõi, giao thoa từ và độ tương đồng chuỗi."""
     if not text1 or not text2:
         return 0.0
     t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
@@ -988,7 +883,6 @@ def similarity(text1, text2):
 
 
 def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None, visual_colors2=None):
-    """Tính điểm màu sắc (0–15), tự bổ sung màu từ mô tả chi tiết & HSV ảnh nếu thiếu."""
     m1 = str(lost_item.mau_sac or "").strip().lower()
     m2 = str(found_item.mau_sac or "").strip().lower()
     has_m1 = m1 not in ["none", "null", ""]
@@ -1024,7 +918,6 @@ def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None
 
 
 def location_score(loc1, loc2):
-    """Chấm điểm vị trí (0–10)."""
     v1 = normalize_location_text(loc1).lower()
     v2 = normalize_location_text(loc2).lower()
     if not v1 or not v2:
@@ -1483,7 +1376,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v42: Center-Crop + CLAHE + Bất biến 8 hướng + Dấu hiệu nhận dạng riêng."""
+    """Đối sánh v50: MobileNetV2 ONNX (Deep Learning) + Dấu hiệu nhận dạng riêng."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1598,7 +1491,7 @@ def match_items(item_id=None):
                         urls_to_fetch.add(u)
 
         if urls_to_fetch:
-            with ThreadPoolExecutor(max_workers=6) as executor:
+            with ThreadPoolExecutor(max_workers=4) as executor:
                 list(executor.map(calculate_image_features, urls_to_fetch))
             _persist_disk_cache()
 
@@ -1912,7 +1805,6 @@ def export_excel():
 
 @app.route("/verify-pin", methods=["POST"])
 def verify_pin():
-    """Kiểm tra mã PIN giáo viên qua POST (không lộ PIN ra ngoài)."""
     data = request.get_json(silent=True) or {}
     pin_input = str(data.get("pin", request.form.get("pin", ""))).strip()
     return jsonify({"valid": pin_input == get_current_pin()})
