@@ -6,341 +6,216 @@ Danh sách đồ nhặt được
 
 {% block content %}
 <style>
-    .found-list-container { max-width: 1320px; margin: 24px auto 44px auto; padding: 0 15px; }
-
-    /* Thanh tiêu đề đầu trang gọn gàng, hiện đại */
-    .page-top-bar {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 14px;
+    .list-wrapper { max-width: 1200px; margin: 24px auto 48px auto; padding: 0 15px; }
+    .header-card {
         background: #ffffff;
-        padding: 18px 24px;
-        border-radius: 16px;
+        border-radius: 18px;
+        padding: 20px 24px;
+        box-shadow: 0 6px 20px rgba(15, 23, 42, 0.06);
         border: 1px solid #e2e8f0;
-        border-left: 5px solid #059669;
-        box-shadow: 0 4px 16px rgba(15, 23, 42, 0.05);
         margin-bottom: 20px;
     }
-    .page-top-bar h3 { margin: 0; font-weight: 800; color: #0f172a; font-size: 1.45rem; }
-    .page-top-bar p { margin: 2px 0 0 0; color: #64748b; font-size: 0.88rem; }
-
-    /* Khung bảng chính có thanh cuộn và ghim tiêu đề */
-    .premium-table-card {
+    .table-card {
         background: #ffffff;
-        border-radius: 16px;
-        box-shadow: 0 6px 24px rgba(15, 23, 42, 0.06);
-        border: 1px solid #d1fae5;
+        border-radius: 18px;
+        box-shadow: 0 8px 26px rgba(15, 23, 42, 0.07);
+        border: 1px solid #e2e8f0;
         overflow: hidden;
     }
-    .sticky-table-scroll {
-        max-height: 68vh;
-        overflow-y: auto;
-        overflow-x: auto;
-    }
-    .premium-table { margin-bottom: 0; width: 100%; border-collapse: separate; border-spacing: 0; }
-    .premium-table thead th {
-        position: sticky;
-        top: 0;
-        z-index: 10;
-        background: linear-gradient(90deg, #065f46 0%, #059669 100%);
+    .table thead th {
+        background-color: #059669;
         color: #ffffff;
         font-weight: 700;
         font-size: 0.82rem;
         text-transform: uppercase;
-        letter-spacing: 0.5px;
-        padding: 14px 10px;
-        text-align: center;
-        vertical-align: middle;
+        letter-spacing: 0.4px;
+        padding: 13px 10px;
         border: none;
         white-space: nowrap;
-        box-shadow: 0 2px 6px rgba(6, 95, 70, 0.2);
-    }
-    .premium-table tbody td {
-        padding: 12px 10px;
-        border-bottom: 1px solid #eef2f6;
-        color: #1e293b;
-        font-size: 0.92rem;
         text-align: center;
+    }
+    .table tbody td {
         vertical-align: middle;
+        padding: 12px 10px;
+        font-size: 0.9rem;
+        color: #1e293b;
+        border-bottom: 1px solid #f1f5f9;
     }
-    .premium-table tbody tr:nth-child(even) { background-color: #f9fdfb; }
-    .premium-table tbody tr:hover { background-color: #ecfdf5; transition: background-color 0.15s ease; }
-
-    .stt-pill {
-        background-color: #ecfdf5;
-        color: #065f46;
-        border: 1px solid #a7f3d0;
-        font-weight: 800;
-        font-size: 0.82rem;
-        padding: 4px 10px;
-        border-radius: 8px;
-        display: inline-block;
-    }
-
     .item-thumb {
-        width: 64px;
-        height: 64px;
-        border-radius: 10px;
+        width: 58px;
+        height: 58px;
+        border-radius: 12px;
         object-fit: cover;
-        border: 2px solid #e2e8f0;
-        cursor: zoom-in;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.06);
     }
-    .item-thumb:hover {
-        transform: scale(1.08);
-        box-shadow: 0 4px 12px rgba(5, 150, 105, 0.22);
-        border-color: #10b981;
-    }
-    .item-thumb-empty {
-        width: 64px;
-        height: 64px;
-        border-radius: 10px;
-        border: 1px dashed #cbd5e1;
-        background-color: #f8fafc;
-        display: inline-flex;
+    .no-thumb {
+        width: 58px;
+        height: 58px;
+        border-radius: 12px;
+        border: 1.5px dashed #cbd5e1;
+        background: #f8fafc;
+        display: flex;
         align-items: center;
         justify-content: center;
         color: #94a3b8;
         font-size: 0.72rem;
+        margin: 0 auto;
     }
-
-    .item-title-cell { font-weight: 800; color: #0f172a; font-size: 0.96rem; }
-    .color-subtext { font-size: 0.78rem; color: #64748b; margin-top: 2px; font-weight: 500; }
-
     .cat-pill {
-        background-color: #f1f5f9;
-        color: #334155;
+        background: #f1f5f9;
+        color: #475569;
         border: 1px solid #cbd5e1;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         font-weight: 600;
-        padding: 4px 11px;
-        border-radius: 8px;
+        padding: 4px 10px;
+        border-radius: 999px;
         display: inline-block;
     }
-
     .storage-pill {
-        background-color: #ecfdf5;
+        background: #ecfdf5;
         color: #065f46;
-        border: 1px solid #6ee7b7;
-        font-size: 0.8rem;
-        font-weight: 700;
-        padding: 4px 11px;
-        border-radius: 8px;
-        display: inline-block;
-    }
-    .storage-empty {
-        background-color: #f8fafc;
-        color: #94a3b8;
-        border: 1px dashed #cbd5e1;
+        border: 1px solid #a7f3d0;
         font-size: 0.78rem;
-        padding: 4px 10px;
-        border-radius: 8px;
-        display: inline-block;
-    }
-
-    .status-holding {
-        background-color: #dbeafe;
-        color: #1e40af;
-        border: 1px solid #93c5fd;
         font-weight: 700;
-        font-size: 0.76rem;
-        padding: 4px 11px;
+        padding: 4px 12px;
         border-radius: 999px;
         display: inline-block;
-        white-space: nowrap;
     }
-    .status-returned {
-        background-color: #dcfce7;
-        color: #166534;
-        border: 1px solid #86efac;
-        font-weight: 700;
-        font-size: 0.76rem;
-        padding: 4px 11px;
-        border-radius: 999px;
-        display: inline-block;
-        white-space: nowrap;
-    }
-
-    .btn-mark-return {
-        background: linear-gradient(135deg, #10b981, #059669);
-        color: #ffffff;
-        border: none;
-        font-size: 0.75rem;
-        font-weight: 700;
-        padding: 4px 10px;
-        border-radius: 7px;
-        white-space: nowrap;
-        box-shadow: 0 2px 6px rgba(16, 185, 129, 0.25);
-        transition: all 0.15s ease;
-    }
-    .btn-mark-return:hover { transform: translateY(-1px); color: #ffffff; box-shadow: 0 4px 10px rgba(16, 185, 129, 0.35); }
-
-    .btn-row-edit {
-        background-color: #ffffff;
-        color: #334155;
-        border: 1px solid #cbd5e1;
-        font-size: 0.78rem;
-        font-weight: 600;
-        padding: 5px 10px;
-        border-radius: 8px;
-        white-space: nowrap;
-    }
-    .btn-row-edit:hover { background-color: #f1f5f9; color: #0f172a; }
-
-    .btn-row-del {
-        background-color: #fef2f2;
-        color: #dc2626;
-        border: 1px solid #fecaca;
-        font-size: 0.78rem;
-        font-weight: 600;
-        padding: 5px 9px;
-        border-radius: 8px;
-        white-space: nowrap;
-    }
-    .btn-row-del:hover { background-color: #ef4444; color: #ffffff; }
-
-    .gallery-strip-thumb {
-        width: 52px;
-        height: 52px;
-        object-fit: cover;
-        border-radius: 6px;
-        cursor: pointer;
-        border: 2px solid transparent;
-        opacity: 0.6;
-        transition: all 0.15s ease;
-    }
-    .gallery-strip-thumb.active {
-        border-color: #10b981;
-        opacity: 1;
-        transform: scale(1.06);
+    .action-group {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        flex-wrap: wrap;
     }
 </style>
 
-<div class="found-list-container">
-    <div class="page-top-bar">
+<div class="list-wrapper">
+    <div class="header-card d-flex flex-wrap align-items-center justify-content-between gap-3">
         <div>
-            <h3>📦 Danh Sách Đồ Nhặt Được</h3>
-            <p>Quản lý vật dụng nhặt được, điểm lưu giữ và xác nhận hoàn trả cho học sinh</p>
+            <h4 class="fw-bold text-dark mb-1">📦 Danh Sách Đồ Nhặt Được</h4>
+            <p class="text-muted small mb-0">Quản lý vật dụng nhặt được, điểm lưu giữ và xác nhận hoàn trả cho học sinh</p>
         </div>
         <div class="d-flex gap-2">
-            <a href="{{ url_for('found') }}" class="btn btn-success fw-bold px-3 py-2 rounded-3 shadow-sm">
-                ➕ Báo Nhặt Đồ Mới
+            <a href="{{ url_for('found') }}" class="btn btn-success fw-bold rounded-pill px-3">
+                + Báo Nhặt Đồ Mới
             </a>
-            <a href="{{ url_for('search') }}" class="btn btn-outline-success fw-bold px-3 py-2 rounded-3">
+            <a href="{{ url_for('search') }}" class="btn btn-outline-secondary fw-semibold rounded-pill px-3">
                 🔍 Tìm kiếm
             </a>
         </div>
     </div>
 
-    <div class="premium-table-card">
-        <div class="sticky-table-scroll">
-            <table class="table premium-table text-center">
+    <div class="table-card">
+        <div class="table-responsive">
+            <table class="table table-hover mb-0 text-center">
                 <thead>
                     <tr>
-                        <th style="width: 65px;">STT</th>
-                        <th style="width: 90px;">Hình ảnh</th>
-                        <th>Tên đồ vật</th>
-                        <th>Loại đồ</th>
-                        <th>Nơi nhặt</th>
-                        <th style="width: 115px;">Ngày nhặt</th>
-                        <th>Nơi lưu giữ / Liên hệ</th>
-                        <th style="width: 155px;">Trạng thái</th>
-                        <th style="width: 130px;">Thời điểm trả</th>
-                        <th style="width: 135px;">Thao tác</th>
+                        <th>STT</th>
+                        <th>HÌNH ẢNH</th>
+                        <th>TÊN ĐỒ VẬT</th>
+                        <th>LOẠI ĐỒ</th>
+                        <th>NƠI NHẶT</th>
+                        <th>NGÀY NHẶT</th>
+                        <th>NƠI LƯU GIỮ / LIÊN HỆ</th>
+                        <th>TRẠNG THÁI</th>
+                        <th>THỜI ĐIỂM TRẢ</th>
+                        <th>THAO TÁC</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for item in items %}
+                    {% set stt = items|length - loop.index0 %}
                     <tr>
-                        <td><span class="stt-pill">{{ items|length - loop.index0 }}</span></td>
                         <td>
+                            <span class="badge bg-light text-dark border rounded-pill px-2 py-1">{{ stt }}</span>
+                        </td>
+                        <td>
+                            {% set ns = namespace(first_img='') %}
                             {% if item.hinh_anh %}
-                                {% set ns = namespace(urls=[]) %}
                                 {% for raw in item.hinh_anh.split(',') %}
                                     {% set clean = raw.strip() %}
-                                    {% if clean %}
-                                        {% set full_url = clean if clean.startswith('http') else url_for('uploaded_file', filename=clean) %}
-                                        {% set ns.urls = ns.urls + [full_url] %}
+                                    {% if clean and not ns.first_img %}
+                                        {% set ns.first_img = clean if clean.startswith('http') else url_for('uploaded_file', filename=clean) %}
                                     {% endif %}
                                 {% endfor %}
-
-                                {% if ns.urls %}
-                                    <div class="position-relative d-inline-block">
-                                        <img src="{{ ns.urls[0] }}"
-                                             class="item-thumb"
-                                             data-gallery="{{ ns.urls | join('|') }}"
-                                             onclick="openGalleryModal(this)"
-                                             title="Bấm để xem phóng to ({{ ns.urls|length }} ảnh)"
-                                             onerror="this.onerror=null; this.parentElement.outerHTML='<div class=\'item-thumb-empty\'>Chưa có ảnh</div>';">
-                                        {% if ns.urls|length > 1 %}
-                                            <span class="badge bg-dark position-absolute bottom-0 end-0 shadow-sm" style="font-size: 0.65rem; pointer-events: none;">+{{ ns.urls|length - 1 }}</span>
-                                        {% endif %}
-                                    </div>
-                                {% else %}
-                                    <div class="item-thumb-empty">Chưa có ảnh</div>
-                                {% endif %}
+                            {% endif %}
+                            {% if ns.first_img %}
+                                <img src="{{ ns.first_img }}" alt="{{ item.ten_do }}" class="item-thumb">
                             {% else %}
-                                <div class="item-thumb-empty">Chưa có ảnh</div>
+                                <div class="no-thumb">Không ảnh</div>
+                            {% endif %}
+                        </td>
+                        <td class="text-start">
+                            <div class="fw-bold text-dark">{{ item.ten_do }}</div>
+                            <div class="small text-muted">🎨 Màu: {{ item.mau_sac or 'Chưa rõ' }}</div>
+                            {% if item.mo_ta %}
+                                <div class="small text-secondary mt-1">🔍 <em>{{ item.mo_ta }}</em></div>
                             {% endif %}
                         </td>
                         <td>
-                            <div class="item-title-cell">{{ item.ten_do }}</div>
-                            {% if item.mau_sac and item.mau_sac != 'None' %}
-                                <div class="color-subtext">🎨 Màu: {{ item.mau_sac }}</div>
-                            {% endif %}
+                            <span class="cat-pill">{{ item.loai_do }}</span>
                         </td>
-                        <td><span class="cat-pill">{{ item.loai_do }}</span></td>
-                        <td class="fw-semibold text-dark">
-                            {% set clean_noi_nhat = (item.noi_nhat | replace('Căng tin', 'Căn tin') | replace('căng tin', 'căn tin')) if (item.noi_nhat and item.noi_nhat != 'None') else 'Chưa rõ' %}
-                            📍 {{ clean_noi_nhat }}
+                        <td class="fw-semibold">
+                            📍 {{ item.noi_nhat or 'Chưa rõ' }}
                         </td>
-                        <td class="text-secondary fw-semibold" style="white-space: nowrap;">
+                        <td class="text-nowrap">
                             {{ item.ngay_nhat | vn_date }}
                         </td>
                         <td>
-                            {% if item.noi_luu_giu and item.noi_luu_giu != 'None' %}
-                                {% set clean_noi_gui = item.noi_luu_giu | replace('Căng tin', 'Căn tin') | replace('căng tin', 'căn tin') %}
-                                <span class="storage-pill">📦 {{ clean_noi_gui }}</span>
-                            {% else %}
-                                <span class="storage-empty">Chưa cập nhật</span>
-                            {% endif %}
+                            <span class="storage-pill">🏢 {{ item.noi_luu_giu or 'Chưa cập nhật' }}</span>
                         </td>
                         <td>
                             {% if item.trang_thai == 'DA_TRA' %}
-                                <span class="status-returned">✅ Đã có người nhận</span>
+                                <span class="badge bg-secondary rounded-pill px-3 py-2">✔ Đã hoàn trả</span>
                             {% else %}
                                 <div class="d-flex flex-column align-items-center gap-1">
-                                    <span class="status-holding">📦 Đang lưu giữ</span>
-                                    <button type="button" class="btn btn-mark-return" onclick="confirmReturn('{{ item.id }}', '{{ item.ten_do }}')">
-                                        ✓ Đánh dấu đã trả
+                                    <span class="badge bg-info text-dark rounded-pill px-3">⏳ Đang lưu giữ</span>
+                                    <button type="button"
+                                            class="btn btn-success btn-sm rounded-pill px-2 py-0 fw-semibold"
+                                            style="font-size: 0.75rem;"
+                                            onclick="confirmReturnFound({{ item.id }})">
+                                        ✔ Đánh dấu đã trả
                                     </button>
                                 </div>
                             {% endif %}
                         </td>
-                        <td class="text-secondary small fw-semibold" style="white-space: nowrap;">
+                        <td class="text-nowrap small text-muted">
                             {% if item.thoi_diem_tra %}
-                                {{ item.thoi_diem_tra.strftime("%d-%m-%Y %H:%M") }}
+                                {{ item.thoi_diem_tra.strftime('%H:%M %d-%m-%Y') }}
                             {% else %}
                                 —
                             {% endif %}
                         </td>
                         <td>
-                            <div class="d-flex justify-content-center align-items-center gap-1 flex-nowrap">
-                                <a href="{{ url_for('edit_found', item_id=item.id) }}" class="btn btn-row-edit">
+                            <div class="action-group">
+                                {% if item.trang_thai != 'DA_TRA' %}
+                                    <a href="{{ url_for('match_items', found_id=item.id) }}"
+                                       class="btn btn-sm btn-primary rounded-pill fw-semibold px-2"
+                                       title="Đối sánh AI tìm bài báo mất khớp với món đồ này">
+                                        🔍 Đối sánh
+                                    </a>
+                                {% endif %}
+                                <a href="{{ url_for('edit_found', item_id=item.id) }}"
+                                   class="btn btn-sm btn-outline-secondary rounded-pill px-2"
+                                   title="Chỉnh sửa thông tin">
                                     ✏️ Sửa
                                 </a>
-                                <a href="{{ url_for('delete_found', item_id=item.id) }}" class="btn btn-row-del" title="Xóa" onclick="confirmDeletePIN(event, this.href);">
+                                <button type="button"
+                                        class="btn btn-sm btn-outline-danger rounded-pill px-2"
+                                        onclick="deleteFoundWithPin({{ item.id }})"
+                                        title="Xóa bài đăng">
                                     🗑️
-                                </a>
+                                </button>
                             </div>
                         </td>
                     </tr>
                     {% else %}
                     <tr>
-                        <td colspan="10" class="text-muted py-5">Chưa có dữ liệu đồ nhặt được.</td>
+                        <td colspan="10" class="py-5 text-muted">
+                            Chưa có dữ liệu đồ nhặt được nào.
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -349,198 +224,19 @@ Danh sách đồ nhặt được
     </div>
 </div>
 
-<!-- Modal Nhập PIN Xác Nhận Hoàn Trả -->
-<div class="modal fade" id="pinReturnModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
-        <div class="modal-content border-0 shadow">
-            <div class="modal-header bg-success text-white">
-                <h5 class="modal-title fw-bold">🔑 Xác nhận hoàn trả đồ vật</h5>
-                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-            </div>
-            <div class="modal-body text-center p-4">
-                <p>Xác nhận món đồ: <strong id="returnItemName" class="text-primary"></strong> đã được trao trả lại cho người mất?</p>
-                <div class="mb-2 text-start">
-                    <label class="form-label fw-bold">Nhập Mã PIN Giáo viên:</label>
-                    <input type="password" id="inputReturnPin" class="form-control text-center fs-4" placeholder="••••••" maxlength="10"
-                           onkeydown="if(event.key==='Enter'){ event.preventDefault(); submitReturn(); }">
-                    <div id="returnPinError" class="text-danger small mt-1" style="display: none;">❌ Mã PIN không chính xác!</div>
-                </div>
-            </div>
-            <div class="modal-footer border-0 pt-0">
-                <button type="button" class="btn btn-light" data-bs-dismiss="modal">Hủy</button>
-                <button type="button" class="btn btn-success fw-bold px-4" onclick="submitReturn()">Xác nhận hoàn trả</button>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- MODAL PHÓNG TO & CHUYỂN ĐỔI ĐA GÓC ẢNH -->
-<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered modal-lg">
-        <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
-            <div class="modal-header border-0 pb-0 pt-2 px-3 d-flex align-items-center">
-                <span id="galleryCounterBadge" class="badge bg-success" style="display: none;">Góc ảnh 1 / 3</span>
-                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
-            </div>
-            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 64vh; position: relative; user-select: none;" id="zoomViewport">
-                <button type="button" id="btnPrevPhoto" onclick="stepGallery(-1)"
-                        class="btn btn-dark border-secondary position-absolute start-0 ms-3 rounded-circle shadow"
-                        style="z-index: 20; width: 42px; height: 42px; opacity: 0.85; display: none;">
-                    ❮
-                </button>
-                <img id="zoomModalImage" src="" 
-                     draggable="false"
-                     style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
-                <button type="button" id="btnNextPhoto" onclick="stepGallery(1)"
-                        class="btn btn-dark border-secondary position-absolute end-0 me-3 rounded-circle shadow"
-                        style="z-index: 20; width: 42px; height: 42px; opacity: 0.85; display: none;">
-                    ❯
-                </button>
-            </div>
-            <div id="galleryThumbStrip" class="d-flex justify-content-center gap-2 py-2" style="background-color: rgba(0,0,0,0.7); display: none !important;"></div>
-            <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
-                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Kéo chuột để di chuyển | Bấm ❮ ❯ hoặc phím mũi tên để đổi góc ảnh</small>
-            </div>
-        </div>
-    </div>
-</div>
-
 <script>
-let selectedReturnId = null;
-
-function confirmReturn(id, name) {
-    selectedReturnId = id;
-    document.getElementById("returnItemName").innerText = name;
-    document.getElementById("inputReturnPin").value = "";
-    document.getElementById("returnPinError").style.display = "none";
-    let modal = new bootstrap.Modal(document.getElementById('pinReturnModal'));
-    modal.show();
-    setTimeout(() => document.getElementById("inputReturnPin").focus(), 250);
-}
-
-function submitReturn() {
-    let inputPin = document.getElementById("inputReturnPin").value.trim();
-    const errEl = document.getElementById("returnPinError");
-    if (!inputPin) {
-        errEl.textContent = "❌ Vui lòng nhập Mã PIN!";
-        errEl.style.display = "block";
-        return;
+function confirmReturnFound(itemId) {
+    const pin = prompt("Nhập Mã PIN Giáo viên để xác nhận đã trả đồ:");
+    if (pin !== null && pin.trim() !== "") {
+        window.location.href = `/found-return/${itemId}?pin_code=${encodeURIComponent(pin.trim())}`;
     }
-    fetch('/verify-pin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: inputPin })
-    })
-    .then(response => response.json())
-    .then(data => {
-        if (data.valid) {
-            window.location.href = "/found-return/" + selectedReturnId;
-        } else {
-            errEl.textContent = "❌ Mã PIN không chính xác!";
-            errEl.style.display = "block";
-        }
-    })
-    .catch(() => alert("Lỗi kết nối máy chủ!"));
 }
 
-let scale = 1, pointX = 0, pointY = 0, startX = 0, startY = 0, isDragging = false;
-let currentGallery = [];
-let currentGalleryIdx = 0;
-
-function openGalleryModal(imgTag) {
-    const raw = imgTag.dataset.gallery || imgTag.src;
-    currentGallery = raw.split('|').map(s => s.trim()).filter(Boolean);
-    currentGalleryIdx = 0;
-    buildThumbStrip();
-    renderGallerySlide();
-    bootstrap.Modal.getOrCreateInstance(document.getElementById('imageZoomModal')).show();
-}
-
-function buildThumbStrip() {
-    const strip = document.getElementById('galleryThumbStrip');
-    strip.innerHTML = '';
-    if (currentGallery.length <= 1) {
-        strip.style.setProperty('display', 'none', 'important');
-        return;
+function deleteFoundWithPin(itemId) {
+    const pin = prompt("Nhập Mã PIN Giáo viên để xóa bài đăng này:");
+    if (pin !== null && pin.trim() !== "") {
+        window.location.href = `/delete-found/${itemId}?pin_code=${encodeURIComponent(pin.trim())}`;
     }
-    strip.style.setProperty('display', 'flex', 'important');
-    currentGallery.forEach((url, idx) => {
-        const t = document.createElement('img');
-        t.src = url;
-        t.className = 'gallery-strip-thumb';
-        t.onclick = () => { currentGalleryIdx = idx; renderGallerySlide(); };
-        strip.appendChild(t);
-    });
 }
-
-function stepGallery(delta) {
-    if (currentGallery.length <= 1) return;
-    currentGalleryIdx = (currentGalleryIdx + delta + currentGallery.length) % currentGallery.length;
-    renderGallerySlide();
-}
-
-function renderGallerySlide() {
-    const imgEl = document.getElementById('zoomModalImage');
-    const prevBtn = document.getElementById('btnPrevPhoto');
-    const nextBtn = document.getElementById('btnNextPhoto');
-    const counter = document.getElementById('galleryCounterBadge');
-
-    scale = 1; pointX = 0; pointY = 0; isDragging = false;
-    updateTransform(imgEl);
-    imgEl.src = currentGallery[currentGalleryIdx] || '';
-
-    const hasMulti = currentGallery.length > 1;
-    prevBtn.style.display = hasMulti ? 'inline-block' : 'none';
-    nextBtn.style.display = hasMulti ? 'inline-block' : 'none';
-    counter.style.display = hasMulti ? 'inline-block' : 'none';
-    if (hasMulti) {
-        counter.textContent = `Góc ảnh ${currentGalleryIdx + 1} / ${currentGallery.length}`;
-    }
-    document.querySelectorAll('#galleryThumbStrip .gallery-strip-thumb').forEach((el, idx) => {
-        el.classList.toggle('active', idx === currentGalleryIdx);
-    });
-}
-
-function updateTransform(img) {
-    img.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
-}
-
-document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
-    e.preventDefault();
-    const imgEl = document.getElementById('zoomModalImage');
-    const delta = e.deltaY < 0 ? 0.25 : -0.25;
-    scale = Math.min(Math.max(1, scale + delta), 6);
-    if (scale === 1) { pointX = 0; pointY = 0; }
-    updateTransform(imgEl);
-}, { passive: false });
-
-const imgEl = document.getElementById('zoomModalImage');
-imgEl.addEventListener('mousedown', function(e) {
-    if (e.button !== 0) return;
-    e.preventDefault();
-    isDragging = true;
-    startX = e.clientX - pointX;
-    startY = e.clientY - pointY;
-    imgEl.style.cursor = 'grabbing';
-});
-
-window.addEventListener('mousemove', function(e) {
-    if (!isDragging) return;
-    e.preventDefault();
-    pointX = e.clientX - startX;
-    pointY = e.clientY - startY;
-    updateTransform(imgEl);
-});
-
-window.addEventListener('mouseup', function() {
-    if (isDragging) { isDragging = false; imgEl.style.cursor = 'grab'; }
-});
-
-document.addEventListener('keydown', function(e) {
-    const modalEl = document.getElementById('imageZoomModal');
-    if (!modalEl.classList.contains('show')) return;
-    if (e.key === 'ArrowLeft') stepGallery(-1);
-    if (e.key === 'ArrowRight') stepGallery(1);
-});
 </script>
 {% endblock %}
