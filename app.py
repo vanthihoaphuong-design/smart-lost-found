@@ -1587,10 +1587,11 @@ def found_return(id):
 def match_items(item_id=None):
     """
     Đối sánh v58: Thang 5 tiêu chí chuẩn 100 điểm (50 + 15 + 15 + 10 + 10 = 100).
-    Dấu hiệu nhận dạng riêng hiển thị làm thông tin tham chiếu đối chứng cho Giáo viên.
+    Hỗ trợ lọc riêng theo từng đồ báo mất (item_id) hoặc từng đồ nhặt được (found_id).
     """
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
+    found_id = request.args.get("found_id", type=int)
     instant_score = request.args.get("instant_score", 0, type=int)
     per_page = 10
 
@@ -1600,6 +1601,8 @@ def match_items(item_id=None):
 
         if item_id:
             lost_query = lost_query.filter(LostItem.id == item_id)
+        if found_id:
+            found_query = found_query.filter(FoundItem.id == found_id)
         if cat_filter:
             lost_query = lost_query.filter(LostItem.loai_do == cat_filter)
             found_query = found_query.filter(FoundItem.loai_do == cat_filter)
@@ -1743,7 +1746,6 @@ def match_items(item_id=None):
             if not item["is_same_key"] and vis_same and item["is_same_cat"]:
                 ten_score_final = max(ten_score_final, 12)
 
-            # Tổng đúng bằng tổng 5 tiêu chí (tối đa 50 + 15 + 15 + 10 + 10 = 100)
             total_score = (
                 anh_score
                 + ten_score_final
@@ -1752,7 +1754,6 @@ def match_items(item_id=None):
                 + item["score_date"]
             )
 
-            # Ẩn các cặp ghép chéo khác tên đồ có điểm thấp (< 55) nếu không trùng dấu hiệu riêng
             if not item["is_same_key"] and not item["mark_hints"] and total_score < 55:
                 continue
 
@@ -1799,7 +1800,9 @@ def match_items(item_id=None):
             total_combinations=total_combinations,
             filtered_out=filtered_out,
             instant_score=instant_score,
-            selected_category=cat_filter
+            selected_category=cat_filter,
+            item_id=item_id,
+            found_id=found_id
         )
     except Exception as route_err:
         print(f"Lỗi route /match: {route_err}")
@@ -1813,7 +1816,9 @@ def match_items(item_id=None):
             total_combinations=0,
             filtered_out=0,
             instant_score=0,
-            selected_category=cat_filter
+            selected_category=cat_filter,
+            item_id=item_id,
+            found_id=found_id
         )
 
 
