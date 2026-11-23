@@ -120,6 +120,14 @@ try:
 except Exception as e:
     print(f"Lỗi Import Models: {e}")
 
+
+# Bảng lưu cấu hình hệ thống bền vững trong Database (giữ nguyên Mã PIN khi Render restart)
+class SystemConfig(db.Model):
+    __tablename__ = "system_config"
+    key = db.Column(db.String(64), primary_key=True)
+    value = db.Column(db.String(255), nullable=False)
+
+
 with app.app_context():
     try:
         db.create_all()
@@ -141,7 +149,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_VERSION = 55
+CACHE_VERSION = 56
 CACHE_FILE = f"feature_cache_mobilenet_v{CACHE_VERSION}.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 400
@@ -234,12 +242,6 @@ def _get_mobilenet_session():
 
 
 def _extract_mobilenet_embedding(pil_img):
-    """
-    Trả về:
-    - emb: vector đặc trưng L2-norm 1000 chiều
-    - top_ids: danh sách Top-8 chỉ số lớp hình ảnh (0..999) để nhận diện cùng loại đồ vật
-               mà không cần biết tên tiếng Anh hay tiếng Việt.
-    """
     sess = _get_mobilenet_session()
     if sess is None:
         return None, []
@@ -261,10 +263,8 @@ def _extract_mobilenet_embedding(pil_img):
         input_name = sess.get_inputs()[0].name
         logits = sess.run(None, {input_name: arr})[0].flatten().astype(np.float32)
 
-        # Top-8 class IDs có phản ứng mạnh nhất trên MobileNetV2
         top_ids = [int(i) for i in np.argsort(logits)[-8:][::-1]]
 
-        # Softmax nhẹ + L2-norm để giảm nhiễu logit âm
         shifted = logits - float(np.max(logits))
         probs = np.exp(shifted * 0.5)
         norm = float(np.linalg.norm(probs))
@@ -276,7 +276,6 @@ def _extract_mobilenet_embedding(pil_img):
         return None, []
 
 
-# Từ nối / từ chung chung (đã bỏ dấu) để tách phần ý nghĩa cốt lõi của tên đồ vật
 STOP_WORDS_NO_ACCENT = {
     "con", "cai", "chiec", "hop", "bo", "cap", "doi", "qua", "trai",
     "tam", "buc", "to", "cuc", "quyen", "cuon", "cay", "ve", "mau",
@@ -356,7 +355,6 @@ def clean_note_text(note):
 
 
 def extract_colors(text):
-    """Tự động nhận diện màu sắc bất kể người dùng gõ có dấu hay không dấu."""
     if not text:
         return set()
     t = strip_accents(text)
@@ -766,7 +764,6 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, c
     if f1 is None or f2 is None:
         return 0, 0.0, False
 
-    # 1. Điểm màu sắc chủ đạo vật thể (0–18 điểm)
     h1 = f1.get("fg_color_hist", [])
     h2 = f2.get("fg_color_hist", [])
     color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
@@ -774,7 +771,6 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, c
     color_blend = 0.50 * color_inter + 0.50 * color_cos
     color_pts = max(2, min(18, int(round(((color_blend - 0.15) / 0.45) * 18))))
 
-    # 2. Điểm đặc trưng sâu MobileNetV2 + độ trùng nhóm lớp thị giác (0–32 điểm)
     e1 = f1.get("mobilenet_emb")
     e2 = f2.get("mobilenet_emb")
     e2_flip = f2.get("mobilenet_flip")
@@ -803,7 +799,6 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, c
 
     total = max(8, min(49, total))
 
-    # Chặn trần điểm ảnh nếu khác tên đồ VÀ không cùng nhóm lớp thị giác MobileNetV2
     if not is_same_keyword and not visually_same_object:
         cap = 26 if is_same_cat else 18
         if total > cap:
@@ -851,7 +846,6 @@ def image_score(
 
 
 def _tokenize_meaningful_words(text_name):
-    """Tách từ ý nghĩa sau khi đã bỏ dấu tiếng Việt tự động."""
     if not text_name:
         return set()
     t = re.sub(r'[^\w\s]', ' ', strip_accents(text_name))
@@ -863,7 +857,6 @@ def _tokenize_meaningful_words(text_name):
 
 
 def get_core_keyword(text_name):
-    """Chuẩn hóa từ khóa không phụ thuộc dấu tiếng Việt (có dấu hay không dấu đều ra chung 1 khóa)."""
     if not text_name:
         return ""
     t = strip_accents(text_name)
@@ -880,7 +873,6 @@ def get_core_keyword(text_name):
 
 
 def similarity(text1, text2):
-    """So khớp tên đồ vật không phụ thuộc có dấu hay không dấu tiếng Việt."""
     if not text1 or not text2:
         return 0.0
     t1, t2 = strip_accents(text1), strip_accents(text2)
@@ -940,7 +932,6 @@ def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None
     vis1 = set(visual_colors1) if visual_colors1 else set()
     vis2 = set(visual_colors2) if visual_colors2 else set()
 
-    # 1. Một bên ghi "nhiều màu" / "nhieu mau" và bên kia liệt kê nhiều màu (vd: "trang do vang xanh")
     if is_multi1 or is_multi2:
         if is_multi1 and is_multi2:
             return 15, False
@@ -950,13 +941,11 @@ def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None
             return 15, False
         return (11 if is_same_key else 4), False
 
-    # 2. Cả hai đều khai báo màu cụ thể (có dấu hoặc không dấu đều tự quy về chuẩn)
     if text_colors1 and text_colors2:
         if text_colors1.intersection(text_colors2):
             return 15, False
         return 0, True
 
-    # 3. Một bên có màu chữ, bên kia bỏ trống -> đối chiếu màu chữ với màu quét từ ảnh
     if text_colors1 and not text_colors2:
         if vis2 and text_colors1.intersection(vis2):
             return (14 if is_same_key else 8), False
@@ -967,7 +956,6 @@ def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None
             return (14 if is_same_key else 8), False
         return (10 if is_same_key else 4), False
 
-    # 4. Cả hai đều không có màu chữ -> đối chiếu màu quét từ ảnh
     if vis1 and vis2:
         if vis1.intersection(vis2):
             return (13 if is_same_key else 7), False
@@ -1032,7 +1020,21 @@ def date_score(date1, date2):
     return 0
 
 
+# ==============================================================================
+# QUẢN LÝ MÃ PIN BỀN VỮNG TRONG DATABASE + CONFIG FILE + ENV
+# ==============================================================================
 def get_current_pin():
+    try:
+        cfg = db.session.get(SystemConfig, "admin_pin")
+        if cfg and cfg.value:
+            return str(cfg.value).strip()
+    except Exception:
+        db.session.rollback()
+
+    env_pin = os.environ.get("ADMIN_PIN", "").strip()
+    if env_pin:
+        return env_pin
+
     try:
         with open("config.json", "r", encoding="utf-8") as f:
             data = json.load(f)
@@ -1042,6 +1044,20 @@ def get_current_pin():
 
 
 def save_new_pin(new_pin):
+    pin_str = str(new_pin).strip()
+    saved_db = False
+    try:
+        cfg = db.session.get(SystemConfig, "admin_pin")
+        if cfg:
+            cfg.value = pin_str
+        else:
+            db.session.add(SystemConfig(key="admin_pin", value=pin_str))
+        db.session.commit()
+        saved_db = True
+    except Exception as e:
+        db.session.rollback()
+        print(f"Lỗi lưu PIN vào DB: {e}")
+
     try:
         config_data = {}
         try:
@@ -1049,14 +1065,76 @@ def save_new_pin(new_pin):
                 config_data = json.load(f)
         except Exception:
             config_data = {}
-
-        config_data["admin_pin"] = str(new_pin)
-
+        config_data["admin_pin"] = pin_str
         with open("config.json", "w", encoding="utf-8") as f:
             json.dump(config_data, f, ensure_ascii=False, indent=4)
         return True
     except Exception:
-        return False
+        return saved_db
+
+
+def _score_pair_full(lost, found):
+    """Hàm lõi chấm điểm 1 cặp (LostItem, FoundItem) dùng chung cho /match và gợi ý tức thì."""
+    has1 = check_real_image(lost.hinh_anh)
+    has2 = check_real_image(found.hinh_anh)
+
+    key1 = get_core_keyword(lost.ten_do)
+    key2 = get_core_keyword(found.ten_do)
+    cat1 = auto_normalize_category(lost.ten_do, lost.loai_do)
+    cat2 = auto_normalize_category(found.ten_do, found.loai_do)
+    is_same_cat = (cat1 != "" and cat1 == cat2)
+    ten_sim = similarity(lost.ten_do, found.ten_do)
+    is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
+
+    if is_same_key:
+        ten_score = 15 if ten_sim >= 0.85 else max(11, int(ten_sim * 15))
+    else:
+        ten_score = int(round(ten_sim * 15))
+
+    v_cols1, v_cols2 = set(), set()
+    if has1 and has2:
+        for u in split_image_list(lost.hinh_anh):
+            f1 = calculate_image_features(u)
+            if f1 and f1.get("visual_colors"):
+                v_cols1.update(f1.get("visual_colors"))
+        for u in split_image_list(found.hinh_anh):
+            f2 = calculate_image_features(u)
+            if f2 and f2.get("visual_colors"):
+                v_cols2.update(f2.get("visual_colors"))
+
+    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key, v_cols1 or None, v_cols2 or None)
+    vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
+    ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
+    mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
+
+    if has1 and has2:
+        anh_score, image_ratio, best_i1, best_i2, vis_same = image_score(
+            lost.hinh_anh, found.hinh_anh,
+            is_same_keyword=is_same_key,
+            is_same_cat=is_same_cat,
+            color_conflict=color_conflict
+        )
+    else:
+        anh_score, image_ratio, best_i1, best_i2, vis_same = 0, 0.0, 0, 0, False
+
+    if not is_same_key and vis_same and is_same_cat:
+        ten_score = max(ten_score, 12)
+
+    total_score = min(100, ten_score + mau_score + vi_tri_score + ngay_score + anh_score + mark_score)
+    return {
+        "score": total_score,
+        "score_image": anh_score,
+        "score_name": ten_score,
+        "score_color": mau_score,
+        "score_location": vi_tri_score,
+        "score_date": ngay_score,
+        "score_mark": mark_score,
+        "mark_hints": mark_hints,
+        "color_conflict": color_conflict,
+        "image_ratio": image_ratio,
+        "best_lost_idx": best_i1,
+        "best_found_idx": best_i2,
+    }
 
 
 @app.route("/")
@@ -1067,31 +1145,56 @@ def home():
 @app.route("/lost", methods=["GET", "POST"])
 def lost():
     if request.method == "POST":
-        files = request.files.getlist("hinh_anh")
-        filename = upload_multiple_images(files, max_images=3)
-        ten_do = request.form.get("ten_do", "")
+        ten_do = request.form.get("ten_do", "").strip()
         loai_do = auto_normalize_category(ten_do, request.form.get("loai_do", ""))
+        mau_sac = request.form.get("mau_sac", "").strip()
+        noi_mat = normalize_location_text(request.form.get("noi_mat", ""))
+        ngay_mat = request.form.get("ngay_mat", "").strip()
         mo_ta = clean_note_text(request.form.get("mo_ta", ""))
 
+        # Chống bấm gửi trùng 2 lần liên tiếp
+        existing_dup = LostItem.query.filter_by(
+            ten_do=ten_do, noi_mat=noi_mat, ngay_mat=ngay_mat, trang_thai="DANG_TIM"
+        ).order_by(LostItem.id.desc()).first()
+        if existing_dup and strip_accents(existing_dup.mo_ta) == strip_accents(mo_ta):
+            return redirect(url_for("list_items"))
+
+        files = request.files.getlist("hinh_anh")
+        filename = upload_multiple_images(files, max_images=3)
+
+        new_item_id = None
+        best_match_score = 0
         try:
             item = LostItem(
                 ten_do=ten_do,
                 loai_do=loai_do,
-                mau_sac=request.form.get("mau_sac", ""),
-                noi_mat=normalize_location_text(request.form.get("noi_mat", "")),
-                ngay_mat=request.form.get("ngay_mat", ""),
+                mau_sac=mau_sac,
+                noi_mat=noi_mat,
+                ngay_mat=ngay_mat,
                 mo_ta=mo_ta,
                 hinh_anh=filename,
                 trang_thai="DANG_TIM"
             )
             db.session.add(item)
             db.session.commit()
+            new_item_id = item.id
+
+            # Quét nhanh kho đồ nhặt được để gợi ý tức thì nếu có đồ giống >= 65%
+            active_found = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA").order_by(FoundItem.id.desc()).limit(25).all()
+            for f_item in active_found:
+                res = _score_pair_full(item, f_item)
+                if res["score"] > best_match_score:
+                    best_match_score = res["score"]
+            _persist_disk_cache()
         except Exception as db_err:
             print("LOI LUU LOST:", db_err)
             try:
                 db.session.rollback()
             except Exception:
                 pass
+
+        if new_item_id and best_match_score >= 65:
+            return redirect(url_for("match_items", item_id=new_item_id, instant_score=best_match_score))
         return redirect(url_for("list_items"))
     return render_template("lost_form.html")
 
@@ -1099,32 +1202,58 @@ def lost():
 @app.route("/found", methods=["GET", "POST"])
 def found():
     if request.method == "POST":
-        files = request.files.getlist("hinh_anh")
-        filename = upload_multiple_images(files, max_images=3)
-        ten_do = request.form.get("ten_do", "")
+        ten_do = request.form.get("ten_do", "").strip()
         loai_do = auto_normalize_category(ten_do, request.form.get("loai_do", ""))
+        mau_sac = request.form.get("mau_sac", "").strip()
+        noi_nhat = normalize_location_text(request.form.get("noi_nhat", ""))
+        ngay_nhat = request.form.get("ngay_nhat", "").strip()
+        noi_luu_giu = normalize_location_text(request.form.get("noi_luu_giu", ""))
         mo_ta = clean_note_text(request.form.get("mo_ta", ""))
 
+        # Chống bấm gửi trùng 2 lần liên tiếp
+        existing_dup = FoundItem.query.filter_by(
+            ten_do=ten_do, noi_nhat=noi_nhat, ngay_nhat=ngay_nhat, trang_thai="DANG_LUU_GIU"
+        ).order_by(FoundItem.id.desc()).first()
+        if existing_dup and strip_accents(existing_dup.mo_ta) == strip_accents(mo_ta):
+            return redirect(url_for("found_list"))
+
+        files = request.files.getlist("hinh_anh")
+        filename = upload_multiple_images(files, max_images=3)
+
+        matched_lost_id = None
+        best_match_score = 0
         try:
             item = FoundItem(
                 ten_do=ten_do,
                 loai_do=loai_do,
-                mau_sac=request.form.get("mau_sac", ""),
-                noi_nhat=normalize_location_text(request.form.get("noi_nhat", "")),
-                ngay_nhat=request.form.get("ngay_nhat", ""),
-                noi_luu_giu=normalize_location_text(request.form.get("noi_luu_giu", "")),
+                mau_sac=mau_sac,
+                noi_nhat=noi_nhat,
+                ngay_nhat=ngay_nhat,
+                noi_luu_giu=noi_luu_giu,
                 mo_ta=mo_ta,
                 hinh_anh=filename,
                 trang_thai="DANG_LUU_GIU"
             )
             db.session.add(item)
             db.session.commit()
+
+            # Quét nhanh kho đồ báo mất để tìm chủ nhân ngay lập tức nếu khớp >= 65%
+            active_lost = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").order_by(LostItem.id.desc()).limit(25).all()
+            for l_item in active_lost:
+                res = _score_pair_full(l_item, item)
+                if res["score"] > best_match_score:
+                    best_match_score = res["score"]
+                    matched_lost_id = l_item.id
+            _persist_disk_cache()
         except Exception as db_err:
             print("LOI LUU FOUND:", db_err)
             try:
                 db.session.rollback()
             except Exception:
                 pass
+
+        if matched_lost_id and best_match_score >= 65:
+            return redirect(url_for("match_items", item_id=matched_lost_id, instant_score=best_match_score))
         return redirect(url_for("found_list"))
     return render_template("found_form.html")
 
@@ -1420,8 +1549,36 @@ def heatmap():
     return render_template("heatmap.html", data=data)
 
 
-@app.route("/found-return/<int:id>")
+@app.route("/found-return/<int:id>", methods=["GET", "POST"])
 def found_return(id):
+    pin_code = (
+        request.form.get("pin_code", "").strip()
+        if request.method == "POST"
+        else request.args.get("pin_code", "").strip()
+    )
+    current_pin = get_current_pin()
+
+    # Nếu chưa nhập PIN, tự bật hộp thoại yêu cầu PIN Giáo viên
+    if not pin_code:
+        return f"""
+        <script>
+            var p = prompt("Nhập Mã PIN Giáo viên để xác nhận đã trả đồ:");
+            if (p !== null && p.trim() !== "") {{
+                window.location.href = "/found-return/{id}?pin_code=" + encodeURIComponent(p.trim());
+            }} else {{
+                window.history.back();
+            }}
+        </script>
+        """
+
+    if pin_code != current_pin:
+        return """
+        <script>
+            alert("Mã PIN Giáo viên không chính xác! Không thể xác nhận trả đồ.");
+            window.history.back();
+        </script>
+        """
+
     try:
         item = FoundItem.query.get_or_404(id)
         item.trang_thai = "DA_TRA"
@@ -1439,9 +1596,10 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v55: Tự động bỏ dấu tiếng Việt + Nhận diện nhóm lớp hình ảnh MobileNetV2."""
+    """Đối sánh v56: Có dấu/Không dấu + MobileNetV2 ONNX + Thống kê sàng lọc tổ hợp."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
+    instant_score = request.args.get("instant_score", 0, type=int)
     per_page = 10
 
     try:
@@ -1456,6 +1614,7 @@ def match_items(item_id=None):
 
         lost_items = lost_query.order_by(LostItem.id.desc()).all()
         found_items = found_query.order_by(FoundItem.id.desc()).all()
+        total_combinations = len(lost_items) * len(found_items)
 
         for obj in lost_items:
             obj.has_image = check_real_image(obj.hinh_anh)
@@ -1484,7 +1643,6 @@ def match_items(item_id=None):
                     mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
                     both_have_imgs = lost.has_image and found.has_image
 
-                    # Cho phép ghép nếu: trùng tên (có/không dấu) HOẶC trùng dấu hiệu riêng HOẶC cùng danh mục + có ảnh + không lệch màu
                     if not is_same_key and mark_score < 10:
                         if not is_same_cat or not both_have_imgs or color_conflict:
                             continue
@@ -1543,6 +1701,7 @@ def match_items(item_id=None):
             reverse=True
         )
         total_matches = len(candidates)
+        filtered_out = max(0, total_combinations - total_matches)
         total_pages = max(1, (total_matches + per_page - 1) // per_page)
         page = max(1, min(page, total_pages))
 
@@ -1594,7 +1753,6 @@ def match_items(item_id=None):
             else:
                 anh_score, best_i1, best_i2, vis_same = 0, 0, 0, False
 
-            # Nếu học sinh gọi tên khác nhau nhưng MobileNetV2 xác nhận cùng 1 nhóm vật thể -> thưởng thêm điểm tên
             ten_score_final = item["score_name"]
             if not item["is_same_key"] and vis_same and item["is_same_cat"]:
                 ten_score_final = max(ten_score_final, 12)
@@ -1643,6 +1801,9 @@ def match_items(item_id=None):
             page=page,
             total_pages=total_pages,
             total_matches=total_matches,
+            total_combinations=total_combinations,
+            filtered_out=filtered_out,
+            instant_score=instant_score,
             selected_category=cat_filter
         )
     except Exception as route_err:
@@ -1654,6 +1815,9 @@ def match_items(item_id=None):
             page=1,
             total_pages=1,
             total_matches=0,
+            total_combinations=0,
+            filtered_out=0,
+            instant_score=0,
             selected_category=cat_filter
         )
 
@@ -1672,51 +1836,11 @@ def teacher_check(lost_id, found_id):
     has1 = check_real_image(lost.hinh_anh)
     has2 = check_real_image(found.hinh_anh)
 
-    key1 = get_core_keyword(lost.ten_do)
-    key2 = get_core_keyword(found.ten_do)
-    cat1 = auto_normalize_category(lost.ten_do, lost.loai_do)
-    cat2 = auto_normalize_category(found.ten_do, found.loai_do)
-    is_same_cat = (cat1 != "" and cat1 == cat2)
-    ten_sim = similarity(lost.ten_do, found.ten_do)
-    is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
+    res = _score_pair_full(lost, found)
+    _persist_disk_cache()
 
-    if is_same_key:
-        ten_score = 15 if ten_sim >= 0.85 else max(11, int(ten_sim * 15))
-    else:
-        ten_score = int(round(ten_sim * 15))
-
-    v_cols1, v_cols2 = set(), set()
-    if has1 and has2:
-        for u in split_image_list(lost.hinh_anh):
-            f1 = calculate_image_features(u)
-            if f1 and f1.get("visual_colors"):
-                v_cols1.update(f1.get("visual_colors"))
-        for u in split_image_list(found.hinh_anh):
-            f2 = calculate_image_features(u)
-            if f2 and f2.get("visual_colors"):
-                v_cols2.update(f2.get("visual_colors"))
-
-    mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key, v_cols1 or None, v_cols2 or None)
-    vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
-    ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-    mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
-
-    if has1 and has2:
-        anh_score, image_ratio, _, _, vis_same = image_score(
-            lost.hinh_anh, found.hinh_anh,
-            is_same_keyword=is_same_key,
-            is_same_cat=is_same_cat,
-            color_conflict=color_conflict
-        )
-        _persist_disk_cache()
-    else:
-        anh_score, image_ratio, vis_same = 0, 0.0, False
-
-    if not is_same_key and vis_same and is_same_cat:
-        ten_score = max(ten_score, 12)
-
-    base_score = ten_score + mau_score + vi_tri_score + ngay_score + mark_score
-    score = min(100, anh_score + base_score)
+    score = res["score"]
+    base_score = score - res["score_image"]
 
     if score >= 75:
         ket_luan = "🟢 Khả năng trùng khớp cao"
@@ -1728,9 +1852,9 @@ def teacher_check(lost_id, found_id):
         ket_luan = "🔴 Khả năng trùng khớp thấp"
 
     image_warning = None
-    if color_conflict:
+    if res["color_conflict"]:
         image_warning = "⚠️ Hai món đồ có màu sắc trái ngược nhau, giáo viên cần đối chiếu kỹ."
-    elif has1 and has2 and image_ratio < 0.25:
+    elif has1 and has2 and res["image_ratio"] < 0.25:
         image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
     elif not (has1 and has2):
         image_warning = "⚠️ Bài đăng này thiếu hình ảnh minh họa, vui lòng xác minh bằng thông tin mô tả."
@@ -1742,10 +1866,10 @@ def teacher_check(lost_id, found_id):
         found=found,
         score=score,
         base_score=base_score,
-        color_score=mau_score,
-        server_img_score=anh_score,
-        score_mark=mark_score,
-        mark_hints=mark_hints,
+        color_score=res["score_color"],
+        server_img_score=res["score_image"],
+        score_mark=res["score_mark"],
+        mark_hints=res["mark_hints"],
         ket_luan=ket_luan,
         image_warning=image_warning
     )
