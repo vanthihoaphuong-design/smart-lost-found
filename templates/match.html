@@ -18,6 +18,29 @@ Kết quả đối sánh thông minh
         font-size: 1.75rem;
         margin-bottom: 14px;
     }
+    .instant-alert-banner {
+        max-width: 820px;
+        margin: 12px auto;
+        padding: 12px 18px;
+        border-radius: 12px;
+        background: #ecfdf5;
+        border: 1.5px solid #10b981;
+        color: #065f46;
+        font-weight: 600;
+        text-align: center;
+        box-shadow: 0 2px 8px rgba(16, 185, 129, 0.12);
+    }
+    .filter-stats-banner {
+        max-width: 820px;
+        margin: 10px auto 16px auto;
+        padding: 9px 16px;
+        border-radius: 10px;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        color: #475569;
+        font-size: 0.92rem;
+        text-align: center;
+    }
     .filter-select-box {
         max-width: 340px;
         margin: 0 auto;
@@ -330,7 +353,20 @@ Kết quả đối sánh thông minh
 
 <div class="match-wrapper">
     <div class="match-header">
-        <h2>🤖 Kết Quả Đối Sánh Thông Minh</h2>
+        <h2>🦉 Kết Quả Đối Sánh Thông Minh</h2>
+
+        {% if instant_score and instant_score >= 65 %}
+        <div class="instant-alert-banner">
+            🎉 AI vừa đối sánh tức thì và phát hiện món đồ tương đồng lên tới <span style="font-size: 1.15em; color: #047857;">{{ instant_score }}/100</span> điểm!
+        </div>
+        {% endif %}
+
+        {% if total_combinations is defined and total_combinations > 0 %}
+        <div class="filter-stats-banner">
+            🧠 Bộ lọc AI đa tầng đã quét <strong>{{ total_combinations }}</strong> tổ hợp dữ liệu, tự động loại bỏ <strong>{{ filtered_out }}</strong> cặp nhiễu khác loại và giữ lại <strong>{{ total_matches }}</strong> cặp tiềm năng.
+        </div>
+        {% endif %}
+
         <form method="GET" action="{{ url_for('match_items') }}">
             <select name="category" class="form-select filter-select-box" onchange="this.form.submit()">
                 <option value="">-- Tất cả loại đồ vật --</option>
@@ -341,17 +377,6 @@ Kết quả đối sánh thông minh
                 <option value="Khác" {% if selected_category == 'Khác' %}selected{% endif %}>Khác</option>
             </select>
         </form>
-        {% if instant_score and instant_score >= 65 %}
-        <div style="max-width: 820px; margin: 12px auto; padding: 12px 18px; border-radius: 12px; background: #ecfdf5; border: 1.5px solid #10b981; color: #065f46; font-weight: 600; text-align: center; box-shadow: 0 2px 8px rgba(16,185,129,0.12);">
-            🎉 AI vừa đối sánh tức thì và phát hiện món đồ tương đồng lên tới <span style="font-size: 1.15em; color: #047857;">{{ instant_score }}/100</span> điểm!
-        </div>
-        {% endif %}
-        
-        {% if total_combinations is defined and total_combinations > 0 %}
-        <div style="max-width: 820px; margin: 10px auto 18px auto; padding: 9px 16px; border-radius: 10px; background: #f8fafc; border: 1px solid #e2e8f0; color: #475569; font-size: 0.92rem; text-align: center;">
-            🧠 Bộ lọc AI đa tầng đã quét <strong>{{ total_combinations }}</strong> tổ hợp dữ liệu, tự động loại bỏ <strong>{{ filtered_out }}</strong> cặp nhiễu khác loại và giữ lại <strong>{{ total_matches }}</strong> cặp tiềm năng.
-        </div>
-        {% endif %}
     </div>
 
     {% for m in matches %}
@@ -374,24 +399,25 @@ Kết quả đối sánh thông minh
                 {% endif %}
 
                 {% if ns_lost.urls %}
-                    <div class="showcase-box" id="lostBox_{{ card_idx }}" data-urls="{{ ns_lost.urls | join('|') }}" data-idx="0">
+                    {% set init_l = m.best_lost_idx if (m.best_lost_idx is defined and m.best_lost_idx < ns_lost.urls|length) else 0 %}
+                    <div class="showcase-box" id="lostBox_{{ card_idx }}" data-urls="{{ ns_lost.urls | join('|') }}" data-idx="{{ init_l }}">
                         {% if ns_lost.urls|length > 1 %}
                             <button type="button" class="showcase-nav-btn showcase-prev" onclick="shiftCardPhoto('lostBox_{{ card_idx }}', -1)">❮</button>
                         {% endif %}
-                        <img src="{{ ns_lost.urls[0] }}"
+                        <img src="{{ ns_lost.urls[init_l] }}"
                              alt="{{ m.lost.ten_do }}"
                              onclick="openZoomFromCard('lostBox_{{ card_idx }}')"
                              title="Bấm để phóng to">
                         {% if ns_lost.urls|length > 1 %}
                             <button type="button" class="showcase-nav-btn showcase-next" onclick="shiftCardPhoto('lostBox_{{ card_idx }}', 1)">❯</button>
-                            <span class="showcase-counter">1/{{ ns_lost.urls|length }}</span>
+                            <span class="showcase-counter">{{ init_l + 1 }}/{{ ns_lost.urls|length }}</span>
                         {% endif %}
                     </div>
                     <div class="mini-dots-bar" id="lostDots_{{ card_idx }}">
                         {% if ns_lost.urls|length > 1 %}
                             {% for u in ns_lost.urls %}
                                 <img src="{{ u }}"
-                                     class="mini-thumb-btn {% if loop.first %}active{% endif %}"
+                                     class="mini-thumb-btn {% if loop.index0 == init_l %}active{% endif %}"
                                      onclick="setCardPhoto('lostBox_{{ card_idx }}', {{ loop.index0 }})">
                             {% endfor %}
                         {% endif %}
@@ -434,24 +460,25 @@ Kết quả đối sánh thông minh
                 {% endif %}
 
                 {% if ns_found.urls %}
-                    <div class="showcase-box" id="foundBox_{{ card_idx }}" data-urls="{{ ns_found.urls | join('|') }}" data-idx="0">
+                    {% set init_f = m.best_found_idx if (m.best_found_idx is defined and m.best_found_idx < ns_found.urls|length) else 0 %}
+                    <div class="showcase-box" id="foundBox_{{ card_idx }}" data-urls="{{ ns_found.urls | join('|') }}" data-idx="{{ init_f }}">
                         {% if ns_found.urls|length > 1 %}
                             <button type="button" class="showcase-nav-btn showcase-prev" onclick="shiftCardPhoto('foundBox_{{ card_idx }}', -1)">❮</button>
                         {% endif %}
-                        <img src="{{ ns_found.urls[0] }}"
+                        <img src="{{ ns_found.urls[init_f] }}"
                              alt="{{ m.found.ten_do }}"
                              onclick="openZoomFromCard('foundBox_{{ card_idx }}')"
                              title="Bấm để phóng to">
                         {% if ns_found.urls|length > 1 %}
                             <button type="button" class="showcase-nav-btn showcase-next" onclick="shiftCardPhoto('foundBox_{{ card_idx }}', 1)">❯</button>
-                            <span class="showcase-counter">1/{{ ns_found.urls|length }}</span>
+                            <span class="showcase-counter">{{ init_f + 1 }}/{{ ns_found.urls|length }}</span>
                         {% endif %}
                     </div>
                     <div class="mini-dots-bar" id="foundDots_{{ card_idx }}">
                         {% if ns_found.urls|length > 1 %}
                             {% for u in ns_found.urls %}
                                 <img src="{{ u }}"
-                                     class="mini-thumb-btn {% if loop.first %}active{% endif %}"
+                                     class="mini-thumb-btn {% if loop.index0 == init_f %}active{% endif %}"
                                      onclick="setCardPhoto('foundBox_{{ card_idx }}', {{ loop.index0 }})">
                             {% endfor %}
                         {% endif %}
