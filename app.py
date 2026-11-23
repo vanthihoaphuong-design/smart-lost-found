@@ -148,7 +148,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_VERSION = 57
+CACHE_VERSION = 58
 CACHE_FILE = f"feature_cache_mobilenet_v{CACHE_VERSION}.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 400
@@ -410,43 +410,33 @@ def _extract_mark_entities(raw_text):
     }
 
 
-def evaluate_distinctive_marks(lost_item, found_item):
-    """Chấm điểm dấu hiệu nhận dạng riêng trên thang chuẩn 0–10 điểm."""
+def analyze_distinctive_marks(lost_item, found_item):
+    """
+    Phân tích và trích xuất các chi tiết đối chứng từ Dấu hiệu nhận dạng riêng
+    để hiển thị cho Giáo viên xác minh (không cộng/trừ vào thang điểm 100).
+    """
     m1 = clean_note_text(getattr(lost_item, "mo_ta", ""))
     m2 = clean_note_text(getattr(found_item, "mo_ta", ""))
     if not m1 or not m2:
-        return 0, []
+        return []
 
     e1 = _extract_mark_entities(m1)
     e2 = _extract_mark_entities(m2)
-
-    pts = 0
     hints = []
 
     common_names = e1["names"].intersection(e2["names"])
     if common_names:
-        pts += 8
         hints.append(f"Trùng tên riêng: {', '.join(sorted(common_names)).title()}")
 
     common_codes = e1["codes"].intersection(e2["codes"])
     if common_codes:
-        pts += 7
         hints.append(f"Trùng mã/lớp: {', '.join(sorted(common_codes)).upper()}")
 
     common_concepts = e1["concepts"].intersection(e2["concepts"])
     if common_concepts:
-        pts += min(6, len(common_concepts) * 4)
         hints.append("Trùng đặc điểm chi tiết")
 
-    common_words = e1["words"].intersection(e2["words"])
-    if common_words:
-        pts += min(4, len(common_words) * 2)
-
-    seq = SequenceMatcher(None, strip_accents(m1), strip_accents(m2)).ratio()
-    if seq >= 0.65:
-        pts = max(pts, int(round(seq * 10)))
-
-    return min(10, pts), hints
+    return hints
 
 
 def split_image_list(img_field):
@@ -756,9 +746,9 @@ def _cosine_sim(v1, v2):
 
 
 def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, color_conflict=False):
-    """Chấm điểm hình ảnh trên thang chuẩn 0–40 điểm (Màu vật thể 0–14đ + MobileNetV2 0–26đ)."""
+    """Chấm điểm hình ảnh trên thang chuẩn 0–50 điểm (Màu vật thể 0–18đ + MobileNetV2 0–32đ)."""
     if u1 == u2:
-        return 40, 1.0, True
+        return 50, 1.0, True
 
     f1 = calculate_image_features(u1)
     f2 = calculate_image_features(u2)
@@ -770,7 +760,7 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, c
     color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
     color_cos = _cosine_sim(h1, h2) if (h1 and h2) else 0.0
     color_blend = 0.50 * color_inter + 0.50 * color_cos
-    color_pts = max(2, min(14, int(round(((color_blend - 0.15) / 0.45) * 14))))
+    color_pts = max(2, min(18, int(round(((color_blend - 0.15) / 0.45) * 18))))
 
     e1 = f1.get("mobilenet_emb")
     e2 = f2.get("mobilenet_emb")
@@ -784,28 +774,28 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, c
         sim_orig = _cosine_sim(e1, e2)
         sim_flip = _cosine_sim(e1, e2_flip) if e2_flip else sim_orig
         deep_sim = max(sim_orig, sim_flip)
-        deep_pts = max(5, min(26, int(round(((deep_sim - 0.25) / 0.55) * 26))))
+        deep_pts = max(6, min(32, int(round(((deep_sim - 0.25) / 0.55) * 32))))
         if shared_visual_classes >= 3:
-            deep_pts = min(26, deep_pts + 3)
+            deep_pts = min(32, deep_pts + 4)
     else:
         ar1 = float(f1.get("aspect_ratio", 0.7))
         ar2 = float(f2.get("aspect_ratio", 0.7))
         ar_sim = 1.0 - min(1.0, abs(ar1 - ar2))
-        deep_pts = int(round(8 + ar_sim * 13))
+        deep_pts = int(round(10 + ar_sim * 16))
 
     total = color_pts + deep_pts
 
-    if color_conflict and total < 35:
+    if color_conflict and total < 44:
         total = int(round(total * 0.80))
 
-    total = max(6, min(39, total))
+    total = max(8, min(49, total))
 
     if not is_same_keyword and not visually_same_object:
-        cap = 21 if is_same_cat else 14
+        cap = 26 if is_same_cat else 18
         if total > cap:
             total = cap
 
-    return int(total), float(total / 40.0), visually_same_object
+    return int(total), float(total / 50.0), visually_same_object
 
 
 def image_score(
@@ -1076,8 +1066,9 @@ def save_new_pin(new_pin):
 
 def _score_pair_full(lost, found):
     """
-    Hàm lõi chấm điểm 1 cặp (LostItem, FoundItem) theo 6 tiêu chí chuẩn 100 điểm:
-    Hình ảnh (40) + Tên đồ (15) + Màu sắc (15) + Vị trí (10) + Thời gian (10) + Dấu hiệu riêng (10) = 100.
+    Hàm lõi chấm điểm 1 cặp (LostItem, FoundItem) theo 5 tiêu chí chuẩn 100 điểm:
+    Hình ảnh (50) + Tên đồ (15) + Màu sắc (15) + Vị trí (10) + Thời gian (10) = 100.
+    Dấu hiệu riêng được trích xuất làm thông tin đối chứng cho Giáo viên.
     """
     has1 = check_real_image(lost.hinh_anh)
     has2 = check_real_image(found.hinh_anh)
@@ -1109,7 +1100,7 @@ def _score_pair_full(lost, found):
     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key, v_cols1 or None, v_cols2 or None)
     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-    mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
+    mark_hints = analyze_distinctive_marks(lost, found)
 
     if has1 and has2:
         anh_score, image_ratio, best_i1, best_i2, vis_same = image_score(
@@ -1124,7 +1115,7 @@ def _score_pair_full(lost, found):
     if not is_same_key and vis_same and is_same_cat:
         ten_score = max(ten_score, 12)
 
-    total_score = ten_score + mau_score + vi_tri_score + ngay_score + anh_score + mark_score
+    total_score = ten_score + mau_score + vi_tri_score + ngay_score + anh_score
     return {
         "score": total_score,
         "score_image": anh_score,
@@ -1132,7 +1123,6 @@ def _score_pair_full(lost, found):
         "score_color": mau_score,
         "score_location": vi_tri_score,
         "score_date": ngay_score,
-        "score_mark": mark_score,
         "mark_hints": mark_hints,
         "color_conflict": color_conflict,
         "image_ratio": image_ratio,
@@ -1595,7 +1585,10 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v57: Thang 6 tiêu chí tròn 100 điểm (40 + 15 + 15 + 10 + 10 + 10 = 100)."""
+    """
+    Đối sánh v58: Thang 5 tiêu chí chuẩn 100 điểm (50 + 15 + 15 + 10 + 10 = 100).
+    Dấu hiệu nhận dạng riêng hiển thị làm thông tin tham chiếu đối chứng cho Giáo viên.
+    """
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     instant_score = request.args.get("instant_score", 0, type=int)
@@ -1639,10 +1632,10 @@ def match_items(item_id=None):
                     is_same_cat = (cat1 != "" and cat1 == cat2)
 
                     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
-                    mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
+                    mark_hints = analyze_distinctive_marks(lost, found)
                     both_have_imgs = lost.has_image and found.has_image
 
-                    if not is_same_key and mark_score < 7:
+                    if not is_same_key and not mark_hints:
                         if not is_same_cat or not both_have_imgs or color_conflict:
                             continue
 
@@ -1667,11 +1660,12 @@ def match_items(item_id=None):
 
                     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
-                    base_score = ten_score + mau_score + vi_tri_score + ngay_score + mark_score
+                    base_score = ten_score + mau_score + vi_tri_score + ngay_score
 
                     has_both_images = 1 if both_have_imgs else 0
                     non_conflict = 0 if color_conflict else 1
                     same_key_flag = 1 if is_same_key else 0
+                    has_mark_hint = 1 if mark_hints else 0
 
                     sequence += 1
                     candidates.append({
@@ -1679,6 +1673,7 @@ def match_items(item_id=None):
                         "found": found,
                         "base_score": base_score,
                         "same_key_flag": same_key_flag,
+                        "has_mark_hint": has_mark_hint,
                         "has_both_images": has_both_images,
                         "non_conflict": non_conflict,
                         "is_same_key": is_same_key,
@@ -1688,7 +1683,6 @@ def match_items(item_id=None):
                         "score_color": mau_score,
                         "score_location": vi_tri_score,
                         "score_date": ngay_score,
-                        "score_mark": mark_score,
                         "mark_hints": mark_hints,
                         "seq": sequence
                     })
@@ -1696,19 +1690,12 @@ def match_items(item_id=None):
                     continue
 
         candidates.sort(
-            key=lambda x: (x["same_key_flag"], x["non_conflict"], x["score_mark"], x["has_both_images"], x["base_score"], x["seq"]),
+            key=lambda x: (x["same_key_flag"], x["non_conflict"], x["has_mark_hint"], x["has_both_images"], x["base_score"], x["seq"]),
             reverse=True
         )
-        total_matches = len(candidates)
-        filtered_out = max(0, total_combinations - total_matches)
-        total_pages = max(1, (total_matches + per_page - 1) // per_page)
-        page = max(1, min(page, total_pages))
-
-        start_idx = (page - 1) * per_page
-        page_candidates = candidates[start_idx:start_idx + per_page]
 
         urls_to_fetch = set()
-        for item in page_candidates:
+        for item in candidates[:30]:
             if item["lost"].has_image and item["found"].has_image:
                 for u in split_image_list(item["lost"].hinh_anh):
                     cached_f = get_feature_cache(u)
@@ -1724,8 +1711,8 @@ def match_items(item_id=None):
                 list(executor.map(calculate_image_features, urls_to_fetch))
             _persist_disk_cache()
 
-        page_matches = []
-        for item in page_candidates:
+        scored_matches = []
+        for item in candidates:
             lost, found = item["lost"], item["found"]
             v_cols1, v_cols2 = set(), set()
             if lost.has_image and found.has_image:
@@ -1756,15 +1743,18 @@ def match_items(item_id=None):
             if not item["is_same_key"] and vis_same and item["is_same_cat"]:
                 ten_score_final = max(ten_score_final, 12)
 
-            # Tổng đúng bằng tổng 6 thành phần (tối đa 40 + 15 + 15 + 10 + 10 + 10 = 100)
+            # Tổng đúng bằng tổng 5 tiêu chí (tối đa 50 + 15 + 15 + 10 + 10 = 100)
             total_score = (
                 anh_score
                 + ten_score_final
                 + mau_score
                 + item["score_location"]
                 + item["score_date"]
-                + item["score_mark"]
             )
+
+            # Ẩn các cặp ghép chéo khác tên đồ có điểm thấp (< 55) nếu không trùng dấu hiệu riêng
+            if not item["is_same_key"] and not item["mark_hints"] and total_score < 55:
+                continue
 
             if total_score >= 75:
                 ket_luan = "🟢 Khả năng trùng khớp cao"
@@ -1775,7 +1765,7 @@ def match_items(item_id=None):
             else:
                 ket_luan = "🔴 Khả năng trùng khớp thấp"
 
-            page_matches.append({
+            scored_matches.append({
                 "lost": lost,
                 "found": found,
                 "score": total_score,
@@ -1785,13 +1775,19 @@ def match_items(item_id=None):
                 "score_color": mau_score,
                 "score_location": item["score_location"],
                 "score_date": item["score_date"],
-                "score_mark": item["score_mark"],
                 "mark_hints": item["mark_hints"],
                 "best_lost_idx": best_i1,
                 "best_found_idx": best_i2,
             })
 
-        page_matches.sort(key=lambda x: x["score"], reverse=True)
+        scored_matches.sort(key=lambda x: x["score"], reverse=True)
+        total_matches = len(scored_matches)
+        filtered_out = max(0, total_combinations - total_matches)
+        total_pages = max(1, (total_matches + per_page - 1) // per_page)
+        page = max(1, min(page, total_pages))
+
+        start_idx = (page - 1) * per_page
+        page_matches = scored_matches[start_idx:start_idx + per_page]
         gc.collect()
 
         return render_template(
@@ -1867,7 +1863,6 @@ def teacher_check(lost_id, found_id):
         base_score=base_score,
         color_score=res["score_color"],
         server_img_score=res["score_image"],
-        score_mark=res["score_mark"],
         mark_hints=res["mark_hints"],
         ket_luan=ket_luan,
         image_warning=image_warning
