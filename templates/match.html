@@ -310,7 +310,7 @@ Kết quả đối sánh thông minh
         border: 1px solid #c7d2fe;
         font-size: 0.76rem;
         font-weight: 700;
-        padding: 4px 10px;
+        padding: 5px 10px;
         border-radius: 8px;
         margin-bottom: 8px;
     }
@@ -505,7 +505,7 @@ Kết quả đối sánh thông minh
                 </div>
             </div>
 
-            <!-- CỘT 3: ĐIỂM PHÙ HỢP AI (THANG 6 TIÊU CHÍ TRÒN 100 ĐIỂM: 40 + 15 + 15 + 10 + 10 + 10) -->
+            <!-- CỘT 3: ĐIỂM PHÙ HỢP AI (THANG 5 TIÊU CHÍ TRÒN 100 ĐIỂM: 50 + 15 + 15 + 10 + 10) -->
             <div class="col-lg-4 col-score text-center">
                 <div class="fw-bold text-primary small text-uppercase" style="letter-spacing: 0.5px;">
                     🎯 ĐIỂM PHÙ HỢP AI
@@ -520,7 +520,7 @@ Kết quả đối sánh thông minh
                 <table class="breakdown-table">
                     <tr>
                         <td>🖼️ Hình ảnh:</td>
-                        <td>{{ m.score_image }}/40</td>
+                        <td>{{ m.score_image }}/50</td>
                     </tr>
                     <tr>
                         <td>📝 Tên đồ:</td>
@@ -538,14 +538,10 @@ Kết quả đối sánh thông minh
                         <td>📅 Thời gian:</td>
                         <td>{{ m.score_date }}/10</td>
                     </tr>
-                    <tr>
-                        <td>🔍 Dấu hiệu riêng:</td>
-                        <td>{{ m.score_mark }}/10</td>
-                    </tr>
                 </table>
 
                 {% if m.mark_hints %}
-                    <div class="mark-hint-badge">✨ {{ m.mark_hints | join(' • ') }}</div>
+                    <div class="mark-hint-badge">✨ Đối chứng dấu hiệu: {{ m.mark_hints | join(' • ') }}</div>
                 {% endif %}
 
                 <div class="fw-bold small mb-3">{{ m.ket_luan }}</div>
