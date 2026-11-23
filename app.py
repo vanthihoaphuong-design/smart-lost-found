@@ -121,7 +121,6 @@ except Exception as e:
     print(f"Lỗi Import Models: {e}")
 
 
-# Bảng lưu cấu hình hệ thống bền vững trong Database (giữ nguyên Mã PIN khi Render restart)
 class SystemConfig(db.Model):
     __tablename__ = "system_config"
     key = db.Column(db.String(64), primary_key=True)
@@ -149,7 +148,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_VERSION = 56
+CACHE_VERSION = 57
 CACHE_FILE = f"feature_cache_mobilenet_v{CACHE_VERSION}.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 400
@@ -190,7 +189,7 @@ HTTP_SESSION.mount("https://", adapter)
 HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
 
 # ==============================================================================
-# MOBILENETV2 ONNX ENGINE (NHẬN DIỆN ĐẶC TRƯNG & NHÓM LỚP VẬT THỂ KHÔNG PHỤ THUỘC NGÔN NGỮ)
+# MOBILENETV2 ONNX ENGINE
 # ==============================================================================
 MOBILENET_MODEL_PATH = os.path.join("ai", "mobilenetv2-12.onnx")
 MOBILENET_URLS = [
@@ -412,6 +411,7 @@ def _extract_mark_entities(raw_text):
 
 
 def evaluate_distinctive_marks(lost_item, found_item):
+    """Chấm điểm dấu hiệu nhận dạng riêng trên thang chuẩn 0–10 điểm."""
     m1 = clean_note_text(getattr(lost_item, "mo_ta", ""))
     m2 = clean_note_text(getattr(found_item, "mo_ta", ""))
     if not m1 or not m2:
@@ -425,28 +425,28 @@ def evaluate_distinctive_marks(lost_item, found_item):
 
     common_names = e1["names"].intersection(e2["names"])
     if common_names:
-        pts += 12
+        pts += 8
         hints.append(f"Trùng tên riêng: {', '.join(sorted(common_names)).title()}")
 
     common_codes = e1["codes"].intersection(e2["codes"])
     if common_codes:
-        pts += 10
+        pts += 7
         hints.append(f"Trùng mã/lớp: {', '.join(sorted(common_codes)).upper()}")
 
     common_concepts = e1["concepts"].intersection(e2["concepts"])
     if common_concepts:
-        pts += min(8, len(common_concepts) * 5)
+        pts += min(6, len(common_concepts) * 4)
         hints.append("Trùng đặc điểm chi tiết")
 
     common_words = e1["words"].intersection(e2["words"])
     if common_words:
-        pts += min(6, len(common_words) * 2)
+        pts += min(4, len(common_words) * 2)
 
     seq = SequenceMatcher(None, strip_accents(m1), strip_accents(m2)).ratio()
     if seq >= 0.65:
-        pts = max(pts, int(round(seq * 15)))
+        pts = max(pts, int(round(seq * 10)))
 
-    return min(15, pts), hints
+    return min(10, pts), hints
 
 
 def split_image_list(img_field):
@@ -756,8 +756,9 @@ def _cosine_sim(v1, v2):
 
 
 def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, color_conflict=False):
+    """Chấm điểm hình ảnh trên thang chuẩn 0–40 điểm (Màu vật thể 0–14đ + MobileNetV2 0–26đ)."""
     if u1 == u2:
-        return 50, 1.0, True
+        return 40, 1.0, True
 
     f1 = calculate_image_features(u1)
     f2 = calculate_image_features(u2)
@@ -769,7 +770,7 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, c
     color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
     color_cos = _cosine_sim(h1, h2) if (h1 and h2) else 0.0
     color_blend = 0.50 * color_inter + 0.50 * color_cos
-    color_pts = max(2, min(18, int(round(((color_blend - 0.15) / 0.45) * 18))))
+    color_pts = max(2, min(14, int(round(((color_blend - 0.15) / 0.45) * 14))))
 
     e1 = f1.get("mobilenet_emb")
     e2 = f2.get("mobilenet_emb")
@@ -783,28 +784,28 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, c
         sim_orig = _cosine_sim(e1, e2)
         sim_flip = _cosine_sim(e1, e2_flip) if e2_flip else sim_orig
         deep_sim = max(sim_orig, sim_flip)
-        deep_pts = max(6, min(32, int(round(((deep_sim - 0.25) / 0.55) * 32))))
+        deep_pts = max(5, min(26, int(round(((deep_sim - 0.25) / 0.55) * 26))))
         if shared_visual_classes >= 3:
-            deep_pts = min(32, deep_pts + 4)
+            deep_pts = min(26, deep_pts + 3)
     else:
         ar1 = float(f1.get("aspect_ratio", 0.7))
         ar2 = float(f2.get("aspect_ratio", 0.7))
         ar_sim = 1.0 - min(1.0, abs(ar1 - ar2))
-        deep_pts = int(round(10 + ar_sim * 16))
+        deep_pts = int(round(8 + ar_sim * 13))
 
     total = color_pts + deep_pts
 
-    if color_conflict and total < 44:
+    if color_conflict and total < 35:
         total = int(round(total * 0.80))
 
-    total = max(8, min(49, total))
+    total = max(6, min(39, total))
 
     if not is_same_keyword and not visually_same_object:
-        cap = 26 if is_same_cat else 18
+        cap = 21 if is_same_cat else 14
         if total > cap:
             total = cap
 
-    return int(total), float(total / 50.0), visually_same_object
+    return int(total), float(total / 40.0), visually_same_object
 
 
 def image_score(
@@ -1021,7 +1022,7 @@ def date_score(date1, date2):
 
 
 # ==============================================================================
-# QUẢN LÝ MÃ PIN BỀN VỮNG TRONG DATABASE + CONFIG FILE + ENV
+# QUẢN LÝ MÃ PIN BỀN VỮNG TRONG DATABASE (NEON POSTGRESQL) + CONFIG FILE + ENV
 # ==============================================================================
 def get_current_pin():
     try:
@@ -1074,7 +1075,10 @@ def save_new_pin(new_pin):
 
 
 def _score_pair_full(lost, found):
-    """Hàm lõi chấm điểm 1 cặp (LostItem, FoundItem) dùng chung cho /match và gợi ý tức thì."""
+    """
+    Hàm lõi chấm điểm 1 cặp (LostItem, FoundItem) theo 6 tiêu chí chuẩn 100 điểm:
+    Hình ảnh (40) + Tên đồ (15) + Màu sắc (15) + Vị trí (10) + Thời gian (10) + Dấu hiệu riêng (10) = 100.
+    """
     has1 = check_real_image(lost.hinh_anh)
     has2 = check_real_image(found.hinh_anh)
 
@@ -1120,7 +1124,7 @@ def _score_pair_full(lost, found):
     if not is_same_key and vis_same and is_same_cat:
         ten_score = max(ten_score, 12)
 
-    total_score = min(100, ten_score + mau_score + vi_tri_score + ngay_score + anh_score + mark_score)
+    total_score = ten_score + mau_score + vi_tri_score + ngay_score + anh_score + mark_score
     return {
         "score": total_score,
         "score_image": anh_score,
@@ -1152,7 +1156,6 @@ def lost():
         ngay_mat = request.form.get("ngay_mat", "").strip()
         mo_ta = clean_note_text(request.form.get("mo_ta", ""))
 
-        # Chống bấm gửi trùng 2 lần liên tiếp
         existing_dup = LostItem.query.filter_by(
             ten_do=ten_do, noi_mat=noi_mat, ngay_mat=ngay_mat, trang_thai="DANG_TIM"
         ).order_by(LostItem.id.desc()).first()
@@ -1179,7 +1182,6 @@ def lost():
             db.session.commit()
             new_item_id = item.id
 
-            # Quét nhanh kho đồ nhặt được để gợi ý tức thì nếu có đồ giống >= 65%
             active_found = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA").order_by(FoundItem.id.desc()).limit(25).all()
             for f_item in active_found:
                 res = _score_pair_full(item, f_item)
@@ -1210,7 +1212,6 @@ def found():
         noi_luu_giu = normalize_location_text(request.form.get("noi_luu_giu", ""))
         mo_ta = clean_note_text(request.form.get("mo_ta", ""))
 
-        # Chống bấm gửi trùng 2 lần liên tiếp
         existing_dup = FoundItem.query.filter_by(
             ten_do=ten_do, noi_nhat=noi_nhat, ngay_nhat=ngay_nhat, trang_thai="DANG_LUU_GIU"
         ).order_by(FoundItem.id.desc()).first()
@@ -1237,7 +1238,6 @@ def found():
             db.session.add(item)
             db.session.commit()
 
-            # Quét nhanh kho đồ báo mất để tìm chủ nhân ngay lập tức nếu khớp >= 65%
             active_lost = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").order_by(LostItem.id.desc()).limit(25).all()
             for l_item in active_lost:
                 res = _score_pair_full(l_item, item)
@@ -1558,7 +1558,6 @@ def found_return(id):
     )
     current_pin = get_current_pin()
 
-    # Nếu chưa nhập PIN, tự bật hộp thoại yêu cầu PIN Giáo viên
     if not pin_code:
         return f"""
         <script>
@@ -1596,7 +1595,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v56: Có dấu/Không dấu + MobileNetV2 ONNX + Thống kê sàng lọc tổ hợp."""
+    """Đối sánh v57: Thang 6 tiêu chí tròn 100 điểm (40 + 15 + 15 + 10 + 10 + 10 = 100)."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     instant_score = request.args.get("instant_score", 0, type=int)
@@ -1643,7 +1642,7 @@ def match_items(item_id=None):
                     mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
                     both_have_imgs = lost.has_image and found.has_image
 
-                    if not is_same_key and mark_score < 10:
+                    if not is_same_key and mark_score < 7:
                         if not is_same_cat or not both_have_imgs or color_conflict:
                             continue
 
@@ -1757,15 +1756,15 @@ def match_items(item_id=None):
             if not item["is_same_key"] and vis_same and item["is_same_cat"]:
                 ten_score_final = max(ten_score_final, 12)
 
-            raw_total = (
-                ten_score_final
+            # Tổng đúng bằng tổng 6 thành phần (tối đa 40 + 15 + 15 + 10 + 10 + 10 = 100)
+            total_score = (
+                anh_score
+                + ten_score_final
                 + mau_score
                 + item["score_location"]
                 + item["score_date"]
-                + anh_score
                 + item["score_mark"]
             )
-            total_score = min(100, raw_total)
 
             if total_score >= 75:
                 ket_luan = "🟢 Khả năng trùng khớp cao"
