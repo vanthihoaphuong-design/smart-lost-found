@@ -505,7 +505,7 @@ Kết quả đối sánh thông minh
                 </div>
             </div>
 
-            <!-- CỘT 3: ĐIỂM PHÙ HỢP AI -->
+            <!-- CỘT 3: ĐIỂM PHÙ HỢP AI (THANG 6 TIÊU CHÍ TRÒN 100 ĐIỂM: 40 + 15 + 15 + 10 + 10 + 10) -->
             <div class="col-lg-4 col-score text-center">
                 <div class="fw-bold text-primary small text-uppercase" style="letter-spacing: 0.5px;">
                     🎯 ĐIỂM PHÙ HỢP AI
@@ -520,7 +520,7 @@ Kết quả đối sánh thông minh
                 <table class="breakdown-table">
                     <tr>
                         <td>🖼️ Hình ảnh:</td>
-                        <td>{{ m.score_image }}/50</td>
+                        <td>{{ m.score_image }}/40</td>
                     </tr>
                     <tr>
                         <td>📝 Tên đồ:</td>
@@ -538,12 +538,10 @@ Kết quả đối sánh thông minh
                         <td>📅 Thời gian:</td>
                         <td>{{ m.score_date }}/10</td>
                     </tr>
-                    {% if m.score_mark > 0 %}
                     <tr>
-                        <td class="text-primary fw-bold">🔍 Dấu hiệu riêng:</td>
-                        <td class="text-primary">+{{ m.score_mark }}</td>
+                        <td>🔍 Dấu hiệu riêng:</td>
+                        <td>{{ m.score_mark }}/10</td>
                     </tr>
-                    {% endif %}
                 </table>
 
                 {% if m.mark_hints %}
