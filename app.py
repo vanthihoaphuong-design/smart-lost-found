@@ -7,6 +7,7 @@ import gc
 import math
 import colorsys
 import threading
+import unicodedata
 import urllib3
 from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
@@ -58,6 +59,17 @@ if cloud_name and api_key and api_secret:
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "smart_lost_found_secret_key_123")
+
+
+def strip_accents(text_val):
+    """Chuyển tiếng Việt có dấu sang không dấu viết thường (đ -> d, ă -> a...)."""
+    if not text_val:
+        return ""
+    s = str(text_val).strip().lower()
+    s = s.replace("đ", "d").replace("Đ", "d")
+    s = unicodedata.normalize("NFD", s)
+    s = "".join(ch for ch in s if unicodedata.category(ch) != "Mn")
+    return re.sub(r"\s+", " ", s).strip()
 
 
 @app.template_filter("vn_date")
@@ -129,7 +141,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_VERSION = 52
+CACHE_VERSION = 55
 CACHE_FILE = f"feature_cache_mobilenet_v{CACHE_VERSION}.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 400
@@ -170,7 +182,7 @@ HTTP_SESSION.mount("https://", adapter)
 HTTP_SESSION.headers.update({"User-Agent": "SmartLostFound/1.0"})
 
 # ==============================================================================
-# MOBILENETV2 ONNX ENGINE (SIÊU NHẸ RAM ~3.5MB MODEL, CHẠY ĐƯỢC TRÊN RENDER)
+# MOBILENETV2 ONNX ENGINE (NHẬN DIỆN ĐẶC TRƯNG & NHÓM LỚP VẬT THỂ KHÔNG PHỤ THUỘC NGÔN NGỮ)
 # ==============================================================================
 MOBILENET_MODEL_PATH = os.path.join("ai", "mobilenetv2-12.onnx")
 MOBILENET_URLS = [
@@ -182,7 +194,6 @@ _ORT_LOCK = threading.Lock()
 
 
 def _get_mobilenet_session():
-    """Nạp mô hình MobileNetV2 ONNX (tự động tải 1 lần duy nhất nếu chưa có trên đĩa)."""
     global _ORT_SESSION
     if not (HAS_ONNX and HAS_NUMPY):
         return None
@@ -223,13 +234,18 @@ def _get_mobilenet_session():
 
 
 def _extract_mobilenet_embedding(pil_img):
-    """Trích xuất vector đặc trưng sâu từ MobileNetV2 (chuẩn hóa ImageNet + L2-norm)."""
+    """
+    Trả về:
+    - emb: vector đặc trưng L2-norm 1000 chiều
+    - top_ids: danh sách Top-8 chỉ số lớp hình ảnh (0..999) để nhận diện cùng loại đồ vật
+               mà không cần biết tên tiếng Anh hay tiếng Việt.
+    """
     sess = _get_mobilenet_session()
     if sess is None:
-        return None
+        return None, []
     try:
         w, h = pil_img.size
-        mx, my = int(w * 0.09), int(h * 0.09)
+        mx, my = int(w * 0.10), int(h * 0.10)
         if (w - 2 * mx) >= 32 and (h - 2 * my) >= 32:
             crop = pil_img.crop((mx, my, w - mx, h - my))
         else:
@@ -243,30 +259,43 @@ def _extract_mobilenet_embedding(pil_img):
         arr = np.transpose(arr, (2, 0, 1))[None, ...]
 
         input_name = sess.get_inputs()[0].name
-        out = sess.run(None, {input_name: arr})[0].flatten().astype(np.float32)
-        norm = float(np.linalg.norm(out))
+        logits = sess.run(None, {input_name: arr})[0].flatten().astype(np.float32)
+
+        # Top-8 class IDs có phản ứng mạnh nhất trên MobileNetV2
+        top_ids = [int(i) for i in np.argsort(logits)[-8:][::-1]]
+
+        # Softmax nhẹ + L2-norm để giảm nhiễu logit âm
+        shifted = logits - float(np.max(logits))
+        probs = np.exp(shifted * 0.5)
+        norm = float(np.linalg.norm(probs))
         if norm > 1e-6:
-            out = out / norm
-        return [round(float(x), 5) for x in out]
+            probs = probs / norm
+        return [round(float(x), 5) for x in probs], top_ids
     except Exception as e:
         print(f"Lỗi suy luận MobileNetV2: {e}")
-        return None
+        return None, []
 
 
-STOP_WORDS_VN = {
-    "con", "cái", "chiếc", "hộp", "bộ", "cặp", "đôi", "quả", "trái",
-    "tấm", "bức", "tờ", "cục", "quyển", "cuốn", "cây", "vẽ", "màu", "loại", "để", "bàn", "học"
+# Từ nối / từ chung chung (đã bỏ dấu) để tách phần ý nghĩa cốt lõi của tên đồ vật
+STOP_WORDS_NO_ACCENT = {
+    "con", "cai", "chiec", "hop", "bo", "cap", "doi", "qua", "trai",
+    "tam", "buc", "to", "cuc", "quyen", "cuon", "cay", "ve", "mau",
+    "loai", "de", "ban", "hoc", "do", "dung", "cu", "thiet", "bi", "tap", "vat"
 }
-COLOR_WORDS_VN = ["đen", "đỏ", "xanh", "vàng", "trắng", "hồng", "tím", "nâu", "xám", "cam", "bạc"]
+COLOR_WORDS_MAP = {
+    "den": "đen", "do": "đỏ", "xanh": "xanh", "vang": "vàng",
+    "trang": "trắng", "hong": "hồng", "tim": "tím", "nau": "nâu",
+    "xam": "xám", "cam": "cam", "bac": "bạc"
+}
 
 MARK_SYNONYM_GROUPS = {
-    "hu_khoa": ["hỏng khóa", "hư khóa", "kẹt khóa", "gãy khóa", "mất đầu khóa", "tuột khóa", "dây kéo hỏng", "dây kéo kẹt", "hư dây kéo", "hỏng dây kéo"],
-    "rach_son": ["rách", "thủng", "sờn", "sứt chỉ", "bung chỉ", "trầy", "xước", "mẻ", "nứt", "vỡ"],
-    "vet_ban": ["dính mực", "vết mực", "bẩn", "ố", "dính sơn", "bút xóa", "vết bẩn", "lem mực"],
-    "mat_cuc": ["mất cúc", "rụng cúc", "mất nút", "rụng nút", "đứt cúc", "thiếu cúc", "thiếu nút"],
-    "tem_mac": ["mác", "tem", "nhãn", "cổ áo", "vạt áo", "nắp máy", "mặt sau", "bên trong"],
-    "moc_khoa": ["móc khóa", "gấu bông", "dây đeo", "sticker", "hình dán", "nhãn dán", "bảng tên"],
-    "vi_tri_chi_tiet": ["tay trái", "tay phải", "túi áo", "túi trái", "túi phải", "lưng áo", "góc dưới", "góc trên", "ngăn ngoài", "ngăn trong"],
+    "hu_khoa": ["hong khoa", "hu khoa", "ket khoa", "gay khoa", "mat dau khoa", "tuot khoa", "day keo hong", "day keo ket"],
+    "rach_son": ["rach", "thung", "son", "sut chi", "bung chi", "tray", "xuoc", "me", "nut", "vo"],
+    "vet_ban": ["dinh muc", "vet muc", "ban", "o", "dinh son", "but xoa", "vet ban", "lem muc"],
+    "mat_cuc": ["mat cuc", "rung cuc", "mat nut", "rung nut", "dut cuc", "thieu cuc", "thieu nut"],
+    "tem_mac": ["mac", "tem", "nhan", "co ao", "vat ao", "nap may", "mat sau", "ben trong"],
+    "moc_khoa": ["moc khoa", "gau bong", "day deo", "sticker", "hinh dan", "nhan dan", "bang ten"],
+    "vi_tri_chi_tiet": ["tay trai", "tay phai", "tui ao", "tui trai", "tui phai", "lung ao", "goc duoi", "goc tren", "ngan ngoai", "ngan trong"],
 }
 
 CATEGORIES_MAP = {
@@ -294,15 +323,15 @@ CATEGORIES_MAP = {
 
 
 def auto_normalize_category(ten_do, selected_loai_do):
-    raw_name = str(ten_do or "").strip().lower()
+    raw_name = strip_accents(ten_do)
     raw_cat = str(selected_loai_do or "").strip()
 
     explicit_rules = [
-        ("Trang phục / Phụ kiện (Áo khoác, Ví...)", ["balo", "ba lô", "áo khoác", "áo ấm", "ví ", "bóp ", "mũ ", "nón ", "vali", "cặp sách"]),
-        ("Thiết bị điện tử (Laptop, Điện thoại...)", ["casio", "fx580", "fx 580", "880btg", "laptop", "điện thoại", "iphone", "samsung", "chuột máy", "tai nghe", "đồng hồ thông minh"]),
-        ("Giấy tờ / Thẻ học sinh", ["thẻ học sinh", "thẻ hs", "căn cước", "cccd", "giấy tờ", "chứng minh"]),
-        ("Sách vở / Dụng cụ học tập", ["sách ", "vở ", "tập ", "bút ", "thước", "compa", "hộp bút", "bóp viết", "dụng cụ học", "đồ dùng học"]),
-        ("Khác", ["bình nước", "chai nước", "bình giữ nhiệt", "chìa khóa", "ô ", "dù "]),
+        ("Trang phục / Phụ kiện (Áo khoác, Ví...)", ["balo", "ba lo", "ao khoac", "ao am", "vi ", "bop ", "mu ", "non ", "vali", "cap sach"]),
+        ("Thiết bị điện tử (Laptop, Điện thoại...)", ["casio", "fx580", "fx 580", "880btg", "laptop", "dien thoai", "iphone", "samsung", "chuot may", "tai nghe", "dong ho thong minh"]),
+        ("Giấy tờ / Thẻ học sinh", ["the hoc sinh", "the hs", "can cuoc", "cccd", "giay to", "chung minh"]),
+        ("Sách vở / Dụng cụ học tập", ["sach ", "vo ", "tap ", "but ", "thuoc", "compa", "hop but", "bop viet", "dung cu", "do dung hoc", "do hoc", "xac suat", "thiet bi"]),
+        ("Khác", ["binh nuoc", "chai nuoc", "binh giu nhiet", "chia khoa", "o ", "du "]),
     ]
     for target_cat, keywords in explicit_rules:
         if any(kw in f"{raw_name} " for kw in keywords):
@@ -327,10 +356,14 @@ def clean_note_text(note):
 
 
 def extract_colors(text):
+    """Tự động nhận diện màu sắc bất kể người dùng gõ có dấu hay không dấu."""
     if not text:
         return set()
-    t = str(text).lower()
-    found = {c for c in COLOR_WORDS_VN if re.search(rf'\b{c}\b', t)}
+    t = strip_accents(text)
+    found = set()
+    for no_acc, vn_col in COLOR_WORDS_MAP.items():
+        if re.search(rf'\b{no_acc}\b', t):
+            found.add(vn_col)
     if "bạc" in found or "trắng" in found:
         found.update({"trắng", "bạc"})
     return found
@@ -341,34 +374,34 @@ def _extract_mark_entities(raw_text):
     if not text:
         return {"names": set(), "codes": set(), "concepts": set(), "words": set()}
 
-    low = text.lower()
+    low_no_acc = strip_accents(text)
     names = set()
 
-    for m in re.finditer(r'(?:tên|chữ|ký|kí|ghi|đề)\s+([a-zA-ZÀ-ỹ]{2,15})', low):
+    for m in re.finditer(r'(?:ten|chu|ky|ki|ghi|de)\s+([a-z]{2,15})', low_no_acc):
         cand = m.group(1).strip()
-        if cand not in {"là", "ở", "bằng", "mực", "bút", "nhỏ", "to", "mờ", "rõ", "lớp"}:
+        if cand not in {"la", "o", "bang", "muc", "but", "nho", "to", "mo", "ro", "lop"}:
             names.add(cand)
 
     tokens_raw = re.findall(r'[A-Za-zÀ-ỹ]+', text)
     for idx, tok in enumerate(tokens_raw):
         if idx > 0 and tok[0].isupper() and len(tok) >= 2:
-            low_tok = tok.lower()
-            if low_tok not in STOP_WORDS_VN and low_tok not in COLOR_WORDS_VN:
+            low_tok = strip_accents(tok)
+            if low_tok not in STOP_WORDS_NO_ACCENT and low_tok not in COLOR_WORDS_MAP:
                 names.add(low_tok)
 
-    codes = {c.lower() for c in re.findall(r'\b(?:\d{1,2}[a-zA-Z]\d{1,2}|\d{2,6})\b', text)}
+    codes = {c.lower() for c in re.findall(r'\b(?:\d{1,2}[a-zA-Z]\d{1,2}|\d{2,6})\b', low_no_acc)}
 
     concepts = set()
     for group_key, phrases in MARK_SYNONYM_GROUPS.items():
-        if any(p in low for p in phrases):
+        if any(p in low_no_acc for p in phrases):
             concepts.add(group_key)
 
-    ignore_words = STOP_WORDS_VN | {
-        "có", "bị", "ở", "trong", "ngoài", "trên", "dưới", "một", "hai", "rất",
-        "hơi", "nhỏ", "lớn", "phía", "bên", "ghi", "viết", "tên", "chữ", "lớp", "áo", "đồ"
+    ignore_words = STOP_WORDS_NO_ACCENT | {
+        "co", "bi", "o", "trong", "ngoai", "tren", "duoi", "mot", "hai", "rat",
+        "hoi", "nho", "lon", "phia", "ben", "ghi", "viet", "ten", "chu", "lop", "ao"
     }
     clean_words = {
-        w for w in re.sub(r'[^\w\s]', ' ', low).split()
+        w for w in re.sub(r'[^\w\s]', ' ', low_no_acc).split()
         if len(w) >= 2 and w not in ignore_words
     }
 
@@ -411,7 +444,7 @@ def evaluate_distinctive_marks(lost_item, found_item):
     if common_words:
         pts += min(6, len(common_words) * 2)
 
-    seq = SequenceMatcher(None, m1.lower(), m2.lower()).ratio()
+    seq = SequenceMatcher(None, strip_accents(m1), strip_accents(m2)).ratio()
     if seq >= 0.65:
         pts = max(pts, int(round(seq * 15)))
 
@@ -504,7 +537,6 @@ def save_feature_cache(img_path, features):
 
 
 def _read_image_bytes(img_path, max_bytes=1536 * 1024):
-    """Tải ảnh w_256 phục vụ MobileNetV2 (224x224) và phân tích màu sắc."""
     value = str(img_path).strip()
     if "res.cloudinary.com/" in value and "/image/upload/" in value and "/w_" not in value:
         value = value.replace("/image/upload/", "/image/upload/w_256,c_limit,q_auto:low,f_jpg/", 1)
@@ -619,7 +651,7 @@ def _detect_visual_colors_masked(small_48, fg_mask):
 
         if total == 0:
             return set()
-        detected = {c for c, cnt in counts.items() if (cnt / total) >= 0.16}
+        detected = {c for c, cnt in counts.items() if (cnt / total) >= 0.15}
         if "trắng" in detected or "xám" in detected:
             detected.add("bạc")
         return detected
@@ -662,7 +694,6 @@ def _compute_masked_color_hist(small_48, fg_mask):
 
 
 def calculate_image_features(img_path):
-    """Trích xuất vector đặc trưng sâu MobileNetV2 + màu chủ đạo vật thể."""
     if not check_real_image(img_path):
         return None
 
@@ -685,8 +716,12 @@ def calculate_image_features(img_path):
             visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
             fg_color_hist = _compute_masked_color_hist(small_48, fg_mask)
 
-            emb_orig = _extract_mobilenet_embedding(image)
-            emb_flip = _extract_mobilenet_embedding(ImageOps.mirror(image)) if emb_orig is not None else None
+            emb_orig, top_ids_orig = _extract_mobilenet_embedding(image)
+            emb_flip, top_ids_flip = (
+                _extract_mobilenet_embedding(ImageOps.mirror(image))
+                if emb_orig is not None else (None, [])
+            )
+            combined_top_ids = sorted(set(top_ids_orig + top_ids_flip))
 
             cw, ch = fg_crop.size
             aspect_ratio = min(cw, ch) / max(1.0, max(cw, ch))
@@ -695,6 +730,7 @@ def calculate_image_features(img_path):
                 "version": CACHE_VERSION,
                 "mobilenet_emb": emb_orig,
                 "mobilenet_flip": emb_flip,
+                "top_class_ids": combined_top_ids,
                 "fg_color_hist": fg_color_hist,
                 "aspect_ratio": aspect_ratio,
                 "visual_colors": list(visual_colors),
@@ -721,14 +757,14 @@ def _cosine_sim(v1, v2):
     return (dot / (n1 * n2)) if (n1 > 1e-6 and n2 > 1e-6) else 0.0
 
 
-def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False):
+def _single_pair_image_score(u1, u2, is_same_keyword=False, is_same_cat=False, color_conflict=False):
     if u1 == u2:
-        return 50, 1.0
+        return 50, 1.0, True
 
     f1 = calculate_image_features(u1)
     f2 = calculate_image_features(u2)
     if f1 is None or f2 is None:
-        return 0, 0.0
+        return 0, 0.0, False
 
     # 1. Điểm màu sắc chủ đạo vật thể (0–18 điểm)
     h1 = f1.get("fg_color_hist", [])
@@ -736,60 +772,70 @@ def _single_pair_image_score(u1, u2, is_same_keyword=False, color_conflict=False
     color_inter = sum(min(a, b) for a, b in zip(h1, h2)) if (h1 and h2) else 0.0
     color_cos = _cosine_sim(h1, h2) if (h1 and h2) else 0.0
     color_blend = 0.50 * color_inter + 0.50 * color_cos
-    color_pts = max(4, min(18, int(round(((color_blend - 0.12) / 0.45) * 18))))
+    color_pts = max(2, min(18, int(round(((color_blend - 0.15) / 0.45) * 18))))
 
-    # 2. Điểm đặc trưng sâu MobileNetV2 (0–32 điểm)
+    # 2. Điểm đặc trưng sâu MobileNetV2 + độ trùng nhóm lớp thị giác (0–32 điểm)
     e1 = f1.get("mobilenet_emb")
     e2 = f2.get("mobilenet_emb")
     e2_flip = f2.get("mobilenet_flip")
+    ids1 = set(f1.get("top_class_ids", []))
+    ids2 = set(f2.get("top_class_ids", []))
+    shared_visual_classes = len(ids1.intersection(ids2))
+    visually_same_object = shared_visual_classes >= 2
 
     if e1 and e2:
         sim_orig = _cosine_sim(e1, e2)
         sim_flip = _cosine_sim(e1, e2_flip) if e2_flip else sim_orig
         deep_sim = max(sim_orig, sim_flip)
-        deep_pts = max(10, min(32, int(round(((deep_sim - 0.28) / 0.48) * 32))))
+        deep_pts = max(6, min(32, int(round(((deep_sim - 0.25) / 0.55) * 32))))
+        if shared_visual_classes >= 3:
+            deep_pts = min(32, deep_pts + 4)
     else:
         ar1 = float(f1.get("aspect_ratio", 0.7))
         ar2 = float(f2.get("aspect_ratio", 0.7))
         ar_sim = 1.0 - min(1.0, abs(ar1 - ar2))
-        deep_pts = int(round(14 + ar_sim * 16))
+        deep_pts = int(round(10 + ar_sim * 16))
 
     total = color_pts + deep_pts
 
-    # Chỉ giảm nhẹ 15% nếu hai bên khai báo màu chữ trái ngược hoàn toàn VÀ điểm ảnh chưa quá cao
     if color_conflict and total < 44:
-        total = int(round(total * 0.85))
+        total = int(round(total * 0.80))
 
-    total = max(12, min(49, total))
+    total = max(8, min(49, total))
 
-    if not is_same_keyword and total > 42:
-        total = 42
+    # Chặn trần điểm ảnh nếu khác tên đồ VÀ không cùng nhóm lớp thị giác MobileNetV2
+    if not is_same_keyword and not visually_same_object:
+        cap = 26 if is_same_cat else 18
+        if total > cap:
+            total = cap
 
-    return int(total), float(total / 50.0)
+    return int(total), float(total / 50.0), visually_same_object
 
 
 def image_score(
     img1_filename,
     img2_filename,
     is_same_keyword=False,
+    is_same_cat=False,
     color_conflict=False
 ):
-    """Chấm điểm thị giác đa góc nhìn (0–50): đối chiếu chéo toàn bộ các góc ảnh và lấy điểm cao nhất."""
     try:
         list1 = split_image_list(img1_filename)
         list2 = split_image_list(img2_filename)
         if not list1 or not list2:
-            return 0, 0.0, 0, 0
+            return 0, 0.0, 0, 0, False
 
         best_score = 0
         best_ratio = 0.0
         best_i1 = 0
         best_i2 = 0
+        best_vis_same = False
         for i1, u1 in enumerate(list1):
             for i2, u2 in enumerate(list2):
-                sc, rt = _single_pair_image_score(
+                sc, rt, vis_same = _single_pair_image_score(
                     u1, u2,
                     is_same_keyword=is_same_keyword,
+                    is_same_cat=is_same_cat,
                     color_conflict=color_conflict
                 )
                 if sc > best_score:
@@ -797,42 +843,33 @@ def image_score(
                     best_ratio = rt
                     best_i1 = i1
                     best_i2 = i2
-        return best_score, best_ratio, best_i1, best_i2
+                    best_vis_same = vis_same
+        return best_score, best_ratio, best_i1, best_i2, best_vis_same
     except Exception as exc:
         print(f"Lỗi tính điểm hình ảnh: {exc}")
-        return 0, 0.0, 0, 0
+        return 0, 0.0, 0, 0, False
 
 
 def _tokenize_meaningful_words(text_name):
+    """Tách từ ý nghĩa sau khi đã bỏ dấu tiếng Việt tự động."""
     if not text_name:
         return set()
-    t = re.sub(r'[^\w\s]', ' ', str(text_name).lower())
-    words = [w for w in t.split() if len(w) >= 2 and w not in STOP_WORDS_VN and w not in COLOR_WORDS_VN]
+    t = re.sub(r'[^\w\s]', ' ', strip_accents(text_name))
+    words = [
+        w for w in t.split()
+        if len(w) >= 2 and w not in STOP_WORDS_NO_ACCENT and w not in COLOR_WORDS_MAP
+    ]
     return set(words)
 
 
 def get_core_keyword(text_name):
+    """Chuẩn hóa từ khóa không phụ thuộc dấu tiếng Việt (có dấu hay không dấu đều ra chung 1 khóa)."""
     if not text_name:
         return ""
-    t = str(text_name).lower().strip()
+    t = strip_accents(text_name)
 
-    if "chuột" in t or "mouse" in t:
-        return "chuột"
-
-    synonyms_map = {
-        "máy tính casio": ["casio", "fx580", "fx 580", "fx570", "fx 570", "880btg", "fx880", "fx 880", "máy tính bỏ túi"],
-        "laptop": ["laptop", "macbook", "máy tính xách tay"],
-        "điện thoại": ["điện thoại", "phone", "iphone", "samsung", "oppo", "xiaomi"],
-        "balo": ["balo", "ba lô"],
-        "ví": ["ví", "bóp"],
-        "nón": ["nón", "mũ"],
-        "thẻ": ["thẻ", "căn cước", "cccd"],
-    }
-
-    for core_key, words in synonyms_map.items():
-        if any(w in t for w in words):
-            nums = re.findall(r'\d+', t)
-            return f"{core_key}_{'_'.join(nums)}" if nums else core_key
+    if "chuot" in t or "mouse" in t:
+        return "chuot"
 
     tokens = sorted(_tokenize_meaningful_words(t))
     if not tokens:
@@ -843,9 +880,10 @@ def get_core_keyword(text_name):
 
 
 def similarity(text1, text2):
+    """So khớp tên đồ vật không phụ thuộc có dấu hay không dấu tiếng Việt."""
     if not text1 or not text2:
         return 0.0
-    t1, t2 = str(text1).lower().strip(), str(text2).lower().strip()
+    t1, t2 = strip_accents(text1), strip_accents(text2)
 
     if t1 == t2:
         return 1.0
@@ -855,7 +893,7 @@ def similarity(text1, text2):
     if nums1 and nums2 and nums1 != nums2:
         return 0.0
 
-    if ("chuột" in t1) != ("chuột" in t2):
+    if ("chuot" in t1) != ("chuot" in t2):
         return 0.0
 
     k1 = get_core_keyword(t1)
@@ -867,31 +905,34 @@ def similarity(text1, text2):
     w2 = _tokenize_meaningful_words(t2)
     common = w1.intersection(w2)
     if common:
-        non_generic = {w for w in common if w not in {"sách", "vở", "tập", "đồ", "vật", "máy", "dùng", "cụ"}}
+        non_generic = {w for w in common if w not in {"sach", "vo", "may"}}
         if non_generic:
             overlap_ratio = len(non_generic) / max(1, min(len(w1), len(w2)))
-            return min(0.95, 0.75 + 0.20 * overlap_ratio)
+            return min(0.95, 0.78 + 0.17 * overlap_ratio)
 
-    if len(t1) >= 3 and len(t2) >= 3 and (t1 in t2 or t2 in t1):
+    if len(t1) >= 4 and len(t2) >= 4 and (t1 in t2 or t2 in t1):
         return 0.85
 
     seq_ratio = SequenceMatcher(None, t1, t2).ratio()
-    return round(seq_ratio * 0.70, 2) if seq_ratio >= 0.45 else 0.0
+    return round(seq_ratio * 0.70, 2) if seq_ratio >= 0.52 else 0.0
 
 
 def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None, visual_colors2=None):
-    m1 = str(lost_item.mau_sac or "").strip().lower()
-    m2 = str(found_item.mau_sac or "").strip().lower()
+    m1 = strip_accents(lost_item.mau_sac)
+    m2 = strip_accents(found_item.mau_sac)
     has_m1 = m1 not in ["none", "null", ""]
     has_m2 = m2 not in ["none", "null", ""]
 
+    is_multi1 = any(k in m1 for k in ["nhieu mau", "da sac", "du mau"])
+    is_multi2 = any(k in m2 for k in ["nhieu mau", "da sac", "du mau"])
+
     text_colors1 = (
-        extract_colors(m1)
+        extract_colors(lost_item.mau_sac)
         | extract_colors(lost_item.ten_do)
         | extract_colors(getattr(lost_item, "mo_ta", ""))
     )
     text_colors2 = (
-        extract_colors(m2)
+        extract_colors(found_item.mau_sac)
         | extract_colors(found_item.ten_do)
         | extract_colors(getattr(found_item, "mo_ta", ""))
     )
@@ -899,39 +940,49 @@ def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None
     vis1 = set(visual_colors1) if visual_colors1 else set()
     vis2 = set(visual_colors2) if visual_colors2 else set()
 
-    # 1. Cả hai đều khai báo màu bằng chữ rõ ràng
+    # 1. Một bên ghi "nhiều màu" / "nhieu mau" và bên kia liệt kê nhiều màu (vd: "trang do vang xanh")
+    if is_multi1 or is_multi2:
+        if is_multi1 and is_multi2:
+            return 15, False
+        if is_multi1 and (len(text_colors2) >= 2 or len(vis2) >= 2):
+            return 15, False
+        if is_multi2 and (len(text_colors1) >= 2 or len(vis1) >= 2):
+            return 15, False
+        return (11 if is_same_key else 4), False
+
+    # 2. Cả hai đều khai báo màu cụ thể (có dấu hoặc không dấu đều tự quy về chuẩn)
     if text_colors1 and text_colors2:
         if text_colors1.intersection(text_colors2):
             return 15, False
         return 0, True
 
-    # 2. Một bên có màu chữ, bên kia bỏ trống -> đối chiếu màu chữ với màu quét từ ảnh
+    # 3. Một bên có màu chữ, bên kia bỏ trống -> đối chiếu màu chữ với màu quét từ ảnh
     if text_colors1 and not text_colors2:
         if vis2 and text_colors1.intersection(vis2):
-            return 14, False
-        return (12 if is_same_key else 8), False
+            return (14 if is_same_key else 8), False
+        return (10 if is_same_key else 4), False
 
     if text_colors2 and not text_colors1:
         if vis1 and text_colors2.intersection(vis1):
-            return 14, False
-        return (12 if is_same_key else 8), False
+            return (14 if is_same_key else 8), False
+        return (10 if is_same_key else 4), False
 
-    # 3. Cả hai đều không có màu chữ -> đối chiếu màu quét từ ảnh
+    # 4. Cả hai đều không có màu chữ -> đối chiếu màu quét từ ảnh
     if vis1 and vis2:
         if vis1.intersection(vis2):
-            return 14, False
-        return 5, False
+            return (13 if is_same_key else 7), False
+        return 3, False
 
     if has_m1 and has_m2:
         sim = SequenceMatcher(None, m1, m2).ratio()
         return int(sim * 15), (sim < 0.3)
 
-    return (12 if is_same_key else 8), False
+    return (10 if is_same_key else 4), False
 
 
 def location_score(loc1, loc2):
-    v1 = normalize_location_text(loc1).lower()
-    v2 = normalize_location_text(loc2).lower()
+    v1 = strip_accents(normalize_location_text(loc1))
+    v2 = strip_accents(normalize_location_text(loc2))
     if not v1 or not v2:
         return 0
     if v1 == v2:
@@ -1388,7 +1439,7 @@ def found_return(id):
 @app.route("/match")
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
-    """Đối sánh v52: MobileNetV2 ONNX (Deep Learning) + Tự nhận màu từ ảnh + Dấu hiệu riêng."""
+    """Đối sánh v55: Tự động bỏ dấu tiếng Việt + Nhận diện nhóm lớp hình ảnh MobileNetV2."""
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
     per_page = 10
@@ -1420,28 +1471,33 @@ def match_items(item_id=None):
 
         for lost in lost_items:
             key1 = get_core_keyword(lost.ten_do)
+            cat1 = auto_normalize_category(lost.ten_do, lost.loai_do)
             for found in found_items:
                 try:
                     key2 = get_core_keyword(found.ten_do)
+                    cat2 = auto_normalize_category(found.ten_do, found.loai_do)
                     ten_sim = similarity(lost.ten_do, found.ten_do)
                     is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
+                    is_same_cat = (cat1 != "" and cat1 == cat2)
 
                     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
                     mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
                     both_have_imgs = lost.has_image and found.has_image
 
-                    if not is_same_key and mark_score < 8 and not (both_have_imgs and not color_conflict):
-                        continue
+                    # Cho phép ghép nếu: trùng tên (có/không dấu) HOẶC trùng dấu hiệu riêng HOẶC cùng danh mục + có ảnh + không lệch màu
+                    if not is_same_key and mark_score < 10:
+                        if not is_same_cat or not both_have_imgs or color_conflict:
+                            continue
 
                     sig = (
-                        str(lost.ten_do or "").strip().lower(),
-                        str(lost.noi_mat or "").strip().lower(),
+                        strip_accents(lost.ten_do),
+                        strip_accents(lost.noi_mat),
                         str(lost.ngay_mat or "").strip(),
-                        str(lost.mo_ta or "").strip().lower(),
-                        str(found.ten_do or "").strip().lower(),
-                        str(found.noi_nhat or "").strip().lower(),
+                        strip_accents(lost.mo_ta),
+                        strip_accents(found.ten_do),
+                        strip_accents(found.noi_nhat),
                         str(found.ngay_nhat or "").strip(),
-                        str(found.mo_ta or "").strip().lower(),
+                        strip_accents(found.mo_ta),
                     )
                     if sig in seen_signatures:
                         continue
@@ -1450,7 +1506,7 @@ def match_items(item_id=None):
                     if is_same_key:
                         ten_score = 15 if ten_sim >= 0.85 else max(11, int(ten_sim * 15))
                     else:
-                        ten_score = max(6, int(ten_sim * 15))
+                        ten_score = int(round(ten_sim * 15))
 
                     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
                     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
@@ -1458,15 +1514,18 @@ def match_items(item_id=None):
 
                     has_both_images = 1 if both_have_imgs else 0
                     non_conflict = 0 if color_conflict else 1
+                    same_key_flag = 1 if is_same_key else 0
 
                     sequence += 1
                     candidates.append({
                         "lost": lost,
                         "found": found,
                         "base_score": base_score,
+                        "same_key_flag": same_key_flag,
                         "has_both_images": has_both_images,
                         "non_conflict": non_conflict,
                         "is_same_key": is_same_key,
+                        "is_same_cat": is_same_cat,
                         "color_conflict": color_conflict,
                         "score_name": ten_score,
                         "score_color": mau_score,
@@ -1480,7 +1539,7 @@ def match_items(item_id=None):
                     continue
 
         candidates.sort(
-            key=lambda x: (x["non_conflict"], x["score_mark"], x["has_both_images"], x["base_score"], x["seq"]),
+            key=lambda x: (x["same_key_flag"], x["non_conflict"], x["score_mark"], x["has_both_images"], x["base_score"], x["seq"]),
             reverse=True
         )
         total_matches = len(candidates)
@@ -1526,16 +1585,22 @@ def match_items(item_id=None):
             )
 
             if lost.has_image and found.has_image:
-                anh_score, _, best_i1, best_i2 = image_score(
+                anh_score, _, best_i1, best_i2, vis_same = image_score(
                     lost.hinh_anh, found.hinh_anh,
                     is_same_keyword=item["is_same_key"],
+                    is_same_cat=item["is_same_cat"],
                     color_conflict=color_conflict
                 )
             else:
-                anh_score, best_i1, best_i2 = 0, 0, 0
+                anh_score, best_i1, best_i2, vis_same = 0, 0, 0, False
+
+            # Nếu học sinh gọi tên khác nhau nhưng MobileNetV2 xác nhận cùng 1 nhóm vật thể -> thưởng thêm điểm tên
+            ten_score_final = item["score_name"]
+            if not item["is_same_key"] and vis_same and item["is_same_cat"]:
+                ten_score_final = max(ten_score_final, 12)
 
             raw_total = (
-                item["score_name"]
+                ten_score_final
                 + mau_score
                 + item["score_location"]
                 + item["score_date"]
@@ -1559,7 +1624,7 @@ def match_items(item_id=None):
                 "score": total_score,
                 "ket_luan": ket_luan,
                 "score_image": anh_score,
-                "score_name": item["score_name"],
+                "score_name": ten_score_final,
                 "score_color": mau_score,
                 "score_location": item["score_location"],
                 "score_date": item["score_date"],
@@ -1609,13 +1674,16 @@ def teacher_check(lost_id, found_id):
 
     key1 = get_core_keyword(lost.ten_do)
     key2 = get_core_keyword(found.ten_do)
+    cat1 = auto_normalize_category(lost.ten_do, lost.loai_do)
+    cat2 = auto_normalize_category(found.ten_do, found.loai_do)
+    is_same_cat = (cat1 != "" and cat1 == cat2)
     ten_sim = similarity(lost.ten_do, found.ten_do)
     is_same_key = (ten_sim >= 0.72) or (key1 == key2 and key1 != "")
 
     if is_same_key:
         ten_score = 15 if ten_sim >= 0.85 else max(11, int(ten_sim * 15))
     else:
-        ten_score = max(6, int(ten_sim * 15))
+        ten_score = int(round(ten_sim * 15))
 
     v_cols1, v_cols2 = set(), set()
     if has1 and has2:
@@ -1632,18 +1700,22 @@ def teacher_check(lost_id, found_id):
     vi_tri_score = location_score(lost.noi_mat, found.noi_nhat)
     ngay_score = date_score(lost.ngay_mat, found.ngay_nhat)
     mark_score, mark_hints = evaluate_distinctive_marks(lost, found)
-    base_score = ten_score + mau_score + vi_tri_score + ngay_score + mark_score
 
     if has1 and has2:
-        anh_score, image_ratio, _, _ = image_score(
+        anh_score, image_ratio, _, _, vis_same = image_score(
             lost.hinh_anh, found.hinh_anh,
             is_same_keyword=is_same_key,
+            is_same_cat=is_same_cat,
             color_conflict=color_conflict
         )
         _persist_disk_cache()
     else:
-        anh_score, image_ratio = 0, 0.0
+        anh_score, image_ratio, vis_same = 0, 0.0, False
 
+    if not is_same_key and vis_same and is_same_cat:
+        ten_score = max(ten_score, 12)
+
+    base_score = ten_score + mau_score + vi_tri_score + ngay_score + mark_score
     score = min(100, anh_score + base_score)
 
     if score >= 75:
