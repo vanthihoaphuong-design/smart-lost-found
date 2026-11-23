@@ -262,7 +262,7 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         color: #3730a3;
         border: 1px solid #c7d2fe;
         border-radius: 8px;
-        padding: 5px 8px;
+        padding: 6px 8px;
         font-size: 0.76rem;
         font-weight: 700;
         margin-top: 10px;
@@ -491,10 +491,10 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
                 <div class="tc-score-number">{{ score }}</div>
                 <div class="tc-score-conclusion">{{ ket_luan }}</div>
 
-                {% if score_mark > 0 %}
+                {% if mark_hints %}
                     <div class="tc-mark-match-pill">
-                        🔍 +{{ score_mark }}đ dấu hiệu riêng
-                        {% if mark_hints %}<div class="fw-normal mt-1">{{ mark_hints | join(', ') }}</div>{% endif %}
+                        ✨ Đối chứng dấu hiệu
+                        <div class="fw-normal mt-1">{{ mark_hints | join(' • ') }}</div>
                     </div>
                 {% endif %}
 
