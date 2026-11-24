@@ -82,6 +82,16 @@ Danh sách đồ nhặt được
         border-radius: 999px;
         display: inline-block;
     }
+    .mark-hint-subtext {
+        font-size: 0.76rem;
+        color: #475569;
+        margin-top: 4px;
+        background: #f8fafc;
+        border: 1px dashed #cbd5e1;
+        border-radius: 6px;
+        padding: 2px 7px;
+        display: inline-block;
+    }
     .action-group {
         display: flex;
         align-items: center;
@@ -151,7 +161,9 @@ Danh sách đồ nhặt được
                             <div class="fw-bold text-dark">{{ item.ten_do }}</div>
                             <div class="small text-muted">🎨 Màu: {{ item.mau_sac or 'Chưa rõ' }}</div>
                             {% if item.mo_ta %}
-                                <div class="small text-secondary mt-1">🔍 <em>{{ item.mo_ta }}</em></div>
+                                <div class="mark-hint-subtext" title="Một phần thông tin định danh được che bớt để Giáo viên xác minh">
+                                    🔍 <em>{{ item.mo_ta | mask_hint }}</em>
+                                </div>
                             {% endif %}
                         </td>
                         <td>
