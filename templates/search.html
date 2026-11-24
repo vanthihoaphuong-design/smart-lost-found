@@ -21,6 +21,16 @@ Tìm kiếm đồ thất lạc
         opacity: 1;
         transform: scale(1.06);
     }
+    .mark-hint-subtext {
+        font-size: 0.76rem;
+        color: #475569;
+        margin-top: 4px;
+        background: #f8fafc;
+        border: 1px dashed #cbd5e1;
+        border-radius: 6px;
+        padding: 2px 7px;
+        display: inline-block;
+    }
 </style>
 
 <div class="container mt-4">
@@ -158,7 +168,14 @@ Tìm kiếm đồ thất lạc
                                         <span class="text-muted small">Không có ảnh</span>
                                     {% endif %}
                                 </td>
-                                <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                                <td>
+                                    <div class="fw-bold text-dark">{{ item.ten_do }}</div>
+                                    {% if item.mo_ta %}
+                                        <div class="mark-hint-subtext" title="Một phần thông tin định danh được che bớt để Giáo viên đối chứng">
+                                            🔍 <em>{{ item.mo_ta | mask_hint }}</em>
+                                        </div>
+                                    {% endif %}
+                                </td>
                                 <td><span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span></td>
                                 <td><span class="badge bg-light text-dark border">{{ item.mau_sac }}</span></td>
                                 <td>{{ item.noi_mat }}</td>
@@ -238,7 +255,14 @@ Tìm kiếm đồ thất lạc
                                         <span class="text-muted small">Không có ảnh</span>
                                     {% endif %}
                                 </td>
-                                <td class="fw-bold text-dark">{{ item.ten_do }}</td>
+                                <td>
+                                    <div class="fw-bold text-dark">{{ item.ten_do }}</div>
+                                    {% if item.mo_ta %}
+                                        <div class="mark-hint-subtext" title="Một phần thông tin định danh được che bớt để Giáo viên đối chứng">
+                                            🔍 <em>{{ item.mo_ta | mask_hint }}</em>
+                                        </div>
+                                    {% endif %}
+                                </td>
                                 <td><span class="badge bg-info text-dark text-wrap">{{ item.loai_do }}</span></td>
                                 <td><span class="badge bg-light text-dark border">{{ item.mau_sac }}</span></td>
                                 <td>{{ item.noi_nhat }}</td>
