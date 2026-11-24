@@ -89,7 +89,7 @@ def format_vn_date(date_val):
 def mask_distinctive_hint(note_val):
     """
     Hiển thị gợi ý dấu hiệu riêng cho học sinh dễ nhận ra đồ,
-    đồng thời che bớt mã lớp và tên riêng (giữ chữ cái đầu) để Giáo viên đối chất.
+    đồng thời che bớt mã lớp và tên riêng (kể cả khi viết thường sau từ 'tên', 'chữ', 'ký', 'ghi'...).
     """
     if not note_val:
         return ""
@@ -100,18 +100,34 @@ def mask_distinctive_hint(note_val):
     # 1. Che mã lớp (ví dụ: 7A3 -> 7**, 11A1 -> 11**)
     s = re.sub(r'\b(\d{1,2})[a-zA-Z]\d{1,2}\b', r'\1**', s)
 
-    # 2. Che tên riêng viết hoa đứng sau từ khóa hoặc giữa câu (ví dụ: Minh -> M***)
+    # 2. Che tên riêng viết hoa hoặc từ đứng ngay sau từ khóa chỉ tên/ký hiệu
+    trigger_words = {"ten", "chu", "ky", "ki", "ghi", "de"}
+    ignore_after_trigger = {"la", "o", "bang", "muc", "but", "nho", "to", "mo", "ro", "lop", "rieng"}
+
     tokens = s.split(" ")
     masked_tokens = []
+    prev_is_trigger = False
+
     for idx, tok in enumerate(tokens):
         clean_alpha = re.sub(r'[^A-Za-zÀ-ỹ]', '', tok)
-        if idx > 0 and len(clean_alpha) >= 2 and clean_alpha[0].isupper():
-            masked_tokens.append(clean_alpha[0] + "***")
+        punct_suffix = tok[len(clean_alpha):] if clean_alpha and tok.startswith(clean_alpha) else ""
+        low_alpha = strip_accents(clean_alpha)
+
+        should_mask = False
+        if len(clean_alpha) >= 2:
+            if prev_is_trigger and low_alpha not in ignore_after_trigger:
+                should_mask = True
+            elif idx > 0 and clean_alpha[0].isupper():
+                should_mask = True
+
+        if should_mask:
+            masked_tokens.append(clean_alpha[0] + "***" + punct_suffix)
         else:
             masked_tokens.append(tok)
 
-    return " ".join(masked_tokens)
+        prev_is_trigger = (low_alpha in trigger_words)
 
+    return " ".join(masked_tokens)
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
