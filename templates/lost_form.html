@@ -110,7 +110,14 @@ Báo mất đồ
                 accept="image/*" 
                 multiple
                 id="previewImage">
-            <small class="text-muted">💡 Giữ phím Ctrl (trên máy tính) hoặc nhấn giữ để chọn nhiều ảnh cùng lúc (tối đa 3 ảnh).</small>
+            <small class="text-muted d-block mt-1">💡 Giữ phím Ctrl (trên máy tính) hoặc nhấn giữ để chọn nhiều ảnh cùng lúc (tối đa 3 ảnh).</small>
+
+            <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
+                <button type="button" id="btnAiAutoFill" class="btn btn-sm btn-outline-primary rounded-pill px-3 fw-semibold" onclick="runAiAutoFill()">
+                    ✨ AI tự nhận diện màu & loại đồ từ ảnh
+                </button>
+                <span id="aiAutoFillStatus" class="small text-muted"></span>
+            </div>
         </div>
     </div>
 
@@ -156,6 +163,52 @@ if (imageInput) {
             previewContainer.appendChild(wrapper);
         });
     });
+}
+
+async function runAiAutoFill() {
+    const fileInput = document.getElementById("previewImage");
+    const statusEl = document.getElementById("aiAutoFillStatus");
+    const btn = document.getElementById("btnAiAutoFill");
+
+    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
+        statusEl.innerHTML = '<span class="text-danger">⚠️ Vui lòng chọn ít nhất 1 ảnh trước!</span>';
+        return;
+    }
+
+    btn.disabled = true;
+    statusEl.innerHTML = '<span class="text-primary">⏳ AI MobileNetV2 đang phân tích ảnh...</span>';
+
+    const formData = new FormData();
+    formData.append("image", fileInput.files[0]);
+
+    try {
+        const res = await fetch("/api/analyze-image", { method: "POST", body: formData });
+        const data = await res.json();
+        if (data.ok) {
+            const colorInput = document.querySelector('input[name="mau_sac"]');
+            const catSelect = document.querySelector('select[name="loai_do"]');
+            let msgParts = [];
+
+            if (data.colors && colorInput) {
+                colorInput.value = data.colors;
+                msgParts.push(`Màu: <b>${data.colors}</b>`);
+            }
+            if (data.category && catSelect) {
+                catSelect.value = data.category;
+                msgParts.push(`Loại: <b>${data.category}</b>`);
+            }
+
+            statusEl.innerHTML = msgParts.length
+                ? `<span class="text-success">✅ Gợi ý: ${msgParts.join(" | ")} (Có thể sửa lại nếu chưa khớp)</span>`
+                : '<span class="text-warning">🤔 AI chưa nhận diện rõ, bạn hãy nhập thủ công nhé!</span>';
+        } else {
+            statusEl.innerHTML = '<span class="text-danger">❌ Không thể phân tích ảnh này.</span>';
+        }
+    } catch (err) {
+        statusEl.innerHTML = '<span class="text-danger">❌ Lỗi kết nối máy chủ AI.</span>';
+    } finally {
+        btn.disabled = false;
+    }
 }
 </script>
 
