@@ -1170,11 +1170,68 @@ def _score_pair_full(lost, found):
         "best_lost_idx": best_i1,
         "best_found_idx": best_i2,
     }
+# Mapping nhóm class ID của ImageNet-1K (MobileNetV2) sang 5 danh mục của trường
+IMAGENET_TO_SCHOOL_CAT = [
+    ("Thiết bị điện tử (Laptop, Điện thoại...)", range(400, 999), {
+        508, 527, 620, 664, 681, 782, 851, # laptop, desktop, monitor, keyboard, mouse, screen, TV
+        487, 605, 761, 892, 531, 696,      # cellular telephone, iPod, remote control, wall clock, digital watch
+    }),
+    ("Trang phục / Phụ kiện (Áo khoác, Ví...)", range(400, 999), {
+        414, 452, 474, 501, 515, 568, 601, 610, 617, 655, 678, 735, 824, 834, 841, 869, # backpack, bonnet, cardigan, cloak, cowboy hat, fur coat, gown, jersey, lab coat, miniskirt, neck brace, poncho, stole, suit, sweatshirt, trench coat
+        440, 441, 636, 748, 893,           # beer bottle (tránh nhầm), mailbag, purse, wallet
+    }),
+    ("Sách vở / Dụng cụ học tập", range(400, 999), {
+        418, 449, 454, 496, 512, 549, 557, 567, 710, 767, 796, # ballpoint, binder, book jacket, comic book, corkscrew, envelope, folder, fountain pen, pencil box, rubber eraser, rule
+    }),
+    ("Giấy tờ / Thẻ học sinh", range(400, 999), {
+        916, 917, 921, # web site, comic book, menu / card-like
+    }),
+]
 
+def _predict_category_from_ids(top_ids):
+    if not top_ids:
+        return ""
+    id_set = set(top_ids)
+    for cat_name, _, target_ids in IMAGENET_TO_SCHOOL_CAT:
+        if id_set.intersection(target_ids):
+            return cat_name
+    return ""
+
+
+@app.route("/api/analyze-image", methods=["POST"])
+def api_analyze_image():
+    """API nhận ảnh upload từ form và trả về gợi ý Màu sắc + Loại đồ bằng MobileNetV2 & HSV."""
+    file = request.files.get("image")
+    if not file or file.filename == "":
+        return jsonify({"ok": False, "error": "Chưa chọn ảnh"})
+
+    try:
+        raw_bytes = file.read(2 * 1024 * 1024)
+        with Image.open(io.BytesIO(raw_bytes)) as src:
+            image = ImageOps.exif_transpose(src).convert("RGB")
+            _, small_48, fg_mask = _extract_foreground_pil(image)
+            visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
+            _, top_ids = _extract_mobilenet_embedding(image)
+
+        # Lọc màu tự nhiên (bỏ 'bạc' nếu đã có 'trắng'/'xám' để hiển thị gọn)
+        display_colors = [c for c in ["đen", "trắng", "xám", "đỏ", "xanh", "vàng", "hồng", "tím", "cam", "nâu"] if c in visual_colors]
+        color_str = ", ".join(display_colors[:3]) if display_colors else ""
+        suggested_cat = _predict_category_from_ids(top_ids)
+
+        return jsonify({
+            "ok": True,
+            "colors": color_str,
+            "category": suggested_cat
+        })
+    except Exception as e:
+        print(f"Lỗi AI Auto-Fill: {e}")
+        return jsonify({"ok": False, "error": str(e)})
 
 @app.route("/")
 def home():
     return render_template("index.html")
+
+
 
 
 @app.route("/lost", methods=["GET", "POST"])
