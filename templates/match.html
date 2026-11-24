@@ -462,8 +462,8 @@ Kết quả đối sánh thông minh
                         📍 {{ m.lost.noi_mat or 'Chưa rõ' }} &nbsp;|&nbsp; 📅 {{ m.lost.ngay_mat | vn_date }}
                     </div>
                     {% if m.lost.mo_ta %}
-                        <div class="item-note-box">
-                            🔍 <strong>Dấu hiệu riêng:</strong> {{ m.lost.mo_ta }}
+                        <div class="item-note-box" title="Một phần thông tin định danh được che bớt để Giáo viên xác minh">
+                            🔍 <strong>Dấu hiệu riêng:</strong> {{ m.lost.mo_ta | mask_hint }}
                         </div>
                     {% endif %}
                     <span class="info-pill-yellow">🎨 Màu sắc: {{ m.lost.mau_sac or 'Chưa rõ' }}</span>
@@ -523,8 +523,8 @@ Kết quả đối sánh thông minh
                         📍 {{ m.found.noi_nhat or 'Chưa rõ' }} &nbsp;|&nbsp; 📅 {{ m.found.ngay_nhat | vn_date }}
                     </div>
                     {% if m.found.mo_ta %}
-                        <div class="item-note-box">
-                            🔍 <strong>Dấu hiệu riêng:</strong> {{ m.found.mo_ta }}
+                        <div class="item-note-box" title="Một phần thông tin định danh được che bớt để Giáo viên xác minh">
+                            🔍 <strong>Dấu hiệu riêng:</strong> {{ m.found.mo_ta | mask_hint }}
                         </div>
                     {% endif %}
                     <span class="info-pill-green">📦 Nơi gửi: {{ m.found.noi_luu_giu or 'Chưa cập nhật' }}</span>
@@ -567,7 +567,9 @@ Kết quả đối sánh thông minh
                 </table>
 
                 {% if m.mark_hints %}
-                    <div class="mark-hint-badge">✨ Đối chứng dấu hiệu: {{ m.mark_hints | join(' • ') }}</div>
+                    <div class="mark-hint-badge" title="Chi tiết gốc sẽ mở khóa tại màn hình Giáo viên kiểm tra">
+                        🔒 Khớp {{ m.mark_hints | length }} dấu hiệu nhận dạng riêng (Mở khóa khi GV kiểm tra)
+                    </div>
                 {% endif %}
 
                 <div class="fw-bold small mb-3">{{ m.ket_luan }}</div>
@@ -682,6 +684,443 @@ function openZoomFromCard(boxId) {
     if (!box) return;
     currentGallery = (box.dataset.urls || '').split('|').filter(Boolean);
     currentGalleryIdx = parseInt(box.dataset.idx || '0', 10);
+    buildThumbStrip();
+    renderGallerySlide();
+    bootstrap.Modal.getOrCreateInstance(document.getElementById('imageZoomModal')).show();
+}
+
+function buildThumbStrip() {
+    const strip = document.getElementById('galleryThumbStrip');
+    strip.innerHTML = '';
+    if (currentGallery.length <= 1) {
+        strip.style.setProperty('display', 'none', 'important');
+        return;
+    }
+    strip.style.setProperty('display', 'flex', 'important');
+    currentGallery.forEach((url, idx) => {
+        const t = document.createElement('img');
+        t.src = url;
+        t.className = 'gallery-strip-thumb';
+        t.onclick = () => { currentGalleryIdx = idx; renderGallerySlide(); };
+        strip.appendChild(t);
+    });
+}
+
+function stepGallery(delta) {
+    if (currentGallery.length <= 1) return;
+    currentGalleryIdx = (currentGalleryIdx + delta + currentGallery.length) % currentGallery.length;
+    renderGallerySlide();
+}
+
+function renderGallerySlide() {
+    const imgEl = document.getElementById('zoomModalImage');
+    const prevBtn = document.getElementById('btnPrevPhoto');
+    const nextBtn = document.getElementById('btnNextPhoto');
+    const counter = document.getElementById('galleryCounterBadge');
+
+    scale = 1; pointX = 0; pointY = 0; isDragging = false;
+    updateTransform(imgEl);
+    imgEl.src = currentGallery[currentGalleryIdx] || '';
+
+    const hasMulti = currentGallery.length > 1;
+    prevBtn.style.display = hasMulti ? 'inline-block' : 'none';
+    nextBtn.style.display = hasMulti ? 'inline-block' : 'none';
+    counter.style.display = hasMulti ? 'inline-block' : 'none';
+    if (hasMulti) {
+        counter.textContent = `Góc ảnh ${currentGalleryIdx + 1} / ${currentGallery.length}`;
+    }
+    document.querySelectorAll('#galleryThumbStrip .gallery-strip-thumb').forEach((el, idx) => {
+        el.classList.toggle('active', idx === currentGalleryIdx);
+    });
+}
+
+function updateTransform(img) {
+    img.style.transform = `translate(${pointX}px, ${pointY}px) scale(${scale})`;
+}
+
+document.getElementById('zoomViewport').addEventListener('wheel', function(e) {
+    e.preventDefault();
+    const imgEl = document.getElementById('zoomModalImage');
+    const delta = e.deltaY < 0 ? 0.25 : -0.25;
+    scale = Math.min(Math.max(1, scale + delta), 6);
+    if (scale === 1) { pointX = 0; pointY = 0; }
+    updateTransform(imgEl);
+}, { passive: false });
+
+const imgEl = document.getElementById('zoomModalImage');
+imgEl.addEventListener('mousedown', function(e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    isDragging = true;
+    startX = e.clientX - pointX;
+    startY = e.clientY - pointY;
+    imgEl.style.cursor = 'grabbing';
+});
+
+window.addEventListener('mousemove', function(e) {
+    if (!isDragging) return;
+    e.preventDefault();
+    pointX = e.clientX - startX;
+    pointY = e.clientY - startY;
+    updateTransform(imgEl);
+});
+
+window.addEventListener('mouseup', function() {
+    if (isDragging) { isDragging = false; imgEl.style.cursor = 'grab'; }
+});
+
+document.addEventListener('keydown', function(e) {
+    const modalEl = document.getElementById('imageZoomModal');
+    if (!modalEl.classList.contains('show')) return;
+    if (e.key === 'ArrowLeft') stepGallery(-1);
+    if (e.key === 'ArrowRight') stepGallery(1);
+});
+</script>
+{% endblock %}
+```[cite: 7]
+
+---
+
+### File 2: `templates/search.html`
+
+```html
+{% extends "base.html" %}
+
+{% block title %}
+Tìm kiếm đồ thất lạc
+{% endblock %}
+
+{% block content %}
+<style>
+    .gallery-strip-thumb {
+        width: 54px;
+        height: 54px;
+        object-fit: cover;
+        border-radius: 6px;
+        cursor: pointer;
+        border: 2px solid transparent;
+        opacity: 0.6;
+        transition: all 0.15s ease;
+    }
+    .gallery-strip-thumb.active {
+        border-color: #10b981;
+        opacity: 1;
+        transform: scale(1.06);
+    }
+    .mark-hint-subtext {
+        font-size: 0.76rem;
+        color: #475569;
+        margin-top: 4px;
+        background: #f8fafc;
+        border: 1px dashed #cbd5e1;
+        border-radius: 6px;
+        padding: 2px 7px;
+        display: inline-block;
+    }
+</style>
+
+<div class="container mt-4">
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-body p-4">
+            <h3 class="fw-bold text-primary mb-3">🔍 Tìm kiếm thông tin</h3>
+            <form action="{{ url_for('search') }}" method="GET" class="row g-3">
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Từ khóa (Tên đồ vật)</label>
+                    <input type="text" name="keyword" class="form-control" placeholder="Nhập tên đồ vật cần tìm..." value="{{ keyword }}">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Loại đồ</label>
+                    <select name="category" class="form-select">
+                        <option value="">-- Tất cả loại đồ --</option>
+                        <option value="Sách vở / Dụng cụ học tập" {% if category == 'Sách vở / Dụng cụ học tập' %}selected{% endif %}>Sách vở / Dụng cụ học tập</option>
+                        <option value="Thiết bị điện tử (Laptop, Điện thoại...)" {% if category == 'Thiết bị điện tử (Laptop, Điện thoại...)' %}selected{% endif %}>Thiết bị điện tử (Laptop, Điện thoại...)</option>
+                        <option value="Trang phục / Phụ kiện (Áo khoác, Ví...)" {% if category == 'Trang phục / Phụ kiện (Áo khoác, Ví...)' %}selected{% endif %}>Trang phục / Phụ kiện (Áo khoác, Ví...)</option>
+                        <option value="Giấy tờ / Thẻ học sinh" {% if category == 'Giấy tờ / Thẻ học sinh' %}selected{% endif %}>Giấy tờ / Thẻ học sinh</option>
+                        <option value="Khác" {% if category == 'Khác' %}selected{% endif %}>Khác</option>
+                    </select>
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label fw-bold">Màu sắc</label>
+                    <input type="text" name="color" class="form-control" placeholder="Nhập màu sắc..." value="{{ color }}">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Nơi mất / Nơi nhặt</label>
+                    <select name="location" class="form-select">
+                        <option value="">-- Tất cả khu vực / phòng học --</option>
+                        <option value="Sân trường" {% if location == 'Sân trường' %}selected{% endif %}>Sân trường</option>
+                        <option value="Nhà xe" {% if location == 'Nhà xe' %}selected{% endif %}>Nhà xe</option>
+                        <option value="Căn tin" {% if location == 'Căn tin' %}selected{% endif %}>Căn tin</option>
+                        <option value="Thư viện" {% if location == 'Thư viện' %}selected{% endif %}>Thư viện</option>
+                        <option value="Sân bóng" {% if location == 'Sân bóng' %}selected{% endif %}>Sân bóng</option>
+                        <option value="Phòng STEM" {% if location == 'Phòng STEM' %}selected{% endif %}>Phòng STEM</option>
+                        <option value="Phòng Tin học 1" {% if location == 'Phòng Tin học 1' %}selected{% endif %}>Phòng Tin học 1</option>
+                        <option value="Phòng Tin học 2" {% if location == 'Phòng Tin học 2' %}selected{% endif %}>Phòng Tin học 2</option>
+                        <option value="Phòng Văn" {% if location == 'Phòng Văn' %}selected{% endif %}>Phòng Văn</option>
+                        <option value="Phòng Sử - Địa" {% if location == 'Phòng Sử - Địa' %}selected{% endif %}>Phòng Sử - Địa</option>
+                        <option value="Phòng Hội trường" {% if location == 'Phòng Hội trường' %}selected{% endif %}>Phòng Hội trường</option>
+                        <option value="Phòng Đoàn - Đội" {% if location == 'Phòng Đoàn - Đội' %}selected{% endif %}>Phòng Đoàn - Đội</option>
+                        <option value="Khu Văn phòng" {% if location == 'Khu Văn phòng' %}selected{% endif %}>Khu Văn phòng</option>
+                        <option value="Phòng Tâm lý" {% if location == 'Phòng Tâm lý' %}selected{% endif %}>Phòng Tâm lý</option>
+                        <option value="6A1" {% if location == '6A1' %}selected{% endif %}>6A1</option>
+                        <option value="6A2" {% if location == '6A2' %}selected{% endif %}>6A2</option>
+                        <option value="6A3" {% if location == '6A3' %}selected{% endif %}>6A3</option>
+                        <option value="7A1" {% if location == '7A1' %}selected{% endif %}>7A1</option>
+                        <option value="7A2" {% if location == '7A2' %}selected{% endif %}>7A2</option>
+                        <option value="7A3" {% if location == '7A3' %}selected{% endif %}>7A3</option>
+                        <option value="8A1" {% if location == '8A1' %}selected{% endif %}>8A1</option>
+                        <option value="8A2" {% if location == '8A2' %}selected{% endif %}>8A2</option>
+                        <option value="8A3" {% if location == '8A3' %}selected{% endif %}>8A3</option>
+                        <option value="9A1" {% if location == '9A1' %}selected{% endif %}>9A1</option>
+                        <option value="9A2" {% if location == '9A2' %}selected{% endif %}>9A2</option>
+                        <option value="9A3" {% if location == '9A3' %}selected{% endif %}>9A3</option>
+                        <option value="10A1" {% if location == '10A1' %}selected{% endif %}>10A1</option>
+                        <option value="10A2" {% if location == '10A2' %}selected{% endif %}>10A2</option>
+                        <option value="10A3" {% if location == '10A3' %}selected{% endif %}>10A3</option>
+                        <option value="11A1" {% if location == '11A1' %}selected{% endif %}>11A1</option>
+                        <option value="11A2" {% if location == '11A2' %}selected{% endif %}>11A2</option>
+                        <option value="12A1" {% if location == '12A1' %}selected{% endif %}>12A1</option>
+                        <option value="12A2" {% if location == '12A2' %}selected{% endif %}>12A2</option>
+                    </select>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-bold">Trạng thái xử lý</label>
+                    <select name="status" class="form-select">
+                        <option value="">-- Tất cả trạng thái --</option>
+                        <option value="DANG_TIM" {% if status == 'DANG_TIM' %}selected{% endif %}>🔑 Đang tìm (Đồ báo mất)</option>
+                        <option value="DA_TIM" {% if status == 'DA_TIM' %}selected{% endif %}>✅ Đã tìm thấy (Đồ báo mất)</option>
+                        <option value="DANG_LUU_GIU" {% if status == 'DANG_LUU_GIU' %}selected{% endif %}>📦 Đang lưu giữ (Đồ báo nhặt)</option>
+                        <option value="DA_TRA" {% if status == 'DA_TRA' %}selected{% endif %}>✅ Đã hoàn trả (Đồ báo nhặt)</option>
+                    </select>
+                </div>
+                <div class="col-12 text-end mt-3">
+                    <a href="{{ url_for('search') }}" class="btn btn-outline-secondary me-2">🔄 Đặt lại</a>
+                    <button type="submit" class="btn btn-primary px-4 fw-bold">🔍 Tìm kiếm ngay</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- KẾT QUẢ ĐỒ BÁO MẤT -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-primary text-white fw-bold">
+            🚨 Đồ báo mất ({% if lost_items %}{{ lost_items|length }}{% else %}0{% endif %} kết quả)
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover align-middle mb-0 text-center">
+                    <thead class="table-light align-middle">
+                        <tr>
+                            <th>Ảnh</th>
+                            <th>Tên đồ vật</th>
+                            <th>Loại đồ</th>
+                            <th>Màu sắc</th>
+                            <th>Nơi mất</th>
+                            <th>Ngày mất</th>
+                            <th>Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if lost_items %}
+                            {% for item in lost_items %}
+                            <tr>
+                                <td style="width: 110px;">
+                                    {% if item.hinh_anh %}
+                                        {% set ns = namespace(urls=[]) %}
+                                        {% for raw in item.hinh_anh.split(',') %}
+                                            {% set clean = raw.strip() %}
+                                            {% if clean %}
+                                                {% set full_url = clean if clean.startswith('http') else url_for('uploaded_file', filename=clean) %}
+                                                {% set ns.urls = ns.urls + [full_url] %}
+                                            {% endif %}
+                                        {% endfor %}
+
+                                        {% if ns.urls %}
+                                            <div class="position-relative d-inline-block">
+                                                <img src="{{ ns.urls[0] }}" 
+                                                     class="rounded shadow-sm border" 
+                                                     style="max-height: 70px; object-fit: cover; cursor: zoom-in;" 
+                                                     data-gallery="{{ ns.urls | join('|') }}"
+                                                     onclick="openGalleryModal(this)"
+                                                     title="Bấm để xem phóng to ({{ ns.urls|length }} ảnh)"
+                                                     onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                                                {% if ns.urls|length > 1 %}
+                                                    <span class="badge bg-dark position-absolute bottom-0 end-0 shadow-sm" style="font-size: 0.65rem; pointer-events: none;">+{{ ns.urls|length - 1 }}</span>
+                                                {% endif %}
+                                            </div>
+                                        {% else %}
+                                            <span class="text-muted small">Không có ảnh</span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="text-muted small">Không có ảnh</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="fw-bold text-dark">{{ item.ten_do }}</div>
+                                    {% if item.mo_ta %}
+                                        <div class="mark-hint-subtext" title="Một phần thông tin định danh được che bớt để Giáo viên đối chứng">
+                                            🔍 <em>{{ item.mo_ta | mask_hint }}</em>
+                                        </div>
+                                    {% endif %}
+                                </td>
+                                <td><span class="badge bg-secondary text-wrap">{{ item.loai_do }}</span></td>
+                                <td><span class="badge bg-light text-dark border">{{ item.mau_sac }}</span></td>
+                                <td>{{ item.noi_mat }}</td>
+                                <td>{{ item.ngay_mat | vn_date }}</td>
+                                <td>
+                                    {% if item.trang_thai in ['DA_TIM', 'Đã tìm thấy'] %}
+                                        <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã tìm thấy</span>
+                                    {% else %}
+                                        <span class="badge bg-warning text-dark py-2 px-3 fw-bold">🔑 Đang tìm</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="7" class="text-muted py-3">Không tìm thấy dữ liệu đồ báo mất phù hợp.</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- KẾT QUẢ ĐỒ BÁO NHẶT -->
+    <div class="card shadow-sm border-0 mb-4">
+        <div class="card-header bg-success text-white fw-bold">
+            📦 Đồ báo nhặt ({% if found_items %}{{ found_items|length }}{% else %}0{% endif %} kết quả)
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-bordered table-hover align-middle mb-0 text-center">
+                    <thead class="table-light align-middle">
+                        <tr>
+                            <th>Ảnh</th>
+                            <th>Tên đồ vật</th>
+                            <th>Loại đồ</th>
+                            <th>Màu sắc</th>
+                            <th>Nơi nhặt</th>
+                            <th>Ngày nhặt</th>
+                            <th>Nơi lưu giữ / Liên hệ</th>
+                            <th>Trạng thái</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% if found_items %}
+                            {% for item in found_items %}
+                            <tr>
+                                <td style="width: 110px;">
+                                    {% if item.hinh_anh %}
+                                        {% set ns = namespace(urls=[]) %}
+                                        {% for raw in item.hinh_anh.split(',') %}
+                                            {% set clean = raw.strip() %}
+                                            {% if clean %}
+                                                {% set full_url = clean if clean.startswith('http') else url_for('uploaded_file', filename=clean) %}
+                                                {% set ns.urls = ns.urls + [full_url] %}
+                                            {% endif %}
+                                        {% endfor %}
+
+                                        {% if ns.urls %}
+                                            <div class="position-relative d-inline-block">
+                                                <img src="{{ ns.urls[0] }}" 
+                                                     class="rounded shadow-sm border" 
+                                                     style="max-height: 70px; object-fit: cover; cursor: zoom-in;" 
+                                                     data-gallery="{{ ns.urls | join('|') }}"
+                                                     onclick="openGalleryModal(this)"
+                                                     title="Bấm để xem phóng to ({{ ns.urls|length }} ảnh)"
+                                                     onerror="this.onerror=null; this.src='https://via.placeholder.com/70?text=Chưa+có+ảnh';">
+                                                {% if ns.urls|length > 1 %}
+                                                    <span class="badge bg-dark position-absolute bottom-0 end-0 shadow-sm" style="font-size: 0.65rem; pointer-events: none;">+{{ ns.urls|length - 1 }}</span>
+                                                {% endif %}
+                                            </div>
+                                        {% else %}
+                                            <span class="text-muted small">Không có ảnh</span>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="text-muted small">Không có ảnh</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="fw-bold text-dark">{{ item.ten_do }}</div>
+                                    {% if item.mo_ta %}
+                                        <div class="mark-hint-subtext" title="Một phần thông tin định danh được che bớt để Giáo viên đối chứng">
+                                            🔍 <em>{{ item.mo_ta | mask_hint }}</em>
+                                        </div>
+                                    {% endif %}
+                                </td>
+                                <td><span class="badge bg-info text-dark text-wrap">{{ item.loai_do }}</span></td>
+                                <td><span class="badge bg-light text-dark border">{{ item.mau_sac }}</span></td>
+                                <td>{{ item.noi_nhat }}</td>
+                                <td>{{ item.ngay_nhat | vn_date }}</td>
+                                <td>
+                                    {% if item.noi_luu_giu %}
+                                        <span class="badge bg-warning text-dark text-wrap px-2 py-1">{{ item.noi_luu_giu }}</span>
+                                    {% else %}
+                                        <span class="text-muted small">Chưa cập nhật</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if item.trang_thai in ['DA_TRA', 'Đã hoàn trả'] %}
+                                        <span class="badge bg-success py-2 px-3 fw-bold">✅ Đã hoàn trả</span>
+                                    {% else %}
+                                        <span class="badge bg-primary py-2 px-3 fw-bold">📦 Đang lưu giữ</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                            <tr>
+                                <td colspan="8" class="text-muted py-3">Không tìm thấy dữ liệu đồ báo nhặt phù hợp.</td>
+                            </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL PHÓNG TO & CHUYỂN ĐỔI ĐA GÓC ẢNH -->
+<div class="modal fade" id="imageZoomModal" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg">
+        <div class="modal-content border-0 shadow-lg" style="background-color: #111;">
+            <div class="modal-header border-0 pb-0 pt-2 px-3 d-flex align-items-center">
+                <span id="galleryCounterBadge" class="badge bg-success" style="display: none;">Góc ảnh 1 / 3</span>
+                <button type="button" class="btn-close btn-close-white ms-auto" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0 d-flex align-items-center justify-content-center overflow-hidden" style="height: 64vh; position: relative; user-select: none;" id="zoomViewport">
+                <button type="button" id="btnPrevPhoto" onclick="stepGallery(-1)"
+                        class="btn btn-dark border-secondary position-absolute start-0 ms-3 rounded-circle shadow"
+                        style="z-index: 20; width: 42px; height: 42px; opacity: 0.85; display: none;">
+                    ❮
+                </button>
+                <img id="zoomModalImage" src="" 
+                     draggable="false"
+                     style="max-height: 90%; max-width: 90%; object-fit: contain; cursor: grab; transition: transform 0.05s ease-out; transform-origin: center center; -webkit-user-drag: none;">
+                <button type="button" id="btnNextPhoto" onclick="stepGallery(1)"
+                        class="btn btn-dark border-secondary position-absolute end-0 me-3 rounded-circle shadow"
+                        style="z-index: 20; width: 42px; height: 42px; opacity: 0.85; display: none;">
+                    ❯
+                </button>
+            </div>
+            <div id="galleryThumbStrip" class="d-flex justify-content-center gap-2 py-2" style="background-color: rgba(0,0,0,0.7); display: none !important;"></div>
+            <div class="modal-footer border-0 py-1 justify-content-center" style="background-color: rgba(0,0,0,0.5);">
+                <small class="text-light opacity-75" style="font-size: 0.8rem;">💡 Cuộn chuột để Phóng to/Thu nhỏ | Kéo chuột để di chuyển | Bấm ❮ ❯ hoặc phím mũi tên để đổi góc ảnh</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+let scale = 1, pointX = 0, pointY = 0, startX = 0, startY = 0, isDragging = false;
+let currentGallery = [];
+let currentGalleryIdx = 0;
+
+function openGalleryModal(imgTag) {
+    const raw = imgTag.dataset.gallery || imgTag.src;
+    currentGallery = raw.split('|').map(s => s.trim()).filter(Boolean);
+    currentGalleryIdx = 0;
     buildThumbStrip();
     renderGallerySlide();
     bootstrap.Modal.getOrCreateInstance(document.getElementById('imageZoomModal')).show();
