@@ -54,7 +54,7 @@
     .dashboard-page .stat-card {
         position: relative;
         height: 100%;
-        padding: 22px 24px;
+        padding: 20px 22px;
         overflow: hidden;
         border: 1px solid #e2e8f0;
         border-radius: 16px;
@@ -69,10 +69,10 @@
         position: absolute;
         top: -26px;
         right: -20px;
-        width: 105px;
-        height: 105px;
+        width: 96px;
+        height: 96px;
         border-radius: 50%;
-        background: rgba(29, 78, 216, 0.06);
+        background: rgba(29, 78, 216, 0.05);
         content: "";
     }
 
@@ -80,7 +80,7 @@
         position: relative;
         z-index: 1;
         color: #475569;
-        font-size: 0.92rem;
+        font-size: 0.9rem;
         font-weight: 700;
     }
 
@@ -89,13 +89,13 @@
         z-index: 1;
         display: flex;
         align-items: baseline;
-        gap: 12px;
-        margin: 10px 0 8px 0;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin: 8px 0 6px 0;
     }
 
     .dashboard-page .stat-number {
-        color: #1d4ed8;
-        font-size: clamp(2.3rem, 3.5vw, 3.1rem);
+        font-size: clamp(2rem, 3vw, 2.65rem);
         font-weight: 800;
         line-height: 1.05;
     }
@@ -104,9 +104,9 @@
         background-color: #eff6ff;
         color: #1d4ed8;
         border: 1px solid #bfdbfe;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         font-weight: 700;
-        padding: 4px 10px;
+        padding: 3px 9px;
         border-radius: 999px;
     }
 
@@ -114,7 +114,7 @@
         position: relative;
         z-index: 1;
         color: #64748b;
-        font-size: 0.85rem;
+        font-size: 0.83rem;
         margin: 0;
     }
 
@@ -125,7 +125,7 @@
         flex-wrap: wrap;
         align-items: center;
         gap: 10px;
-        margin: 12px 0 10px 0;
+        margin: 10px 0 8px 0;
     }
 
     .dashboard-page .export-select {
@@ -305,7 +305,12 @@
     }
 </style>
 
-{% set total_cnt = tong_so if tong_so is defined else (total_items if total_items is defined else 12) %}
+{% set total_cnt = tong_so if tong_so is defined else 0 %}
+{% set found_cnt = tong_found if tong_found is defined else 0 %}
+{% set returned_cnt = so_da_hoan_tra if so_da_hoan_tra is defined else 0 %}
+{% set found_lost_cnt = so_da_tim if so_da_tim is defined else 0 %}
+{% set return_rate = ty_le_hoan_tra if ty_le_hoan_tra is defined else 0 %}
+{% set avg_time_str = thoi_gian_tb if thoi_gian_tb is defined else 'Chưa đủ mẫu' %}
 
 {% if thong_ke is defined and thong_ke %}
     {% if thong_ke is mapping %}
@@ -316,31 +321,70 @@
 {% elif category_counts is defined and category_counts %}
     {% set stat_list = category_counts.items()|list %}
 {% else %}
-    {% set stat_list = [('Sách vở / Dụng cụ học tập', 2), ('Thiết bị điện tử (Laptop, Điện thoại...)', 1), ('Trang phục / Phụ kiện (Áo khoác, Ví...)', 8), ('Giấy tờ / Thẻ học sinh', 0), ('Khác', 1)] %}
+    {% set stat_list = [('Sách vở / Dụng cụ học tập', 0), ('Thiết bị điện tử (Laptop, Điện thoại...)', 0), ('Trang phục / Phụ kiện (Áo khoác, Ví...)', 0), ('Giấy tờ / Thẻ học sinh', 0), ('Khác', 0)] %}
 {% endif %}
 
 <div class="dashboard-page">
     <header class="dashboard-hero">
         <div>
-            <h2>📊 Dashboard thống kê</h2>
-            <p>Tổng quan tình hình đồ thất lạc và báo cáo tổng hợp trong trường học.</p>
+            <h2>📊 Dashboard thống kê & Đo lường hiệu quả</h2>
+            <p>Tổng quan tình hình đồ thất lạc, tỷ lệ bàn giao thực tế và báo cáo tổng hợp trong trường học.</p>
         </div>
         <div class="hero-icon d-none d-sm-flex" aria-hidden="true">🎒</div>
     </header>
 
-    <div class="row g-3 mb-4 align-items-stretch">
-        <div class="col-12 col-lg-4">
-            <div class="stat-card">
-                <div class="stat-label">🎒 Tổng số đồ mất</div>
+    <!-- HÀNG 1: 4 THẺ KPI ĐO LƯỜNG HIỆU QUẢ VẬN HÀNH -->
+    <div class="row g-3 mb-3 align-items-stretch">
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="stat-card" style="border-left: 4px solid #2563eb;">
+                <div class="stat-label">🎒 Tổng tin báo mất</div>
                 <div class="stat-number-row">
-                    <div class="stat-number">{{ total_cnt }}</div>
-                    <span class="stat-subpill">{{ stat_list|length }} nhóm đồ vật</span>
+                    <div class="stat-number" style="color: #1d4ed8;">{{ total_cnt }}</div>
+                    <span class="stat-subpill">Đã tìm thấy: {{ found_lost_cnt }}</span>
                 </div>
-                <p class="stat-note">Tổng số bản ghi đồ bị mất được ghi nhận trong hệ thống.</p>
+                <p class="stat-note">Tổng số đồ thất lạc học sinh đã khai báo.</p>
             </div>
         </div>
 
-        <div class="col-12 col-lg-8">
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="stat-card" style="border-left: 4px solid #10b981;">
+                <div class="stat-label">📦 Đồ nhặt được</div>
+                <div class="stat-number-row">
+                    <div class="stat-number" style="color: #059669;">{{ found_cnt }}</div>
+                    <span class="stat-subpill" style="background:#ecfdf5;color:#065f46;border-color:#a7f3d0;">Đã trả: {{ returned_cnt }}</span>
+                </div>
+                <p class="stat-note">Tổng vật dụng tiếp nhận tại các điểm lưu giữ.</p>
+            </div>
+        </div>
+
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="stat-card" style="border-left: 4px solid #f59e0b;">
+                <div class="stat-label">🎯 Tỷ lệ hoàn trả</div>
+                <div class="stat-number-row">
+                    <div class="stat-number" style="color: #d97706;">{{ return_rate }}%</div>
+                    <span class="stat-subpill" style="background:#fffbeb;color:#b45309;border-color:#fde68a;">{{ returned_cnt }}/{{ found_cnt }} món</span>
+                </div>
+                <div class="progress my-1" style="height: 7px; border-radius: 999px;">
+                    <div class="progress-bar bg-warning" style="width: {{ return_rate }}%;"></div>
+                </div>
+                <p class="stat-note mt-1">Tỷ lệ đồ nhặt được bàn giao đúng chủ nhân.</p>
+            </div>
+        </div>
+
+        <div class="col-12 col-sm-6 col-xl-3">
+            <div class="stat-card" style="border-left: 4px solid #8b5cf6;">
+                <div class="stat-label">⚡ Thời gian trả TB</div>
+                <div class="stat-number-row">
+                    <div class="stat-number" style="color: #7c3aed; font-size: clamp(1.75rem, 2.5vw, 2.2rem);">{{ avg_time_str }}</div>
+                </div>
+                <p class="stat-note">Thời gian trung bình từ lúc nhặt đến khi hoàn trả.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- HÀNG 2: XUẤT BÁO CÁO EXCEL CHO BAN GIÁM HIỆU -->
+    <div class="row g-3 mb-4">
+        <div class="col-12">
             <div class="stat-card">
                 <div class="stat-label">📑 Báo cáo quản lý dành cho BGH</div>
                 
@@ -354,7 +398,7 @@
                     <select name="month" id="selectMonth" class="form-select export-select">
                         <option value="">-- Tất cả tháng --</option>
                         {% for m in range(1, 13) %}
-                        <option value="{{ m }}" {% if m == 10 %}selected{% endif %}>Tháng {{ m }}</option>
+                        <option value="{{ m }}">Tháng {{ m }}</option>
                         {% endfor %}
                     </select>
 
