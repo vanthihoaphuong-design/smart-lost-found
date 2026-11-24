@@ -85,7 +85,32 @@ def format_vn_date(date_val):
         except ValueError:
             continue
     return s
+@app.template_filter("mask_hint")
+def mask_distinctive_hint(note_val):
+    """
+    Hiển thị gợi ý dấu hiệu riêng cho học sinh dễ nhận ra đồ,
+    đồng thời che bớt mã lớp và tên riêng (giữ chữ cái đầu) để Giáo viên đối chất.
+    """
+    if not note_val:
+        return ""
+    s = str(note_val).strip()
+    if s.lower() in {"none", "null", ""}:
+        return ""
 
+    # 1. Che mã lớp (ví dụ: 7A3 -> 7**, 11A1 -> 11**)
+    s = re.sub(r'\b(\d{1,2})[a-zA-Z]\d{1,2}\b', r'\1**', s)
+
+    # 2. Che tên riêng viết hoa đứng sau từ khóa hoặc giữa câu (ví dụ: Minh -> M***)
+    tokens = s.split(" ")
+    masked_tokens = []
+    for idx, tok in enumerate(tokens):
+        clean_alpha = re.sub(r'[^A-Za-zÀ-ỹ]', '', tok)
+        if idx > 0 and len(clean_alpha) >= 2 and clean_alpha[0].isupper():
+            masked_tokens.append(clean_alpha[0] + "***")
+        else:
+            masked_tokens.append(tok)
+
+    return " ".join(masked_tokens)
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
