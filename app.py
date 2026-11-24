@@ -1583,15 +1583,16 @@ def edit_found(item_id):
 @app.route("/dashboard")
 def dashboard():
     try:
-        tong_so = LostItem.query.count()
-        all_items = LostItem.query.all()
+        tong_lost = LostItem.query.count()
+        tong_found = FoundItem.query.count()
+        all_lost = LostItem.query.all()
+        all_found = FoundItem.query.all()
     except Exception:
-        tong_so = 0
-        all_items = []
+        tong_lost, tong_found, all_lost, all_found = 0, 0, [], []
 
+    # 1. Thống kê theo 5 danh mục
     category_counts = {cat: 0 for cat in CATEGORIES_MAP.keys()}
-
-    for item in all_items:
+    for item in all_lost:
         raw_cat = str(item.loai_do).strip() if item.loai_do else "Khác"
         mapped = False
         for new_cat, old_list in CATEGORIES_MAP.items():
@@ -1603,8 +1604,43 @@ def dashboard():
             category_counts["Khác"] += 1
 
     thong_ke = [(cat, count) for cat, count in category_counts.items()]
-    return render_template("dashboard.html", tong_so=tong_so, thong_ke=thong_ke)
 
+    # 2. Tính hiệu quả vận hành thực tế (Tỷ lệ hoàn trả & Thời gian trả trung bình)
+    da_tra_found = [f for f in all_found if f.trang_thai in ("DA_TRA", "Đã hoàn trả")]
+    da_tim_lost = [l for l in all_lost if l.trang_thai in ("DA_TIM", "Đã tìm thấy")]
+
+    so_da_hoan_tra = len(da_tra_found)
+    ty_le_hoan_tra = round((so_da_hoan_tra / tong_found) * 100, 1) if tong_found > 0 else 0.0
+
+    # Tính số giờ/ngày trung bình từ lúc nhặt đến lúc bàn giao
+    durations_hours = []
+    for f in da_tra_found:
+        if getattr(f, "thoi_diem_tra", None) and f.ngay_nhat:
+            dt_nhat = parse_date_flexible(f.ngay_nhat)
+            if dt_nhat:
+                diff_sec = (f.thoi_diem_tra - dt_nhat).total_seconds()
+                if diff_sec >= 0:
+                    durations_hours.append(diff_sec / 3600.0)
+
+    if durations_hours:
+        avg_hours = sum(durations_hours) / len(durations_hours)
+        if avg_hours < 24:
+            thoi_gian_tb = f"{round(avg_hours, 1)} giờ"
+        else:
+            thoi_gian_tb = f"{round(avg_hours / 24.0, 1)} ngày"
+    else:
+        thoi_gian_tb = "Chưa đủ mẫu"
+
+    return render_template(
+        "dashboard.html",
+        tong_so=tong_lost,
+        tong_found=tong_found,
+        so_da_hoan_tra=so_da_hoan_tra,
+        so_da_tim=len(da_tim_lost),
+        ty_le_hoan_tra=ty_le_hoan_tra,
+        thoi_gian_tb=thoi_gian_tb,
+        thong_ke=thong_ke
+    )
 
 @app.route("/heatmap")
 def heatmap():
