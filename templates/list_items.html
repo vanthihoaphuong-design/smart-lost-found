@@ -127,6 +127,16 @@ Danh sách đồ thất lạc
 
     .item-title-cell { font-weight: 800; color: #0f172a; font-size: 0.96rem; }
     .color-subtext { font-size: 0.78rem; color: #64748b; margin-top: 2px; font-weight: 500; }
+    .mark-hint-subtext {
+        font-size: 0.76rem;
+        color: #475569;
+        margin-top: 4px;
+        background: #f8fafc;
+        border: 1px dashed #cbd5e1;
+        border-radius: 6px;
+        padding: 2px 7px;
+        display: inline-block;
+    }
 
     .cat-pill {
         background-color: #f1f5f9;
@@ -273,6 +283,11 @@ Danh sách đồ thất lạc
                             <div class="item-title-cell">{{ item.ten_do }}</div>
                             {% if item.mau_sac and item.mau_sac != 'None' %}
                                 <div class="color-subtext">🎨 Màu: {{ item.mau_sac }}</div>
+                            {% endif %}
+                            {% if item.mo_ta %}
+                                <div class="mark-hint-subtext" title="Một phần thông tin định danh được che bớt để Giáo viên đối chứng">
+                                    🔍 <em>{{ item.mo_ta | mask_hint }}</em>
+                                </div>
                             {% endif %}
                         </td>
                         <td><span class="cat-pill">{{ item.loai_do }}</span></td>
