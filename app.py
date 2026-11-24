@@ -85,6 +85,8 @@ def format_vn_date(date_val):
         except ValueError:
             continue
     return s
+
+
 @app.template_filter("mask_hint")
 def mask_distinctive_hint(note_val):
     """
@@ -128,6 +130,8 @@ def mask_distinctive_hint(note_val):
         prev_is_trigger = (low_alpha in trigger_words)
 
     return " ".join(masked_tokens)
+
+
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
@@ -359,6 +363,33 @@ CATEGORIES_MAP = {
         "Khác", "Bình nước", "Chai nước", "Ly", "Không xác định", "vase", "Khu vực khác"
     ]
 }
+
+IMAGENET_TO_SCHOOL_CAT = [
+    ("Thiết bị điện tử (Laptop, Điện thoại...)", {
+        508, 527, 620, 664, 681, 782, 851,
+        487, 605, 761, 892, 531, 696,
+    }),
+    ("Trang phục / Phụ kiện (Áo khoác, Ví...)", {
+        414, 452, 474, 501, 515, 568, 601, 610, 617, 655, 678, 735, 824, 834, 841, 869,
+        636, 748, 893,
+    }),
+    ("Sách vở / Dụng cụ học tập", {
+        418, 449, 454, 496, 549, 557, 567, 710, 767, 796,
+    }),
+    ("Giấy tờ / Thẻ học sinh", {
+        916, 917, 921,
+    }),
+]
+
+
+def _predict_category_from_ids(top_ids):
+    if not top_ids:
+        return ""
+    id_set = set(top_ids)
+    for cat_name, target_ids in IMAGENET_TO_SCHOOL_CAT:
+        if id_set.intersection(target_ids):
+            return cat_name
+    return ""
 
 
 def auto_normalize_category(ten_do, selected_loai_do):
@@ -1170,32 +1201,6 @@ def _score_pair_full(lost, found):
         "best_lost_idx": best_i1,
         "best_found_idx": best_i2,
     }
-# Mapping nhóm class ID của ImageNet-1K (MobileNetV2) sang 5 danh mục của trường
-IMAGENET_TO_SCHOOL_CAT = [
-    ("Thiết bị điện tử (Laptop, Điện thoại...)", range(400, 999), {
-        508, 527, 620, 664, 681, 782, 851, # laptop, desktop, monitor, keyboard, mouse, screen, TV
-        487, 605, 761, 892, 531, 696,      # cellular telephone, iPod, remote control, wall clock, digital watch
-    }),
-    ("Trang phục / Phụ kiện (Áo khoác, Ví...)", range(400, 999), {
-        414, 452, 474, 501, 515, 568, 601, 610, 617, 655, 678, 735, 824, 834, 841, 869, # backpack, bonnet, cardigan, cloak, cowboy hat, fur coat, gown, jersey, lab coat, miniskirt, neck brace, poncho, stole, suit, sweatshirt, trench coat
-        440, 441, 636, 748, 893,           # beer bottle (tránh nhầm), mailbag, purse, wallet
-    }),
-    ("Sách vở / Dụng cụ học tập", range(400, 999), {
-        418, 449, 454, 496, 512, 549, 557, 567, 710, 767, 796, # ballpoint, binder, book jacket, comic book, corkscrew, envelope, folder, fountain pen, pencil box, rubber eraser, rule
-    }),
-    ("Giấy tờ / Thẻ học sinh", range(400, 999), {
-        916, 917, 921, # web site, comic book, menu / card-like
-    }),
-]
-
-def _predict_category_from_ids(top_ids):
-    if not top_ids:
-        return ""
-    id_set = set(top_ids)
-    for cat_name, _, target_ids in IMAGENET_TO_SCHOOL_CAT:
-        if id_set.intersection(target_ids):
-            return cat_name
-    return ""
 
 
 @app.route("/api/analyze-image", methods=["POST"])
@@ -1213,8 +1218,10 @@ def api_analyze_image():
             visual_colors = _detect_visual_colors_masked(small_48, fg_mask)
             _, top_ids = _extract_mobilenet_embedding(image)
 
-        # Lọc màu tự nhiên (bỏ 'bạc' nếu đã có 'trắng'/'xám' để hiển thị gọn)
-        display_colors = [c for c in ["đen", "trắng", "xám", "đỏ", "xanh", "vàng", "hồng", "tím", "cam", "nâu"] if c in visual_colors]
+        display_colors = [
+            c for c in ["đen", "trắng", "xám", "đỏ", "xanh", "vàng", "hồng", "tím", "cam", "nâu"]
+            if c in visual_colors
+        ]
         color_str = ", ".join(display_colors[:3]) if display_colors else ""
         suggested_cat = _predict_category_from_ids(top_ids)
 
@@ -1227,11 +1234,10 @@ def api_analyze_image():
         print(f"Lỗi AI Auto-Fill: {e}")
         return jsonify({"ok": False, "error": str(e)})
 
+
 @app.route("/")
 def home():
     return render_template("index.html")
-
-
 
 
 @app.route("/lost", methods=["GET", "POST"])
@@ -1248,7 +1254,7 @@ def lost():
             ten_do=ten_do, noi_mat=noi_mat, ngay_mat=ngay_mat, trang_thai="DANG_TIM"
         ).order_by(LostItem.id.desc()).first()
         if existing_dup and strip_accents(existing_dup.mo_ta) == strip_accents(mo_ta):
-            return redirect(url_for("list_items"))
+            return redirect(url_for("match_items", item_id=existing_dup.id))
 
         files = request.files.getlist("hinh_anh")
         filename = upload_multiple_images(files, max_images=3)
@@ -1283,7 +1289,7 @@ def lost():
             except Exception:
                 pass
 
-        if new_item_id and best_match_score >= 65:
+        if new_item_id:
             return redirect(url_for("match_items", item_id=new_item_id, instant_score=best_match_score))
         return redirect(url_for("list_items"))
     return render_template("lost_form.html")
@@ -1304,12 +1310,12 @@ def found():
             ten_do=ten_do, noi_nhat=noi_nhat, ngay_nhat=ngay_nhat, trang_thai="DANG_LUU_GIU"
         ).order_by(FoundItem.id.desc()).first()
         if existing_dup and strip_accents(existing_dup.mo_ta) == strip_accents(mo_ta):
-            return redirect(url_for("found_list"))
+            return redirect(url_for("match_items", found_id=existing_dup.id))
 
         files = request.files.getlist("hinh_anh")
         filename = upload_multiple_images(files, max_images=3)
 
-        matched_lost_id = None
+        new_found_id = None
         best_match_score = 0
         try:
             item = FoundItem(
@@ -1325,13 +1331,13 @@ def found():
             )
             db.session.add(item)
             db.session.commit()
+            new_found_id = item.id
 
             active_lost = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").order_by(LostItem.id.desc()).limit(25).all()
             for l_item in active_lost:
                 res = _score_pair_full(l_item, item)
                 if res["score"] > best_match_score:
                     best_match_score = res["score"]
-                    matched_lost_id = l_item.id
             _persist_disk_cache()
         except Exception as db_err:
             print("LOI LUU FOUND:", db_err)
@@ -1340,8 +1346,8 @@ def found():
             except Exception:
                 pass
 
-        if matched_lost_id and best_match_score >= 65:
-            return redirect(url_for("match_items", item_id=matched_lost_id, instant_score=best_match_score))
+        if new_found_id:
+            return redirect(url_for("match_items", found_id=new_found_id, instant_score=best_match_score))
         return redirect(url_for("found_list"))
     return render_template("found_form.html")
 
@@ -1583,16 +1589,16 @@ def edit_found(item_id):
 @app.route("/dashboard")
 def dashboard():
     try:
-        tong_lost = LostItem.query.count()
+        tong_so = LostItem.query.count()
         tong_found = FoundItem.query.count()
-        all_lost = LostItem.query.all()
+        all_items = LostItem.query.all()
         all_found = FoundItem.query.all()
     except Exception:
-        tong_lost, tong_found, all_lost, all_found = 0, 0, [], []
+        tong_so, tong_found, all_items, all_found = 0, 0, [], []
 
-    # 1. Thống kê theo 5 danh mục
     category_counts = {cat: 0 for cat in CATEGORIES_MAP.keys()}
-    for item in all_lost:
+
+    for item in all_items:
         raw_cat = str(item.loai_do).strip() if item.loai_do else "Khác"
         mapped = False
         for new_cat, old_list in CATEGORIES_MAP.items():
@@ -1605,14 +1611,12 @@ def dashboard():
 
     thong_ke = [(cat, count) for cat, count in category_counts.items()]
 
-    # 2. Tính hiệu quả vận hành thực tế (Tỷ lệ hoàn trả & Thời gian trả trung bình)
     da_tra_found = [f for f in all_found if f.trang_thai in ("DA_TRA", "Đã hoàn trả")]
-    da_tim_lost = [l for l in all_lost if l.trang_thai in ("DA_TIM", "Đã tìm thấy")]
+    da_tim_lost = [l for l in all_items if l.trang_thai in ("DA_TIM", "Đã tìm thấy")]
 
     so_da_hoan_tra = len(da_tra_found)
     ty_le_hoan_tra = round((so_da_hoan_tra / tong_found) * 100, 1) if tong_found > 0 else 0.0
 
-    # Tính số giờ/ngày trung bình từ lúc nhặt đến lúc bàn giao
     durations_hours = []
     for f in da_tra_found:
         if getattr(f, "thoi_diem_tra", None) and f.ngay_nhat:
@@ -1633,7 +1637,7 @@ def dashboard():
 
     return render_template(
         "dashboard.html",
-        tong_so=tong_lost,
+        tong_so=tong_so,
         tong_found=tong_found,
         so_da_hoan_tra=so_da_hoan_tra,
         so_da_tim=len(da_tim_lost),
@@ -1641,6 +1645,7 @@ def dashboard():
         thoi_gian_tb=thoi_gian_tb,
         thong_ke=thong_ke
     )
+
 
 @app.route("/heatmap")
 def heatmap():
