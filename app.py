@@ -339,7 +339,7 @@ MARK_SYNONYM_GROUPS = {
     "tem_mac": ["mac", "tem", "nhan", "co ao", "vat ao", "nap may", "mat sau", "ben trong"],
     "moc_khoa": ["moc khoa", "gau bong", "day deo", "sticker", "hinh dan", "nhan dan", "bang ten"],
     "vi_tri_chi_tiet": ["tay trai", "tay phai", "tui ao", "tui trai", "tui phai", "lung ao", "goc duoi", "goc tren", "ngan ngoai", "ngan trong"],
-
+}
 CATEGORIES_MAP = {
     "Sách vở / Dụng cụ học tập": [
         "Sách vở / Dụng cụ học tập", "Sách vở", "Sách", "Vở", "Tập", "Bút",
