@@ -333,13 +333,12 @@ COLOR_WORDS_MAP = {
 
 MARK_SYNONYM_GROUPS = {
     "hu_khoa": ["hong khoa", "hu khoa", "ket khoa", "gay khoa", "mat dau khoa", "tuot khoa", "day keo hong", "day keo ket"],
-    "rach_son": ["rach", "thung", "son", "sut chi", "bung chi", "tray", "xuoc", "me", "nut", "vo"],
+    "rach_son": ["rach", "thung", "son", "sut chi", "bung chi", "tray", "xuoc", "me", "nut", "bi vo", "vo nat"],
     "vet_ban": ["dinh muc", "vet muc", "ban", "o", "dinh son", "but xoa", "vet ban", "lem muc"],
     "mat_cuc": ["mat cuc", "rung cuc", "mat nut", "rung nut", "dut cuc", "thieu cuc", "thieu nut"],
     "tem_mac": ["mac", "tem", "nhan", "co ao", "vat ao", "nap may", "mat sau", "ben trong"],
     "moc_khoa": ["moc khoa", "gau bong", "day deo", "sticker", "hinh dan", "nhan dan", "bang ten"],
     "vi_tri_chi_tiet": ["tay trai", "tay phai", "tui ao", "tui trai", "tui phai", "lung ao", "goc duoi", "goc tren", "ngan ngoai", "ngan trong"],
-}
 
 CATEGORIES_MAP = {
     "Sách vở / Dụng cụ học tập": [
