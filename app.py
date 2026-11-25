@@ -193,7 +193,7 @@ with app.app_context():
         db.session.rollback()
         print(f"Thông báo DB migration: {e}")
 
-CACHE_VERSION = 58
+CACHE_VERSION = 59
 CACHE_FILE = f"feature_cache_mobilenet_v{CACHE_VERSION}.json"
 CACHE_LOCK = threading.Lock()
 MAX_CACHE_SIZE = 400
@@ -323,7 +323,7 @@ def _extract_mobilenet_embedding(pil_img):
 STOP_WORDS_NO_ACCENT = {
     "con", "cai", "chiec", "hop", "bo", "cap", "doi", "qua", "trai",
     "tam", "buc", "to", "cuc", "quyen", "cuon", "cay", "ve", "mau",
-    "loai", "de", "ban", "hoc", "do", "dung", "cu", "thiet", "bi", "tap", "vat"
+    "loai", "de", "ban", "hoc", "do", "dung", "cu", "thiet", "bi", "vat"
 }
 COLOR_WORDS_MAP = {
     "den": "đen", "do": "đỏ", "xanh": "xanh", "vang": "vàng",
@@ -340,6 +340,7 @@ MARK_SYNONYM_GROUPS = {
     "moc_khoa": ["moc khoa", "gau bong", "day deo", "sticker", "hinh dan", "nhan dan", "bang ten"],
     "vi_tri_chi_tiet": ["tay trai", "tay phai", "tui ao", "tui trai", "tui phai", "lung ao", "goc duoi", "goc tren", "ngan ngoai", "ngan trong"],
 }
+
 CATEGORIES_MAP = {
     "Sách vở / Dụng cụ học tập": [
         "Sách vở / Dụng cụ học tập", "Sách vở", "Sách", "Vở", "Tập", "Bút",
@@ -907,34 +908,43 @@ def image_score(
         return 0, 0.0, 0, 0, False
 
 
-def _tokenize_meaningful_words(text_name):
+# ==============================================================================
+# XỬ LÝ NGÔN NGỮ TỰ NHIÊN TIẾNG VIỆT (TRÍCH XUẤT DANH TỪ TRUNG TÂM - HEAD NOUN)
+# ==============================================================================
+def _extract_noun_tokens(text_name):
+    """Tách các âm tiết mang nghĩa thực, loại bỏ lượng từ và tính từ chỉ màu sắc."""
     if not text_name:
-        return set()
+        return []
     t = re.sub(r'[^\w\s]', ' ', strip_accents(text_name))
-    words = [
+    return [
         w for w in t.split()
         if len(w) >= 2 and w not in STOP_WORDS_NO_ACCENT and w not in COLOR_WORDS_MAP
     ]
-    return set(words)
 
 
 def get_core_keyword(text_name):
+    """
+    Trích xuất Danh từ trung tâm (Head Noun) theo đúng cấu trúc ngữ pháp tiếng Việt:
+    [Danh từ chính ở đầu cụm] + [Từ bổ nghĩa phía sau].
+    VD: 'chìa khóa xe điện' -> 'chia khoa' (không bị nhầm với 'điện thoại').
+    """
     if not text_name:
         return ""
     t = strip_accents(text_name)
-
     if "chuot" in t or "mouse" in t:
         return "chuot"
 
-    tokens = sorted(_tokenize_meaningful_words(t))
-    if not tokens:
-        return t
+    words = _extract_noun_tokens(t)
+    if not words:
+        return t.strip()
+
+    head = " ".join(words[:2]) if len(words) >= 2 else words[0]
     nums = re.findall(r'\d+', t)
-    base = tokens[0]
-    return f"{base}_{'_'.join(nums)}" if nums else base
+    return f"{head}_{'_'.join(nums)}" if nums else head
 
 
 def similarity(text1, text2):
+    """Đo độ tương đồng tên đồ vật dựa trên Danh từ trung tâm (Head Noun) & chuỗi tổng thể."""
     if not text1 or not text2:
         return 0.0
     t1, t2 = strip_accents(text1), strip_accents(text2)
@@ -952,23 +962,23 @@ def similarity(text1, text2):
 
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
+
+    # 1. Trùng hoàn toàn danh từ trung tâm (VD: 'dien thoai' == 'dien thoai samsung')
     if k1 and k2 and k1 == k2:
         return 0.95
 
-    w1 = _tokenize_meaningful_words(t1)
-    w2 = _tokenize_meaningful_words(t2)
-    common = w1.intersection(w2)
-    if common:
-        non_generic = {w for w in common if w not in {"sach", "vo", "may"}}
-        if non_generic:
-            overlap_ratio = len(non_generic) / max(1, min(len(w1), len(w2)))
-            return min(0.95, 0.78 + 0.17 * overlap_ratio)
+    # 2. Danh từ đơn làm gốc cho cụm mở rộng (VD: 'vo' và 'vo o li', 'sach' và 'sach toan')
+    w1 = _extract_noun_tokens(t1)
+    w2 = _extract_noun_tokens(t2)
+    if w1 and w2 and w1[0] == w2[0]:
+        if len(w1) == 1 or len(w2) == 1:
+            return 0.85
+        if len(w1) >= 2 and len(w2) >= 2 and w1[1] == w2[1]:
+            return 0.92
 
-    if len(t1) >= 4 and len(t2) >= 4 and (t1 in t2 or t2 in t1):
-        return 0.85
-
-    seq_ratio = SequenceMatcher(None, t1, t2).ratio()
-    return round(seq_ratio * 0.70, 2) if seq_ratio >= 0.52 else 0.0
+    # 3. So sánh độ tương đồng chuỗi trên Danh từ trung tâm (chống lỗi gõ sai chính tả nhẹ)
+    seq_ratio = SequenceMatcher(None, k1, k2).ratio() if (k1 and k2) else 0.0
+    return round(seq_ratio * 0.75, 2) if seq_ratio >= 0.72 else 0.0
 
 
 def evaluate_color_match(lost_item, found_item, is_same_key, visual_colors1=None, visual_colors2=None):
@@ -1182,9 +1192,6 @@ def _score_pair_full(lost, found):
         )
     else:
         anh_score, image_ratio, best_i1, best_i2, vis_same = 0, 0.0, 0, 0, False
-
-    if not is_same_key and vis_same and is_same_cat:
-        ten_score = max(ten_score, 12)
 
     total_score = ten_score + mau_score + vi_tri_score + ngay_score + anh_score
     return {
@@ -1724,8 +1731,8 @@ def found_return(id):
 @app.route("/match/<int:item_id>")
 def match_items(item_id=None):
     """
-    Đối sánh v58: Thang 5 tiêu chí chuẩn 100 điểm (50 + 15 + 15 + 10 + 10 = 100).
-    Hỗ trợ lọc riêng theo từng đồ báo mất (item_id) hoặc từng đồ nhặt được (found_id).
+    Đối sánh v59 (Head-Noun NLP + Tổng quát):
+    Thang 5 tiêu chí chuẩn 100 điểm (50 + 15 + 15 + 10 + 10 = 100).
     """
     page = request.args.get("page", 1, type=int)
     cat_filter = request.args.get("category", "").strip()
@@ -1776,7 +1783,8 @@ def match_items(item_id=None):
                     mark_hints = analyze_distinctive_marks(lost, found)
                     both_have_imgs = lost.has_image and found.has_image
 
-                    if not is_same_key and not mark_hints:
+                    # Vòng lọc 1 (Sơ loại): Loại bỏ các cặp khác hẳn tên gọi và không cùng danh mục/màu sắc
+                    if not is_same_key:
                         if not is_same_cat or not both_have_imgs or color_conflict:
                             continue
 
@@ -1881,8 +1889,6 @@ def match_items(item_id=None):
                 anh_score, best_i1, best_i2, vis_same = 0, 0, 0, False
 
             ten_score_final = item["score_name"]
-            if not item["is_same_key"] and vis_same and item["is_same_cat"]:
-                ten_score_final = max(ten_score_final, 12)
 
             total_score = (
                 anh_score
@@ -1892,8 +1898,11 @@ def match_items(item_id=None):
                 + item["score_date"]
             )
 
-            if not item["is_same_key"] and not item["mark_hints"] and total_score < 55:
-                continue
+            # Vòng lọc 2 (Tổng quát): Nếu không trùng danh từ trung tâm tên gọi,
+            # bắt buộc phải có đặc trưng hình ảnh + ngữ nghĩa tên rất cao mới giữ lại.
+            if not item["is_same_key"]:
+                if ten_score_final < 8 or anh_score < 36 or total_score < 68:
+                    continue
 
             if total_score >= 75:
                 ket_luan = "🟢 Khả năng trùng khớp cao"
