@@ -238,6 +238,15 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         margin-top: 6px;
         font-size: 0.84rem;
     }
+    .tc-note-locked {
+        background: #f1f5f9;
+        border: 1px dashed #94a3b8;
+        color: #475569;
+        border-radius: 8px;
+        padding: 6px 10px;
+        margin-top: 6px;
+        font-size: 0.84rem;
+    }
 
     .tc-score-label {
         font-size: 0.85rem;
@@ -268,6 +277,17 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         margin-top: 10px;
         width: 100%;
     }
+    .tc-mark-locked-pill {
+        background: #f1f5f9;
+        color: #64748b;
+        border: 1px dashed #cbd5e1;
+        border-radius: 8px;
+        padding: 8px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        margin-top: 10px;
+        width: 100%;
+    }
 
     .tc-warning-box {
         background: #fef3c7;
@@ -289,15 +309,23 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         padding: 24px 20px;
         text-align: center;
     }
-    .tc-confirm-card h4 {
+    .tc-lock-card {
+        background: #ffffff;
+        border-radius: 18px;
+        box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+        border: 1px solid #bfdbfe;
+        padding: 24px 20px;
+        text-align: center;
+    }
+    .tc-confirm-card h4, .tc-lock-card h4 {
         font-weight: 800;
         color: #0f172a;
         font-size: 1.2rem;
-        margin-bottom: 16px;
+        margin-bottom: 8px;
     }
     .pin-confirm-group {
         max-width: 440px;
-        margin: 0 auto;
+        margin: 14px auto 0 auto;
         display: flex;
         gap: 10px;
         align-items: stretch;
@@ -315,17 +343,33 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         padding: 10px 14px;
     }
     .pin-confirm-input:focus {
-        border-color: #10b981;
+        border-color: #2563eb;
         background-color: #ffffff;
         outline: none;
-        box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+    }
+    .btn-pin-unlock {
+        background: linear-gradient(135deg, #2563eb, #1d4ed8);
+        color: #ffffff;
+        font-weight: 800;
+        font-size: 0.98rem;
+        padding: 10px 24px;
+        border-radius: 12px;
+        border: none;
+        white-space: nowrap;
+        box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+        transition: all 0.15s ease;
+    }
+    .btn-pin-unlock:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 6px 16px rgba(37, 99, 235, 0.38);
     }
     .btn-pin-submit {
         background: linear-gradient(135deg, #10b981, #059669);
         color: #ffffff;
         font-weight: 800;
-        font-size: 0.98rem;
-        padding: 10px 26px;
+        font-size: 1.02rem;
+        padding: 12px 32px;
         border-radius: 12px;
         border: none;
         white-space: nowrap;
@@ -416,9 +460,15 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
                         <div>🎨 <strong>Màu sắc:</strong> {{ lost.mau_sac or 'Chưa rõ' }}</div>
                         <div>📍 <strong>Nơi mất:</strong> {{ lost.noi_mat or 'Chưa rõ' }}</div>
                         <div>📅 <strong>Ngày mất:</strong> {{ lost.ngay_mat | vn_date }}</div>
-                        <div class="tc-note-highlight">
-                            🔍 <strong>Dấu hiệu riêng:</strong> {{ lost.mo_ta or 'Không có ghi chú' }}
-                        </div>
+                        {% if is_unlocked %}
+                            <div class="tc-note-highlight">
+                                🔓 <strong>Dấu hiệu riêng (Gốc):</strong> {{ lost.mo_ta or 'Không có ghi chú' }}
+                            </div>
+                        {% else %}
+                            <div class="tc-note-locked">
+                                🔒 <strong>Dấu hiệu riêng:</strong> {{ (lost.mo_ta | mask_hint) if lost.mo_ta else 'Không có ghi chú' }}
+                            </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -478,9 +528,15 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
                         <div>📍 <strong>Nơi nhặt:</strong> {{ found.noi_nhat or 'Chưa rõ' }}</div>
                         <div>📅 <strong>Ngày nhặt:</strong> {{ found.ngay_nhat | vn_date }}</div>
                         <div>📦 <strong>Nơi lưu giữ:</strong> <span class="text-success fw-bold">{{ found.noi_luu_giu or 'Chưa cập nhật' }}</span></div>
-                        <div class="tc-note-highlight">
-                            🔍 <strong>Dấu hiệu riêng:</strong> {{ found.mo_ta or 'Không có ghi chú' }}
-                        </div>
+                        {% if is_unlocked %}
+                            <div class="tc-note-highlight">
+                                🔓 <strong>Dấu hiệu riêng (Gốc):</strong> {{ found.mo_ta or 'Không có ghi chú' }}
+                            </div>
+                        {% else %}
+                            <div class="tc-note-locked">
+                                🔒 <strong>Dấu hiệu riêng:</strong> {{ (found.mo_ta | mask_hint) if found.mo_ta else 'Không có ghi chú' }}
+                            </div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -492,10 +548,16 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
                 <div class="tc-score-conclusion">{{ ket_luan }}</div>
 
                 {% if mark_hints %}
-                    <div class="tc-mark-match-pill">
-                        ✨ Đối chứng dấu hiệu
-                        <div class="fw-normal mt-1">{{ mark_hints | join(' • ') }}</div>
-                    </div>
+                    {% if is_unlocked %}
+                        <div class="tc-mark-match-pill">
+                            ✨ Đối chứng dấu hiệu
+                            <div class="fw-normal mt-1">{{ mark_hints | join(' • ') }}</div>
+                        </div>
+                    {% else %}
+                        <div class="tc-mark-locked-pill">
+                            🔒 Khớp {{ mark_hints|length }} dấu hiệu riêng (Nhập PIN bên dưới để mở khóa)
+                        </div>
+                    {% endif %}
                 {% endif %}
 
                 {% if image_warning %}
@@ -505,28 +567,58 @@ Bảng Kiểm Tra Đối Sánh Chi Tiết
         </div>
     </div>
 
-    <!-- KHUNG NHẬP MÃ PIN XÁC NHẬN TRAO TRẢ -->
-    <div class="tc-confirm-card">
-        <h4>🔑 Xác Nhận Trao Trả Đồ Thất Lạc</h4>
-        <form method="POST" action="{{ url_for('confirm_return', lost_id=lost.id, found_id=found.id) }}">
-            <div class="pin-confirm-group">
-                <input type="password"
-                       name="pin_code"
-                       class="pin-confirm-input"
-                       placeholder="Nhập mã PIN..."
-                       maxlength="10"
-                       required>
-                <button type="submit" class="btn-pin-submit">
-                    ✅ Xác Nhận
-                </button>
+    <!-- KHUNG XÁC THỰC PIN 1 LẦN & XÁC NHẬN TRAO TRẢ -->
+    {% if not is_unlocked %}
+        <div class="tc-lock-card">
+            <h4>🔒 Mở Khóa Dữ Liệu Đối Chứng Giáo Viên</h4>
+            <p class="text-muted mb-0" style="font-size: 0.9rem;">
+                Nhập Mã PIN giáo viên <strong>1 lần</strong> để xem đầy đủ tên riêng, mã lớp gốc và thực hiện bàn giao đồ
+            </p>
+            <form method="POST" action="{{ url_for('teacher_check', lost_id=lost.id, found_id=found.id) }}">
+                <input type="hidden" name="action" value="unlock_pin">
+                <div class="pin-confirm-group">
+                    <input type="password"
+                           name="pin_code"
+                           class="pin-confirm-input"
+                           placeholder="Nhập mã PIN..."
+                           maxlength="10"
+                           autofocus
+                           required>
+                    <button type="submit" class="btn-pin-unlock">
+                        🔓 Mở Khóa
+                    </button>
+                </div>
+            </form>
+            <div class="mt-3">
+                <a href="{{ url_for('match_items') }}" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
+                    ← Quay lại danh sách đối sánh
+                </a>
             </div>
-        </form>
-        <div class="mt-3">
-            <a href="{{ url_for('match_items') }}" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
-                ← Quay lại danh sách đối sánh
-            </a>
         </div>
-    </div>
+    {% else %}
+        <div class="tc-confirm-card">
+            <h4>✅ Xác Nhận Trao Trả Đồ Thất Lạc</h4>
+            <p class="text-success fw-semibold mb-3" style="font-size: 0.9rem;">
+                Đã xác thực quyền Giáo viên. Hãy đối chiếu trực tiếp thông tin trên với học sinh trước khi bấm hoàn trả.
+            </p>
+            <form method="POST" action="{{ url_for('confirm_return', lost_id=lost.id, found_id=found.id) }}">
+                <button type="submit" class="btn-pin-submit">
+                    ✅ Xác Nhận Đã Hoàn Trả Đồ
+                </button>
+            </form>
+            <div class="mt-3 d-flex justify-content-center gap-2">
+                <a href="{{ url_for('match_items') }}" class="btn btn-outline-secondary btn-sm rounded-pill px-3">
+                    ← Quay lại danh sách đối sánh
+                </a>
+                <form method="POST" action="{{ url_for('teacher_check', lost_id=lost.id, found_id=found.id) }}" class="d-inline">
+                    <input type="hidden" name="action" value="lock_pin">
+                    <button type="submit" class="btn btn-outline-danger btn-sm rounded-pill px-3">
+                        🔒 Khóa lại phiên giáo viên
+                    </button>
+                </form>
+            </div>
+        </div>
+    {% endif %}
 </div>
 
 <!-- MODAL PHÓNG TO & CHUYỂN ĐỔI ĐA GÓC ẢNH -->
