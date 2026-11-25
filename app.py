@@ -13,7 +13,7 @@ from datetime import datetime, timezone, timedelta
 from concurrent.futures import ThreadPoolExecutor
 import pandas as pd
 import requests
-from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory
+from flask import Flask, render_template, request, redirect, url_for, jsonify, send_file, send_from_directory, session, flash
 from werkzeug.utils import secure_filename
 from sqlalchemy import func, text
 from difflib import SequenceMatcher
@@ -1961,8 +1961,26 @@ def match_items(item_id=None):
         )
 
 
-@app.route("/teacher-check/<int:lost_id>/<int:found_id>")
+@app.route("/teacher-check/<int:lost_id>/<int:found_id>", methods=["GET", "POST"])
 def teacher_check(lost_id, found_id):
+    if request.method == "POST":
+        action = request.form.get("action")
+        if action == "unlock_pin":
+            pin_code = request.form.get("pin_code", "").strip()
+            if pin_code == get_current_pin():
+                session["teacher_unlocked"] = True
+            else:
+                return """
+                <script>
+                    alert("Mã PIN Giáo viên không chính xác! Không thể mở khóa thông tin gốc.");
+                    window.history.back();
+                </script>
+                """
+        elif action == "lock_pin":
+            session.pop("teacher_unlocked", None)
+
+    is_unlocked = bool(session.get("teacher_unlocked", False))
+
     try:
         lost = LostItem.query.get_or_404(lost_id)
         found = FoundItem.query.get_or_404(found_id)
@@ -2009,7 +2027,8 @@ def teacher_check(lost_id, found_id):
         server_img_score=res["score_image"],
         mark_hints=res["mark_hints"],
         ket_luan=ket_luan,
-        image_warning=image_warning
+        image_warning=image_warning,
+        is_unlocked=is_unlocked
     )
 
 
@@ -2018,10 +2037,10 @@ def confirm_return(lost_id, found_id):
     pin_code = request.form.get("pin_code", "").strip() if request.method == "POST" else request.args.get("pin_code", "").strip()
     current_pin = get_current_pin()
 
-    if pin_code != current_pin:
+    if not session.get("teacher_unlocked") and pin_code != current_pin:
         return """
         <script>
-            alert("Mã PIN Giáo viên không chính xác! Vui lòng thử lại.");
+            alert("Mã PIN Giáo viên không chính xác! Vui lòng mở khóa trước khi xác nhận hoàn trả.");
             window.history.back();
         </script>
         """
