@@ -2018,7 +2018,10 @@ def teacher_check(lost_id, found_id):
 
     image_warning = None
     if res["color_conflict"]:
-        image_warning = "⚠️ Hai món đồ có màu sắc trái ngược nhau, giáo viên cần đối chiếu kỹ."
+        if res["image_ratio"] >= 0.65:
+            image_warning = "ℹ️ Ảnh thực tế tương đồng, nhưng thông tin màu sắc hai bên khai báo bằng chữ đang khác nhau."
+        else:
+            image_warning = "⚠️ Màu sắc khai báo và hình ảnh có sự sai lệch, giáo viên cần đối chiếu kỹ."
     elif has1 and has2 and res["image_ratio"] < 0.25:
         image_warning = "⚠️ Độ tin cậy hình ảnh chưa cao, giáo viên nên kiểm tra kĩ đồ vật thực tế."
     elif not (has1 and has2):
