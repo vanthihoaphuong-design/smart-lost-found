@@ -1804,7 +1804,7 @@ def match_items(item_id=None):
     cat_filter = request.args.get("category", "").strip()
     found_id = request.args.get("found_id", type=int)
     instant_score = request.args.get("instant_score", 0, type=int)
-    per_page = 10
+    per_page = 15
 
     try:
         lost_query = LostItem.query.filter(LostItem.trang_thai != "DA_TIM")
@@ -1848,10 +1848,11 @@ def match_items(item_id=None):
                     mau_score, color_conflict = evaluate_color_match(lost, found, is_same_key)
                     mark_hints = analyze_distinctive_marks(lost, found)
                     both_have_imgs = lost.has_image and found.has_image
-
-                    if not is_same_key:
-                        if not is_same_cat or not both_have_imgs or color_conflict:
-                            continue
+                    if not is_same_key and not is_same_cat:
+                        continue
+                    #if not is_same_key:
+                        #if not is_same_cat or not both_have_imgs or color_conflict:
+                            #continue
 
                     sig = (
                         strip_accents(lost.ten_do),
@@ -1909,7 +1910,7 @@ def match_items(item_id=None):
         )
 
         urls_to_fetch = set()
-        for item in candidates[:30]:
+        for item in candidates[:60]:
             if item["lost"].has_image and item["found"].has_image:
                 for u in split_image_list(item["lost"].hinh_anh):
                     cached_f = get_feature_cache(u)
@@ -1962,10 +1963,11 @@ def match_items(item_id=None):
                 + item["score_location"]
                 + item["score_date"]
             )
-
-            if not item["is_same_key"]:
-                if ten_score_final < 8 or anh_score < 36 or total_score < 68:
+            if total_score < 38:
                     continue
+           # if not item["is_same_key"]:
+                #if ten_score_final < 8 or anh_score < 36 or total_score < 68:
+                    #continue
 
             if total_score >= 75:
                 ket_luan = "🟢 Khả năng trùng khớp cao"
