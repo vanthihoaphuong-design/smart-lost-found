@@ -86,49 +86,36 @@ def format_vn_date(date_val):
             continue
     return s
 
-
 @app.template_filter("mask_hint")
 def mask_distinctive_hint(note_val):
-    """
-    Hiển thị gợi ý dấu hiệu riêng cho học sinh dễ nhận ra đồ,
-    đồng thời che bớt mã lớp và tên riêng (kể cả khi viết thường sau từ 'tên', 'chữ', 'ký', 'ghi'...).
-    """
     if not note_val:
         return ""
     s = str(note_val).strip()
     if s.lower() in {"none", "null", ""}:
         return ""
 
-    s = re.sub(r'\b(\d{1,2})[a-zA-Z]\d{1,2}\b', r'\1**', s)
+    # 1. Che các con số, mệnh giá tiền (15k, 50.000đ, 20000), mã lớp (9A1, 12A2)
+    masked = re.sub(r'\b\d+[a-zA-Z0-9.,đkK]*\b', '***', s)
 
-    trigger_words = {"ten", "chu", "ky", "ki", "ghi", "de"}
-    ignore_after_trigger = {"la", "o", "bang", "muc", "but", "nho", "to", "mo", "ro", "lop", "rieng"}
+    # 2. Che tên riêng hoặc chi tiết định danh đứng sau các từ khóa chỉ điểm
+    keywords = r'(tên|chữ|lớp|kẹp|đựng|bên trong|mật khẩu|mã số|số|hiệu|ký hiệu)'
+    masked = re.sub(
+        rf'({keywords}\s+)([^\s,.;:!?()]+(?:\s+[A-ZÀ-Ỹ][^\s,.;:!?()]*)?)',
+        r'\1***',
+        masked,
+        flags=re.IGNORECASE
+    )
 
-    tokens = s.split(" ")
-    masked_tokens = []
-    prev_is_trigger = False
+    # 3. Che tên riêng viết hoa ở GIỮA câu (bỏ qua chữ viết hoa đầu câu như "Đôi", "Mũ")
+    def mask_mid_sentence_caps(match):
+        word = match.group(0)
+        if word.lower() in {"casio", "dell", "asus", "hp", "iphone", "samsung", "nike", "adidas"}:
+            return word
+        return word[0] + "***"
 
-    for idx, tok in enumerate(tokens):
-        clean_alpha = re.sub(r'[^A-Za-zÀ-ỹ]', '', tok)
-        punct_suffix = tok[len(clean_alpha):] if clean_alpha and tok.startswith(clean_alpha) else ""
-        low_alpha = strip_accents(clean_alpha)
+    masked = re.sub(r'(?<=[a-zà-ỹ0-9,]\s)[A-ZÀ-Ỹ][a-zà-ỹ]+', mask_mid_sentence_caps, masked)
 
-        should_mask = False
-        if len(clean_alpha) >= 2:
-            if prev_is_trigger and low_alpha not in ignore_after_trigger:
-                should_mask = True
-            elif idx > 0 and clean_alpha[0].isupper():
-                should_mask = True
-
-        if should_mask:
-            masked_tokens.append(clean_alpha[0] + "***" + punct_suffix)
-        else:
-            masked_tokens.append(tok)
-
-        prev_is_trigger = (low_alpha in trigger_words)
-
-    return " ".join(masked_tokens)
-
+    return masked
 
 UPLOAD_FOLDER = os.path.join("static", "uploads")
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
