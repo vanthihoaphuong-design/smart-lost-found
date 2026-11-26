@@ -1693,7 +1693,8 @@ def dashboard():
             same_key = (sim >= 0.72) or (k1 == k2 and k1 != "")
             same_cat = (c1 != "" and c1 == c2)
             _, c_conf = evaluate_color_match(l, f, same_key)
-            if not same_key and (not same_cat or not (has1 and has2) or c_conf):
+           # if not same_key and (not same_cat or not (has1 and has2) or c_conf):
+            if not same_key and not same_cat:
                 continue
             ai_candidate_pairs += 1
             if same_key and not c_conf:
