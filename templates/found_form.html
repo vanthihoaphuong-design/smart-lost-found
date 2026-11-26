@@ -130,15 +130,24 @@ Báo nhặt được đồ
         </div>
 
         <div class="col-md-6">
-            <label class="form-label">Ảnh đồ vật (Có thể chọn tối đa 3 ảnh: mặt trước, mặt sau, chi tiết)</label>
-            <input 
-                type="file" 
-                name="hinh_anh" 
-                class="form-control" 
-                accept="image/*" 
-                multiple
-                id="previewImage">
-            <small class="text-muted d-block mt-1">💡 Chọn tối đa 3 ảnh để AI nhận diện chuẩn xác hơn.</small>
+            <label class="form-label">Ảnh đồ vật (<span id="imgCounterLabel" class="text-success fw-bold">0/3 ảnh</span>: mặt trước, mặt sau, chi tiết)</label>
+            
+            <!-- Input thực tế gửi lên server -->
+            <input type="file" name="hinh_anh" id="previewImage" accept="image/*" multiple class="d-none">
+            <!-- Input phụ mở thẳng camera trên điện thoại -->
+            <input type="file" id="cameraInput" accept="image/*" capture="environment" class="d-none">
+            <!-- Input phụ mở thư viện ảnh -->
+            <input type="file" id="galleryInput" accept="image/*" multiple class="d-none">
+
+            <div class="d-flex flex-wrap gap-2">
+                <button type="button" id="btnOpenCamera" class="btn btn-outline-success fw-semibold" onclick="document.getElementById('cameraInput').click()">
+                    📸 Chụp ảnh mới
+                </button>
+                <button type="button" id="btnOpenGallery" class="btn btn-outline-secondary fw-semibold" onclick="document.getElementById('galleryInput').click()">
+                    🖼️ Chọn từ thư viện
+                </button>
+            </div>
+            <small class="text-muted d-block mt-1">💡 Có thể bấm <b>Chụp ảnh mới</b> nhiều lần liên tiếp để cộng dồn tối đa 3 góc chụp.</small>
 
             <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
                 <button type="button" id="btnAiAutoFill" class="btn btn-sm btn-outline-success rounded-pill px-3 fw-semibold" onclick="runAiAutoFill()">
@@ -167,39 +176,90 @@ Báo nhặt được đồ
 </form>
 
 <script>
-const imageInput = document.getElementById("previewImage");
+const mainInput = document.getElementById("previewImage");
+const cameraInput = document.getElementById("cameraInput");
+const galleryInput = document.getElementById("galleryInput");
 const previewContainer = document.getElementById("multiImgPreview");
+const counterLabel = document.getElementById("imgCounterLabel");
+let accumulatedFiles = [];
 
-if (imageInput) {
-    imageInput.addEventListener("change", function(){
-        previewContainer.innerHTML = "";
-        const files = Array.from(this.files);
-        if (files.length > 3) {
-            alert("⚠️ Hệ thống chỉ hỗ trợ tối đa 3 ảnh (mặt trước, mặt sau, chi tiết). Hệ thống sẽ lấy 3 ảnh đầu tiên!");
-        }
-        files.slice(0, 3).forEach((file, idx) => {
-            const wrapper = document.createElement("div");
-            wrapper.className = "text-center";
-            const img = document.createElement("img");
-            img.src = URL.createObjectURL(file);
-            img.style.cssText = "width:140px;height:140px;object-fit:cover;border-radius:12px;border:1px solid #ddd;padding:4px;";
-            const label = document.createElement("div");
-            label.className = "small text-muted mt-1 fw-bold";
-            label.innerText = `Ảnh ${idx + 1}`;
-            wrapper.appendChild(img);
-            wrapper.appendChild(label);
-            previewContainer.appendChild(wrapper);
-        });
+function syncAndRenderFiles() {
+    const dt = new DataTransfer();
+    accumulatedFiles.forEach(file => dt.items.add(file));
+    mainInput.files = dt.files;
+
+    counterLabel.innerText = `${accumulatedFiles.length}/3 ảnh`;
+    document.getElementById("btnOpenCamera").disabled = accumulatedFiles.length >= 3;
+    document.getElementById("btnOpenGallery").disabled = accumulatedFiles.length >= 3;
+
+    previewContainer.innerHTML = "";
+    accumulatedFiles.forEach((file, idx) => {
+        const wrapper = document.createElement("div");
+        wrapper.className = "text-center position-relative";
+        wrapper.style.width = "140px";
+
+        const img = document.createElement("img");
+        img.src = URL.createObjectURL(file);
+        img.style.cssText = "width:140px;height:140px;object-fit:cover;border-radius:12px;border:1px solid #cbd5e1;padding:4px;background:#fff;";
+
+        const removeBtn = document.createElement("button");
+        removeBtn.type = "button";
+        removeBtn.innerHTML = "&times;";
+        removeBtn.title = "Xóa ảnh này";
+        removeBtn.style.cssText = "position:absolute;top:-8px;right:-8px;width:26px;height:26px;border-radius:50%;border:none;background:#ef4444;color:#fff;font-weight:bold;line-height:1;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.2);";
+        removeBtn.onclick = function () {
+            accumulatedFiles.splice(idx, 1);
+            syncAndRenderFiles();
+        };
+
+        const label = document.createElement("div");
+        label.className = "small text-muted mt-1 fw-bold";
+        label.innerText = `Ảnh ${idx + 1}`;
+
+        wrapper.appendChild(img);
+        wrapper.appendChild(removeBtn);
+        wrapper.appendChild(label);
+        previewContainer.appendChild(wrapper);
     });
 }
 
+function handleIncomingFiles(fileList) {
+    const incoming = Array.from(fileList || []);
+    if (!incoming.length) return;
+
+    const remainingSlots = 3 - accumulatedFiles.length;
+    if (remainingSlots <= 0) {
+        alert("⚠️ Bạn đã chọn đủ tối đa 3 ảnh. Hãy xóa bớt 1 ảnh nếu muốn thêm mới!");
+        return;
+    }
+    if (incoming.length > remainingSlots) {
+        alert(`⚠️ Chỉ có thể thêm tối đa ${remainingSlots} ảnh nữa (tổng tối đa 3 ảnh).`);
+    }
+
+    incoming.slice(0, remainingSlots).forEach(file => {
+        const uniqueName = file.name === "image.jpg" ? `photo_${Date.now()}_${Math.floor(Math.random()*1000)}.jpg` : file.name;
+        const renamedFile = new File([file], uniqueName, { type: file.type, lastModified: file.lastModified });
+        accumulatedFiles.push(renamedFile);
+    });
+    syncAndRenderFiles();
+}
+
+cameraInput.addEventListener("change", function () {
+    handleIncomingFiles(this.files);
+    this.value = "";
+});
+
+galleryInput.addEventListener("change", function () {
+    handleIncomingFiles(this.files);
+    this.value = "";
+});
+
 async function runAiAutoFill() {
-    const fileInput = document.getElementById("previewImage");
     const statusEl = document.getElementById("aiAutoFillStatus");
     const btn = document.getElementById("btnAiAutoFill");
 
-    if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
-        statusEl.innerHTML = '<span class="text-danger">⚠️ Vui lòng chọn ít nhất 1 ảnh trước!</span>';
+    if (!accumulatedFiles || accumulatedFiles.length === 0) {
+        statusEl.innerHTML = '<span class="text-danger">⚠️ Vui lòng chụp hoặc chọn ít nhất 1 ảnh trước!</span>';
         return;
     }
 
@@ -207,7 +267,7 @@ async function runAiAutoFill() {
     statusEl.innerHTML = '<span class="text-success">⏳ AI MobileNetV2 đang phân tích ảnh...</span>';
 
     const formData = new FormData();
-    formData.append("image", fileInput.files[0]);
+    formData.append("image", accumulatedFiles[0]);
 
     try {
         const res = await fetch("/api/analyze-image", { method: "POST", body: formData });
