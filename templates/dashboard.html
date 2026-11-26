@@ -175,10 +175,31 @@
         font-weight: 800;
         color: #1e3a8a;
         font-size: 0.95rem;
-        margin-bottom: 4px;
+        margin-bottom: 6px;
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 8px;
+    }
+
+    .dashboard-page .ai-metric-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 10px;
+    }
+
+    .dashboard-page .ai-metric-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 12px;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        background: #ffffff;
+        border: 1px solid #bfdbfe;
+        color: #1e40af;
     }
 
     .dashboard-page .dashboard-card {
@@ -311,6 +332,10 @@
 {% set found_lost_cnt = so_da_tim if so_da_tim is defined else 0 %}
 {% set return_rate = ty_le_hoan_tra if ty_le_hoan_tra is defined else 0 %}
 {% set avg_time_str = thoi_gian_tb if thoi_gian_tb is defined else 'Chưa đủ mẫu' %}
+{% set total_pairs = ai_total_pairs if ai_total_pairs is defined else 0 %}
+{% set candidate_pairs = ai_candidate_pairs if ai_candidate_pairs is defined else 0 %}
+{% set high_conf_pairs = ai_high_conf_pairs if ai_high_conf_pairs is defined else 0 %}
+{% set filter_rate = ai_filter_rate if ai_filter_rate is defined else 0 %}
 
 {% if thong_ke is defined and thong_ke %}
     {% if thong_ke is mapping %}
@@ -373,11 +398,11 @@
 
         <div class="col-12 col-sm-6 col-xl-3">
             <div class="stat-card" style="border-left: 4px solid #8b5cf6;">
-                <div class="stat-label">⚡ Thời gian trả TB</div>
+                <div class="stat-label">⚡ Thời gian xử lý TB</div>
                 <div class="stat-number-row">
                     <div class="stat-number" style="color: #7c3aed; font-size: clamp(1.75rem, 2.5vw, 2.2rem);">{{ avg_time_str }}</div>
                 </div>
-                <p class="stat-note">Thời gian trung bình từ lúc nhặt đến khi hoàn trả.</p>
+                <p class="stat-note">Thời gian trung bình từ lúc đăng tin đến khi hoàn trả.</p>
             </div>
         </div>
     </div>
@@ -422,11 +447,16 @@
 
     <div class="ai-notice-card">
         <div class="ai-notice-title">
-            <span>🔔 Cảnh báo tự động từ Hệ thống AI</span>
+            <span>🔔 Hiệu suất & Cảnh báo tự động từ Hệ thống AI</span>
         </div>
         <p class="mb-0 text-secondary" style="font-size: 0.92rem;">
-            ✅ Hệ thống AI tự động phát hiện các cặp đồ vật có độ tin cậy trùng khớp cao (&ge; 80 điểm) và sẵn sàng xuất báo cáo tổng hợp cho Ban Giám hiệu / Cán bộ quản lý.
+            ✅ Hệ thống AI tự động đối sánh <strong>{{ total_pairs }}</strong> tổ hợp dữ liệu, loại bỏ <strong>{{ filter_rate }}%</strong> cặp nhiễu khác loại và khoanh vùng <strong>{{ candidate_pairs }}</strong> cặp tiềm năng để hỗ trợ xác minh nhanh.
         </p>
+        <div class="ai-metric-badges">
+            <span class="ai-metric-badge">🧠 Lọc nhiễu AI: {{ filter_rate }}%</span>
+            <span class="ai-metric-badge" style="color:#065f46;border-color:#a7f3d0;background:#ecfdf5;">🎯 Cặp trùng khớp tiềm năng: {{ candidate_pairs }} cặp ({{ high_conf_pairs }} cặp độ tin cậy cao)</span>
+            <a href="/match" class="ai-metric-badge text-decoration-none" style="background:#2563eb;color:#ffffff;border-color:#2563eb;">🔍 Xem kết quả đối sánh &rarr;</a>
+        </div>
     </div>
 
     <div class="dashboard-layout">
