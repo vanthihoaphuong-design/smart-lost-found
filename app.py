@@ -1910,7 +1910,7 @@ def match_items(item_id=None):
         )
 
         urls_to_fetch = set()
-        for item in candidates[:60]:
+        for item in candidates[:25]:
             if item["lost"].has_image and item["found"].has_image:
                 for u in split_image_list(item["lost"].hinh_anh):
                     cached_f = get_feature_cache(u)
@@ -1963,7 +1963,7 @@ def match_items(item_id=None):
                 + item["score_location"]
                 + item["score_date"]
             )
-            if total_score < 38:
+            if total_score < 52:
                     continue
            # if not item["is_same_key"]:
                 #if ten_score_final < 8 or anh_score < 36 or total_score < 68:
