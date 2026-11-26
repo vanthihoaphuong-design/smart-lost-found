@@ -10,7 +10,7 @@ Báo nhặt được đồ
 📦 Báo nhặt được đồ
 </h2>
 
-<form action="/found" method="POST" enctype="multipart/form-data">
+<form id="foundForm" action="/found" method="POST" enctype="multipart/form-data">
 
     <div class="row">
         <div class="col-md-6">
@@ -147,7 +147,7 @@ Báo nhặt được đồ
                     🖼️ Chọn từ thư viện
                 </button>
             </div>
-            <small class="text-muted d-block mt-1">💡 Có thể bấm <b>Chụp ảnh mới</b> nhiều lần liên tiếp để cộng dồn tối đa 3 góc chụp.</small>
+            <small id="compressStatus" class="text-muted d-block mt-1">💡 Ảnh chụp được tự động tối ưu dung lượng siêu nhẹ (~120KB) giúp đăng bài cực nhanh trên 4G/Wi-Fi.</small>
 
             <div class="mt-2 d-flex align-items-center gap-2 flex-wrap">
                 <button type="button" id="btnAiAutoFill" class="btn btn-sm btn-outline-success rounded-pill px-3 fw-semibold" onclick="runAiAutoFill()">
@@ -165,7 +165,7 @@ Báo nhặt được đồ
     <br>
 
     <div class="text-center">
-        <button type="submit" class="btn btn-success btn-lg">
+        <button type="submit" id="btnSubmitForm" class="btn btn-success btn-lg">
             💾 Lưu thông tin
         </button>
         <a href="/found-list" class="btn btn-secondary btn-lg">
@@ -181,7 +181,57 @@ const cameraInput = document.getElementById("cameraInput");
 const galleryInput = document.getElementById("galleryInput");
 const previewContainer = document.getElementById("multiImgPreview");
 const counterLabel = document.getElementById("imgCounterLabel");
+const compressStatus = document.getElementById("compressStatus");
 let accumulatedFiles = [];
+
+function compressImageFile(file, maxDim = 1024, quality = 0.82) {
+    return new Promise((resolve) => {
+        if (!file.type.startsWith("image/")) {
+            resolve(file);
+            return;
+        }
+        const reader = new FileReader();
+        reader.onload = function (e) {
+            const img = new Image();
+            img.onload = function () {
+                let w = img.width;
+                let h = img.height;
+                if (w > maxDim || h > maxDim) {
+                    if (w > h) {
+                        h = Math.round((h * maxDim) / w);
+                        w = maxDim;
+                    } else {
+                        w = Math.round((w * maxDim) / h);
+                        h = maxDim;
+                    }
+                }
+                const canvas = document.createElement("canvas");
+                canvas.width = w;
+                canvas.height = h;
+                const ctx = canvas.getContext("2d");
+                ctx.drawImage(img, 0, 0, w, h);
+                canvas.toBlob(function (blob) {
+                    if (!blob) {
+                        resolve(file);
+                        return;
+                    }
+                    const baseName = (file.name && file.name !== "image.jpg")
+                        ? file.name.replace(/\.[^.]+$/, "")
+                        : `photo_${Date.now()}_${Math.floor(Math.random() * 1000)}`;
+                    const compressedFile = new File([blob], `${baseName}.jpg`, {
+                        type: "image/jpeg",
+                        lastModified: Date.now()
+                    });
+                    resolve(compressedFile);
+                }, "image/jpeg", quality);
+            };
+            img.onerror = () => resolve(file);
+            img.src = e.target.result;
+        };
+        reader.onerror = () => resolve(file);
+        reader.readAsDataURL(file);
+    });
+}
 
 function syncAndRenderFiles() {
     const dt = new DataTransfer();
@@ -212,9 +262,10 @@ function syncAndRenderFiles() {
             syncAndRenderFiles();
         };
 
+        const sizeKB = Math.max(1, Math.round(file.size / 1024));
         const label = document.createElement("div");
         label.className = "small text-muted mt-1 fw-bold";
-        label.innerText = `Ảnh ${idx + 1}`;
+        label.innerText = `Ảnh ${idx + 1} (${sizeKB} KB)`;
 
         wrapper.appendChild(img);
         wrapper.appendChild(removeBtn);
@@ -223,7 +274,7 @@ function syncAndRenderFiles() {
     });
 }
 
-function handleIncomingFiles(fileList) {
+async function handleIncomingFiles(fileList) {
     const incoming = Array.from(fileList || []);
     if (!incoming.length) return;
 
@@ -236,22 +287,36 @@ function handleIncomingFiles(fileList) {
         alert(`⚠️ Chỉ có thể thêm tối đa ${remainingSlots} ảnh nữa (tổng tối đa 3 ảnh).`);
     }
 
-    incoming.slice(0, remainingSlots).forEach(file => {
-        const uniqueName = file.name === "image.jpg" ? `photo_${Date.now()}_${Math.floor(Math.random()*1000)}.jpg` : file.name;
-        const renamedFile = new File([file], uniqueName, { type: file.type, lastModified: file.lastModified });
-        accumulatedFiles.push(renamedFile);
-    });
+    const toProcess = incoming.slice(0, remainingSlots);
+    const btnCam = document.getElementById("btnOpenCamera");
+    const btnGal = document.getElementById("btnOpenGallery");
+    btnCam.disabled = true;
+    btnGal.disabled = true;
+    compressStatus.innerHTML = '<span class="text-success fw-semibold">⏳ Đang nén tối ưu ảnh trên điện thoại...</span>';
+
+    for (const file of toProcess) {
+        const optimized = await compressImageFile(file, 1024, 0.82);
+        accumulatedFiles.push(optimized);
+    }
+
+    compressStatus.innerHTML = '✅ Đã tối ưu ảnh siêu nhẹ! Có thể chụp thêm hoặc bấm <b>Lưu thông tin</b>.';
     syncAndRenderFiles();
 }
 
-cameraInput.addEventListener("change", function () {
-    handleIncomingFiles(this.files);
+cameraInput.addEventListener("change", async function () {
+    await handleIncomingFiles(this.files);
     this.value = "";
 });
 
-galleryInput.addEventListener("change", function () {
-    handleIncomingFiles(this.files);
+galleryInput.addEventListener("change", async function () {
+    await handleIncomingFiles(this.files);
     this.value = "";
+});
+
+document.getElementById("foundForm").addEventListener("submit", function () {
+    const submitBtn = document.getElementById("btnSubmitForm");
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = "⏳ Đang lưu & đối sánh AI...";
 });
 
 async function runAiAutoFill() {
