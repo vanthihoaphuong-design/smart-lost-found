@@ -99,10 +99,8 @@ def mask_distinctive_hint(note_val):
     if s.lower() in {"none", "null", ""}:
         return ""
 
-    # 1. Che mã lớp (ví dụ: 7A3 -> 7**, 11A1 -> 11**)
     s = re.sub(r'\b(\d{1,2})[a-zA-Z]\d{1,2}\b', r'\1**', s)
 
-    # 2. Che tên riêng viết hoa hoặc từ đứng ngay sau từ khóa chỉ tên/ký hiệu
     trigger_words = {"ten", "chu", "ky", "ki", "ghi", "de"}
     ignore_after_trigger = {"la", "o", "bang", "muc", "but", "nho", "to", "mo", "ro", "lop", "rieng"}
 
@@ -178,7 +176,9 @@ with app.app_context():
         for sql_cmd in [
             "ALTER TABLE found_item ADD COLUMN noi_luu_giu VARCHAR(200);",
             "ALTER TABLE found_item ADD COLUMN thoi_diem_tra TIMESTAMP;",
+            "ALTER TABLE found_item ADD COLUMN ngay_dang TIMESTAMP;",
             "ALTER TABLE lost_item ADD COLUMN thoi_diem_tra TIMESTAMP;",
+            "ALTER TABLE lost_item ADD COLUMN ngay_dang TIMESTAMP;",
             "ALTER TABLE found_item ADD COLUMN mo_ta TEXT;",
             "ALTER TABLE lost_item ADD COLUMN mo_ta TEXT;",
             "ALTER TABLE found_item ALTER COLUMN hinh_anh TYPE TEXT;",
@@ -926,7 +926,6 @@ def get_core_keyword(text_name):
     """
     Trích xuất Danh từ trung tâm (Head Noun) theo đúng cấu trúc ngữ pháp tiếng Việt:
     [Danh từ chính ở đầu cụm] + [Từ bổ nghĩa phía sau].
-    VD: 'chìa khóa xe điện' -> 'chia khoa' (không bị nhầm với 'điện thoại').
     """
     if not text_name:
         return ""
@@ -963,11 +962,9 @@ def similarity(text1, text2):
     k1 = get_core_keyword(t1)
     k2 = get_core_keyword(t2)
 
-    # 1. Trùng hoàn toàn danh từ trung tâm (VD: 'dien thoai' == 'dien thoai samsung')
     if k1 and k2 and k1 == k2:
         return 0.95
 
-    # 2. Danh từ đơn làm gốc cho cụm mở rộng (VD: 'vo' và 'vo o li', 'sach' và 'sach toan')
     w1 = _extract_noun_tokens(t1)
     w2 = _extract_noun_tokens(t2)
     if w1 and w2 and w1[0] == w2[0]:
@@ -976,7 +973,6 @@ def similarity(text1, text2):
         if len(w1) >= 2 and len(w2) >= 2 and w1[1] == w2[1]:
             return 0.92
 
-    # 3. So sánh độ tương đồng chuỗi trên Danh từ trung tâm (chống lỗi gõ sai chính tả nhẹ)
     seq_ratio = SequenceMatcher(None, k1, k2).ratio() if (k1 and k2) else 0.0
     return round(seq_ratio * 0.75, 2) if seq_ratio >= 0.72 else 0.0
 
@@ -1149,7 +1145,6 @@ def _score_pair_full(lost, found):
     """
     Hàm lõi chấm điểm 1 cặp (LostItem, FoundItem) theo 5 tiêu chí chuẩn 100 điểm:
     Hình ảnh (50) + Tên đồ (15) + Màu sắc (15) + Vị trí (10) + Thời gian (10) = 100.
-    Dấu hiệu riêng được trích xuất làm thông tin đối chứng cho Giáo viên.
     """
     has1 = check_real_image(lost.hinh_anh)
     has2 = check_real_image(found.hinh_anh)
@@ -1268,6 +1263,7 @@ def lost():
         new_item_id = None
         best_match_score = 0
         try:
+            now_vn = datetime.now(VN_TZ).replace(tzinfo=None)
             item = LostItem(
                 ten_do=ten_do,
                 loai_do=loai_do,
@@ -1281,6 +1277,15 @@ def lost():
             db.session.add(item)
             db.session.commit()
             new_item_id = item.id
+
+            try:
+                db.session.execute(
+                    text("UPDATE lost_item SET ngay_dang = :ts WHERE id = :id"),
+                    {"ts": now_vn, "id": new_item_id}
+                )
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
             active_found = FoundItem.query.filter(FoundItem.trang_thai != "DA_TRA").order_by(FoundItem.id.desc()).limit(25).all()
             for f_item in active_found:
@@ -1324,6 +1329,7 @@ def found():
         new_found_id = None
         best_match_score = 0
         try:
+            now_vn = datetime.now(VN_TZ).replace(tzinfo=None)
             item = FoundItem(
                 ten_do=ten_do,
                 loai_do=loai_do,
@@ -1338,6 +1344,15 @@ def found():
             db.session.add(item)
             db.session.commit()
             new_found_id = item.id
+
+            try:
+                db.session.execute(
+                    text("UPDATE found_item SET ngay_dang = :ts WHERE id = :id"),
+                    {"ts": now_vn, "id": new_found_id}
+                )
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
 
             active_lost = LostItem.query.filter(LostItem.trang_thai != "DA_TIM").order_by(LostItem.id.desc()).limit(25).all()
             for l_item in active_lost:
@@ -1623,12 +1638,30 @@ def dashboard():
     so_da_hoan_tra = len(da_tra_found)
     ty_le_hoan_tra = round((so_da_hoan_tra / tong_found) * 100, 1) if tong_found > 0 else 0.0
 
+    # Đọc thời điểm đăng tin thực tế từ DB để tránh sai lệch do học sinh gõ nhầm ngày tháng
+    ngay_dang_map = {}
+    try:
+        rows = db.session.execute(text("SELECT id, ngay_dang FROM found_item WHERE ngay_dang IS NOT NULL")).fetchall()
+        for r in rows:
+            val = r[1]
+            if isinstance(val, str):
+                for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+                    try:
+                        val = datetime.strptime(val, fmt)
+                        break
+                    except ValueError:
+                        continue
+            if isinstance(val, datetime):
+                ngay_dang_map[r[0]] = val
+    except Exception:
+        db.session.rollback()
+
     durations_hours = []
     for f in da_tra_found:
-        if getattr(f, "thoi_diem_tra", None) and f.ngay_nhat:
-            dt_nhat = parse_date_flexible(f.ngay_nhat)
-            if dt_nhat:
-                diff_sec = (f.thoi_diem_tra - dt_nhat).total_seconds()
+        if getattr(f, "thoi_diem_tra", None):
+            dt_start = ngay_dang_map.get(f.id) or parse_date_flexible(f.ngay_nhat)
+            if dt_start:
+                diff_sec = (f.thoi_diem_tra - dt_start).total_seconds()
                 if diff_sec >= 0:
                     durations_hours.append(diff_sec / 3600.0)
 
@@ -1641,6 +1674,34 @@ def dashboard():
     else:
         thoi_gian_tb = "Chưa đủ mẫu"
 
+    # Thống kê hiệu suất AI: Tỷ lệ lọc nhiễu đa tầng & Số cặp ghép nối tiềm năng
+    active_lost = [l for l in all_items if l.trang_thai != "DA_TIM"]
+    active_found = [f for f in all_found if f.trang_thai != "DA_TRA"]
+    ai_total_pairs = len(active_lost) * len(active_found)
+    ai_candidate_pairs = 0
+    ai_high_conf_pairs = 0
+
+    for l in active_lost:
+        k1 = get_core_keyword(l.ten_do)
+        c1 = auto_normalize_category(l.ten_do, l.loai_do)
+        has1 = check_real_image(l.hinh_anh)
+        for f in active_found:
+            k2 = get_core_keyword(f.ten_do)
+            c2 = auto_normalize_category(f.ten_do, f.loai_do)
+            has2 = check_real_image(f.hinh_anh)
+            sim = similarity(l.ten_do, f.ten_do)
+            same_key = (sim >= 0.72) or (k1 == k2 and k1 != "")
+            same_cat = (c1 != "" and c1 == c2)
+            _, c_conf = evaluate_color_match(l, f, same_key)
+            if not same_key and (not same_cat or not (has1 and has2) or c_conf):
+                continue
+            ai_candidate_pairs += 1
+            if same_key and not c_conf:
+                ai_high_conf_pairs += 1
+
+    ai_noise_filtered = max(0, ai_total_pairs - ai_candidate_pairs)
+    ai_filter_rate = round((ai_noise_filtered / ai_total_pairs) * 100, 1) if ai_total_pairs > 0 else 0.0
+
     return render_template(
         "dashboard.html",
         tong_so=tong_so,
@@ -1649,7 +1710,11 @@ def dashboard():
         so_da_tim=len(da_tim_lost),
         ty_le_hoan_tra=ty_le_hoan_tra,
         thoi_gian_tb=thoi_gian_tb,
-        thong_ke=thong_ke
+        thong_ke=thong_ke,
+        ai_total_pairs=ai_total_pairs,
+        ai_candidate_pairs=ai_candidate_pairs,
+        ai_high_conf_pairs=ai_high_conf_pairs,
+        ai_filter_rate=ai_filter_rate
     )
 
 
@@ -1783,7 +1848,6 @@ def match_items(item_id=None):
                     mark_hints = analyze_distinctive_marks(lost, found)
                     both_have_imgs = lost.has_image and found.has_image
 
-                    # Vòng lọc 1 (Sơ loại): Loại bỏ các cặp khác hẳn tên gọi và không cùng danh mục/màu sắc
                     if not is_same_key:
                         if not is_same_cat or not both_have_imgs or color_conflict:
                             continue
@@ -1898,8 +1962,6 @@ def match_items(item_id=None):
                 + item["score_date"]
             )
 
-            # Vòng lọc 2 (Tổng quát): Nếu không trùng danh từ trung tâm tên gọi,
-            # bắt buộc phải có đặc trưng hình ảnh + ngữ nghĩa tên rất cao mới giữ lại.
             if not item["is_same_key"]:
                 if ten_score_final < 8 or anh_score < 36 or total_score < 68:
                     continue
